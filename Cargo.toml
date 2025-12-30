@@ -1,0 +1,10 @@
+[package]
+name = "murr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+config = "0.15.19"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.17"
+anyhow = "1.0.100"

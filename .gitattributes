@@ -1,0 +1,1 @@
+./tests/fixtures/anime_info.csv filter=lfs diff=lfs merge=lfs -text
