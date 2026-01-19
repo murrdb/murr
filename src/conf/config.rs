@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+
 use crate::{
-    conf::Server,
-    core::MurrError::{self, ConfigParsingError},
+    conf::{ServerConfig, TablesConfig},
+    core::{
+        CliArgs,
+        MurrError::{self, ConfigParsingError},
+    },
 };
 use config::Config as CConfig;
 use serde::{Deserialize, Serialize};
@@ -8,41 +13,86 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub server: Server,
+    #[serde(default = "Config::default_server")]
+    pub server: ServerConfig,
+    pub tables: TablesConfig,
 }
 
 impl Config {
-    pub fn from_str(toml_str: &str) -> Result<Config, MurrError> {
+    pub fn from_file(file_path: &str) -> Result<Config, MurrError> {
+        let content = std::fs::read_to_string(file_path)?;
+        return Config::from_str(&content);
+    }
+    pub fn from_str(yaml_str: &str) -> Result<Config, MurrError> {
         let config = CConfig::builder()
-            .add_source(config::File::from_str(toml_str, config::FileFormat::Toml))
+            .add_source(config::File::from_str(yaml_str, config::FileFormat::Yaml))
             .build()
             .map_err(|e| ConfigParsingError(e.to_string()))?
             .try_deserialize::<Config>()
             .map_err(|e| ConfigParsingError(e.to_string()))?;
         return Ok(config);
     }
+
+    pub fn from_args(args: &CliArgs) -> Result<Config, MurrError> {
+        match &args.config {
+            Some(config_path) => Config::from_file(config_path),
+            None => Ok(Config::default()),
+        }
+    }
+
+    fn default_server() -> ServerConfig {
+        ServerConfig::default()
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            tables: HashMap::new(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use crate::conf::{LocalSourceConfig, S3SourceConfig, SourceConfig, TableConfig};
+
     use super::*;
 
     #[test]
-    fn load_correct_toml() {
-        let toml = r#"
-        [server]
-        host = "127.0.0.1"
-        port = 3000
-        "#;
-        let conf = Config::from_str(toml);
+    fn load_simple() {
+        let conf = Config::from_file("tests/fixtures/config/simple.yml");
         assert_eq!(
             conf,
             Ok(Config {
-                server: Server {
-                    host: String::from("127.0.0.1"),
-                    port: 3000
-                }
+                server: ServerConfig {
+                    host: String::from("localhost"),
+                    port: 8080,
+                    data_dir: String::from("/var/lib/murr")
+                },
+                tables: HashMap::from([(
+                    String::from("clicks"),
+                    TableConfig {
+                        source: SourceConfig::Local(LocalSourceConfig {
+                            path: String::from("/data")
+                        }),
+                        key: vec![String::from("id")],
+                        poll_interval: Duration::from_mins(1),
+                        parts: 8,
+                        columns: HashMap::new()
+                    }
+                )])
             })
-        );
+        )
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.server.host, "localhost");
+        assert_eq!(config.server.port, 8080);
     }
 }

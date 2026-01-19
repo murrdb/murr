@@ -1,20 +1,47 @@
-use crate::core::MurrError::{self, ConfigParsingError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Server {
-    #[serde(default = "Server::default_host")]
+pub struct ServerConfig {
+    #[serde(default = "ServerConfig::default_host")]
     pub host: String,
-    #[serde(default = "Server::default_port")]
+    #[serde(default = "ServerConfig::default_port")]
     pub port: u16,
+    #[serde(default = "ServerConfig::default_dir")]
+    pub data_dir: String,
 }
-impl Server {
+impl ServerConfig {
     fn default_port() -> u16 {
         8080
     }
 
     fn default_host() -> String {
         String::from("localhost")
+    }
+
+    fn default_dir() -> String {
+        String::from("/var/lib/murr")
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: Self::default_host(),
+            port: Self::default_port(),
+            data_dir: Self::default_dir(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_default() {
+        let server = ServerConfig::default();
+        assert_eq!(server.host, "localhost");
+        assert_eq!(server.port, 8080);
     }
 }

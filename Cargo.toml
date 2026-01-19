@@ -8,3 +8,8 @@ config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 anyhow = "1.0.100"
+humantime-serde = "1"
+
+log = { version = "0.4.29", features = ["kv"] }
+env_logger = "0.11"
+clap = { version = "4.5.54", features = ["derive"] }
