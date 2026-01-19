@@ -5,6 +5,5 @@ mod table;
 pub use config::Config;
 pub use server::ServerConfig;
 pub use table::{
-    ColumnConfig, ColumnType, LocalSourceConfig, S3SourceConfig, SourceConfig, TableConfig,
-    TablesConfig,
+    ColumnConfig, DType, LocalSourceConfig, S3SourceConfig, SourceConfig, TableConfig, TablesConfig,
 };

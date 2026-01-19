@@ -1,7 +1,7 @@
 server:
   host: localhost
   port: 8080
-  data_dir: /var/lib/murr/
+  data_dir: /var/lib/murr
   
 tables:
   clicks:
@@ -16,9 +16,9 @@ tables:
     key: [id]
     columns:
       id:
-        type: utf8
+        dtype: utf8
         nullable: false
       clicks7:
-        type: float32
-        nullable: false
+        dtype: float32
+        nullable: true
     

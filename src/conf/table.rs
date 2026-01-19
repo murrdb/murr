@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum ColumnType {
+pub enum DType {
     Utf8,
     Int16,
     Int32,
@@ -20,7 +20,7 @@ pub enum ColumnType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnConfig {
-    pub dtype: ColumnType,
+    pub dtype: DType,
     #[serde(default = "ColumnConfig::default_nullable")]
     pub nullable: bool,
 }
