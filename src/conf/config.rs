@@ -58,7 +58,9 @@ impl Default for Config {
 mod tests {
     use std::time::Duration;
 
-    use crate::conf::{LocalSourceConfig, S3SourceConfig, SourceConfig, TableConfig};
+    use crate::conf::{
+        ColumnConfig, DType, LocalSourceConfig, S3SourceConfig, SourceConfig, TableConfig,
+    };
 
     use super::*;
 
@@ -83,6 +85,51 @@ mod tests {
                         poll_interval: Duration::from_mins(1),
                         parts: 8,
                         columns: HashMap::new()
+                    }
+                )])
+            })
+        )
+    }
+
+    #[test]
+    fn load_full() {
+        let conf = Config::from_file("tests/fixtures/config/full.yml");
+        assert_eq!(
+            conf,
+            Ok(Config {
+                server: ServerConfig {
+                    host: String::from("localhost"),
+                    port: 8080,
+                    data_dir: String::from("/var/lib/murr")
+                },
+                tables: HashMap::from([(
+                    String::from("clicks"),
+                    TableConfig {
+                        source: SourceConfig::S3(S3SourceConfig {
+                            bucket: String::from("bucket"),
+                            prefix: String::from("prefix"),
+                            endpoint: Option::from(String::from("https://minio:8080")),
+                            region: String::from("us-east-1")
+                        }),
+                        key: vec![String::from("id")],
+                        poll_interval: Duration::from_mins(1),
+                        parts: 8,
+                        columns: HashMap::from([
+                            (
+                                String::from("id"),
+                                ColumnConfig {
+                                    dtype: DType::Utf8,
+                                    nullable: false
+                                }
+                            ),
+                            (
+                                String::from("clicks7"),
+                                ColumnConfig {
+                                    dtype: DType::Float32,
+                                    nullable: true
+                                }
+                            )
+                        ])
                     }
                 )])
             })
