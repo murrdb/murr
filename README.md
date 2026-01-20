@@ -164,3 +164,7 @@ s3://bucket/prefix/
 - Python client library
 - Prometheus metrics
 - Iceberg catalog support (BigQuery, Snowflake, AWS Glue)
+
+## License
+
+Apache 2.0
