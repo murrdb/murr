@@ -1,25 +1,31 @@
 # Murr
 
-Columnar in-memory cache for AI inference workloads. Think Redis but made for batch low-latency reads and writes.
+Columnar in-memory cache for AI inference workloads. Think Redis but made for batch low-latency zero-copy reads directly into your `np.ndarray`.
 
-## Why Murr?
-
-ML inference systems often need to fetch features for hundreds of documents in a single request. Current solutions struggle with this pattern:
-
-**Redis** is the most common choice, but its data model creates latency problems. With HSET-based layouts (Feast-style), you end up with thousands of hash lookups per request - fetching 40 features across 200 documents means 8000 operations, resulting in 50-100ms latency even with pipelining. Blob-based approaches avoid this but make atomic updates painful.
-
-**DynamoDB** handles batch reads well but costs scale with request volume, making it expensive for high-throughput inference workloads.
-
-**Local RocksDB** offers excellent read performance but requires complex machinery to build, distribute, and mount database files to inference pods. When datasets grow, you're duplicating storage costs across every replica.
+## What is Murr?
 
 ![system diagram](doc/img/overview.png)
 
-Murr takes a different approach. It's a columnar cache designed specifically for batch ML workloads:
+Murr is a caching layer for ML feature serving that sits between your batch data pipelines and inference services:
 
-- **Pull-based data loading**: Point Murr at your Parquet files in S3 and it handles the rest. No ingestion pipelines, no upload coordination. Workers pull data from block storage on startup.
-- **Columnar storage**: Data is stored in Arrow RecordBatches, optimized for "give me columns X, Y, Z for these N document IDs" access patterns. One lookup per document, not per feature.
-- **Zero-copy serialization**: Arrow IPC format means data can be mapped directly to NumPy arrays or PyTorch tensors without re-encoding. This eliminates one of the main latency sources in large batch fetches.
-- **Stateless workers**: Since data is pulled from S3, scaling up or down is trivial. New replicas become ready without complex data synchronization.
+- **Parquet-native**: Reads directly from your existing Parquet files in S3 or local storage
+- **Columnar queries**: Fetch specific columns for batches of keys in a single request
+- **Arrow IPC responses**: Data serialized as Arrow RecordBatches, zero-copy conversion to NumPy/PyTorch
+- **Pull-based sync**: Workers poll S3 for new partitions and reload automatically
+- **Stateless**: No primary/replica coordination, just point at S3 and scale horizontally
+- **Single-binary**: Written in Rust, deploys as one binary with a YAML config
+
+## Why Murr?
+
+ML inference often requires fetching features for hundreds of documents per request. A ranking model scoring 200 candidates with 40 features each needs 8000 values in milliseconds. Existing solutions weren't built for this:
+
+* **Redis** uses row-oriented storage. With Feast-style HSET layouts, each feature is a separate hash field, so fetching 40 features × 200 docs = 8000 hash lookups. Even with pipelining, this adds 50-100ms latency. Packing features into blobs helps reads but makes atomic updates complex.
+
+* **DynamoDB** charges per request. High-throughput inference becomes expensive quickly.
+
+* **Local RocksDB** is fast but operationally heavy. You need pipelines to build DB files, distribute them to pods, and coordinate reloads. Storage costs multiply with replica count.
+
+Murr is designed around the batch read pattern from the start. Data lives in columnar Arrow format, so "give me columns X, Y, Z for keys 1-200" is a single operation, not thousands. Workers pull Parquet files from S3 on startup - no ingestion pipelines, no coordination. Responses are Arrow IPC, which maps directly to NumPy arrays without re-encoding.
 
 ## Status
 
