@@ -1,5 +1,10 @@
 # Murr
 
+[![CI Status](https://github.com/shuttie/murr/workflows/Tests/badge.svg)](https://github.com/shuttie/murr/actions)
+[![License: Apache 2](https://img.shields.io/badge/License-Apache2-green.svg)](https://opensource.org/licenses/Apache-2.0)
+![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
+![Last release](https://img.shields.io/github/release/shuttie/murr)
+
 Columnar in-memory cache for AI inference workloads. Think Redis but made for batch low-latency zero-copy reads directly into your `np.ndarray`.
 
 ## What is Murr?
@@ -8,9 +13,9 @@ Columnar in-memory cache for AI inference workloads. Think Redis but made for ba
 
 Murr is a caching layer for ML feature serving that sits between your batch data pipelines and inference services:
 
-- **Parquet-native**: Reads directly from your existing Parquet files in S3 or local storage
+- **Parquet-native**: Reads directly from Parquet files in S3, local storage, or Iceberg catalogs (BigQuery, Snowflake)
 - **Columnar queries**: Fetch specific columns for batches of keys in a single request
-- **Arrow IPC responses**: Data serialized as Arrow RecordBatches, zero-copy conversion to NumPy/PyTorch
+- **Zero-copy responses**: Arrow IPC RecordBatch maps directly to `np.ndarray` and `torch.Tensor` - no wire protocol decoding, no JSON parsing
 - **Pull-based sync**: Workers poll S3 for new partitions and reload automatically
 - **Stateless**: No primary/replica coordination, just point at S3 and scale horizontally
 - **Single-binary**: Written in Rust, deploys as one binary with a YAML config
@@ -24,6 +29,8 @@ ML inference often requires fetching features for hundreds of documents per requ
 * **DynamoDB** charges per request. High-throughput inference becomes expensive quickly.
 
 * **Local RocksDB** is fast but operationally heavy. You need pipelines to build DB files, distribute them to pods, and coordinate reloads. Storage costs multiply with replica count.
+
+Simple, fast, cheap - you can choose only two.
 
 Murr is designed around the batch read pattern from the start. Data lives in columnar Arrow format, so "give me columns X, Y, Z for keys 1-200" is a single operation, not thousands. Workers pull Parquet files from S3 on startup - no ingestion pipelines, no coordination. Responses are Arrow IPC, which maps directly to NumPy arrays without re-encoding.
 
@@ -156,4 +163,4 @@ s3://bucket/prefix/
 - Memory-mapped storage backend for larger-than-RAM datasets
 - Python client library
 - Prometheus metrics
-- Iceberg table support
+- Iceberg catalog support (BigQuery, Snowflake, AWS Glue)
