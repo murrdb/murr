@@ -1,6 +1,6 @@
 # Murr
 
-[![CI Status](https://github.com/shuttie/murr/workflows/Tests/badge.svg)](https://github.com/shuttie/murr/actions)
+[![CI Status](https://github.com/shuttie/murr/workflows/CI/badge.svg)](https://github.com/shuttie/murr/actions)
 [![License: Apache 2](https://img.shields.io/badge/License-Apache2-green.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
