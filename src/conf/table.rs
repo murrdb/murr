@@ -63,7 +63,7 @@ pub enum SourceConfig {
     Local(LocalSourceConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TableConfig {
     pub source: SourceConfig,
