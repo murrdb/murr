@@ -33,10 +33,13 @@ rand = { version = "0.8", optional = true }
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 rstest = "0.24"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["redis"] }
 
 [[bench]]
 name = "table_bench"
