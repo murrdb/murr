@@ -45,3 +45,17 @@ harness = false
 [[bench]]
 name = "api_bench"
 harness = false
+
+[profile.bench]                                                                                                                                                                                                 
+debug = true              # Include debug symbols (DWARF)                                                                                                                                                       
+force-frame-pointers = true  # Required for stack sampling (Rust 1.79+)
+opt-level = 2        # Less aggressive inlining                                                                                                                                                                 
+lto = false          # Disable LTO     
+
+[profile.bench.build-override]                                                                                                                                                                                  
+debug = true                                                                                                                                                                                                    
+force-frame-pointers = true                                                                                                                                                                                     
+                                                                                                                                                                                                                
+[profile.bench.package."*"]                                                                                                                                                                                     
+debug = true                                                                                                                                                                                                    
+force-frame-pointers = true 
