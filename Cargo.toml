@@ -3,6 +3,9 @@ name = "murr"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+testutil = ["dep:tempfile", "dep:rand"]
+
 [dependencies]
 config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -25,10 +28,20 @@ bytes = "1"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["trace"] }
 serde_json = "1"
+tempfile = { version = "3", optional = true }
+rand = { version = "0.8", optional = true }
 
 [dev-dependencies]
-tempfile = "3"
-rand = "0.8"
+murr = { path = ".", features = ["testutil"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 rstest = "0.24"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+
+[[bench]]
+name = "table_bench"
+harness = false
+
+[[bench]]
+name = "api_bench"
+harness = false
