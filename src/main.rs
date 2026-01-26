@@ -6,14 +6,17 @@ mod manager;
 mod parquet;
 mod table;
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
 use log::{error, info};
+use tokio::net::TcpListener;
 use tokio::time::interval;
 
-use crate::conf::{Config, TableConfig};
+use crate::api::{AppState, create_router};
+use crate::conf::{Config, ServerConfig, TableConfig};
 use crate::core::{CliArgs, MurrError, setup_logging};
 use crate::manager::{TableLoader, TableManager};
 
@@ -44,6 +47,16 @@ async fn main() -> Result<(), MurrError> {
             data_dir,
         )));
     }
+
+    // Start HTTP server
+    let server_config = config.server.clone();
+    let server_manager = Arc::clone(&manager);
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = run_http_server(server_config, server_manager).await {
+            error!("HTTP server error: {}", e);
+        }
+    });
+    handles.push(server_handle);
 
     // Wait for all (they run forever)
     for handle in handles {
@@ -88,6 +101,27 @@ async fn run_discovery_loop(
             Err(e) => error!("Discovery failed for '{}': {}", name, e),
         }
     }
+}
+
+async fn run_http_server(
+    config: ServerConfig,
+    manager: Arc<TableManager>,
+) -> Result<(), MurrError> {
+    let state = AppState { manager };
+    let app = create_router(state);
+
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
+        .parse()
+        .map_err(|e| MurrError::ConfigParsingError(format!("Invalid address: {}", e)))?;
+
+    info!("HTTP server listening on {}", addr);
+
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| MurrError::IoError(e.to_string()))?;
+
+    Ok(())
 }
 
 /// Try to discover and load the table. Returns Ok(true) if loaded, Ok(false) if unchanged.

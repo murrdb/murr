@@ -3,7 +3,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use arrow::array::{new_null_array, Array, StringArray};
+use arrow::array::{Array, StringArray, new_null_array};
 use arrow::buffer::Buffer;
 use arrow::compute::interleave;
 use arrow::datatypes::Schema;
