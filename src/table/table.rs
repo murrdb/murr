@@ -3,9 +3,9 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray, UInt32Array};
+use arrow::array::{new_null_array, Array, StringArray};
 use arrow::buffer::Buffer;
-use arrow::compute::take;
+use arrow::compute::interleave;
 use arrow::datatypes::Schema;
 use arrow::ipc::convert::fb_to_schema;
 use arrow::ipc::reader::{FileDecoder, read_footer_length};
@@ -88,71 +88,70 @@ impl Table {
     }
 
     pub fn get(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError> {
-        // 1. Look up keys and group by batch, preserving output order
-        let mut batch_groups: Vec<Vec<(usize, u32)>> = vec![Vec::new(); self.batches.len()];
-
-        for (output_pos, key) in keys.iter().enumerate() {
-            if let Some(&(batch_idx, row_offset)) = self.index.get(*key) {
-                batch_groups[batch_idx as usize].push((output_pos, row_offset));
-            }
-        }
-
-        // 2. Get schema from first batch
+        // 1. Build result schema with nullable fields
         let schema = self.batches[0].schema();
-        let fields: Result<Vec<_>, _> = columns
+        let column_indices: Vec<usize> = columns
             .iter()
             .map(|name| {
-                schema.field_with_name(name).cloned().map_err(|e| {
+                schema.index_of(name).map_err(|e| {
                     MurrError::TableError(format!("Column '{}' not found: {}", name, e))
                 })
             })
-            .collect();
-        let result_schema = Arc::new(Schema::new(fields?));
+            .collect::<Result<_, _>>()?;
 
-        // 3. Gather from each batch and track output positions
-        let mut all_results: Vec<(usize, RecordBatch)> = Vec::new();
-
-        for (batch_idx, positions) in batch_groups.iter().enumerate() {
-            if positions.is_empty() {
-                continue;
-            }
-
-            let batch = &self.batches[batch_idx];
-            let indices: UInt32Array = positions.iter().map(|(_, offset)| *offset).collect();
-
-            let arrays: Result<Vec<_>, _> = columns
+        let result_schema = Arc::new(Schema::new(
+            column_indices
                 .iter()
-                .map(|name| {
-                    let col_index = schema.index_of(name)?;
-                    let col = batch.column(col_index);
-                    take(col, &indices, None)
-                })
-                .collect();
+                .map(|&i| schema.field(i).clone().with_nullable(true))
+                .collect::<Vec<_>>(),
+        ));
 
-            let partial = RecordBatch::try_new(result_schema.clone(), arrays?)?;
-
-            for (i, (output_pos, _)) in positions.iter().enumerate() {
-                all_results.push((*output_pos, partial.slice(i, 1)));
-            }
-        }
-
-        // 4. Sort by output position and concatenate
-        all_results.sort_by_key(|(pos, _)| *pos);
-
-        if all_results.is_empty() {
-            let empty_arrays: Vec<_> = columns
+        // 2. Handle empty keys case
+        if keys.is_empty() {
+            let empty_arrays: Vec<_> = result_schema
+                .fields()
                 .iter()
-                .map(|name| {
-                    let col_index = schema.index_of(name).unwrap();
-                    self.batches[0].column(col_index).slice(0, 0)
-                })
+                .map(|field| new_null_array(field.data_type(), 0))
                 .collect();
             return Ok(RecordBatch::try_new(result_schema, empty_arrays)?);
         }
 
-        let batches_to_concat: Vec<_> = all_results.iter().map(|(_, b)| b).collect();
-        let result = arrow::compute::concat_batches(&result_schema, batches_to_concat)?;
-        Ok(result)
+        // 3. Build interleave indices directly in output order
+        // null_batch_idx points to single-element null arrays for missing keys
+        let null_batch_idx = self.batches.len();
+        let indices: Vec<(usize, usize)> = keys
+            .iter()
+            .map(|key| {
+                if let Some(&(batch_idx, row_offset)) = self.index.get(*key) {
+                    (batch_idx as usize, row_offset as usize)
+                } else {
+                    (null_batch_idx, 0) // all missing keys point to row 0 of null array
+                }
+            })
+            .collect();
+
+        // 4. For each column, interleave from all batches + null array
+        let result_arrays: Result<Vec<_>, MurrError> = column_indices
+            .iter()
+            .zip(result_schema.fields())
+            .map(|(&col_idx, field)| {
+                // Collect column arrays from all source batches
+                let mut arrays: Vec<&dyn Array> = self
+                    .batches
+                    .iter()
+                    .map(|batch| batch.column(col_idx).as_ref())
+                    .collect();
+
+                // Create single-element null array for missing keys
+                let null_array = new_null_array(field.data_type(), 1);
+                arrays.push(null_array.as_ref());
+
+                // Interleave produces final column in correct output order
+                interleave(&arrays, &indices).map_err(MurrError::from)
+            })
+            .collect();
+
+        Ok(RecordBatch::try_new(result_schema, result_arrays?)?)
     }
 }
 
@@ -261,5 +260,77 @@ mod tests {
         assert_eq!(values.value(0), 50.0);
         assert_eq!(values.value(1), 150.0);
         assert_eq!(values.value(2), 250.0);
+    }
+
+    #[test]
+    fn test_table_get_missing_keys() {
+        let file = create_test_arrow_file(1, 1000);
+        let table = Table::open(file.path(), "key").unwrap();
+
+        // Query with a missing key in the middle
+        let result = table
+            .get(&["10", "nonexistent", "999"], &["value"])
+            .unwrap();
+        assert_eq!(result.num_rows(), 3);
+
+        let values = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+
+        // Found keys should have their values
+        assert_eq!(values.value(0), 10.0);
+        assert_eq!(values.value(2), 999.0);
+
+        // Missing key should be null
+        assert!(values.is_null(1));
+    }
+
+    #[test]
+    fn test_table_get_all_missing_keys() {
+        let file = create_test_arrow_file(1, 100);
+        let table = Table::open(file.path(), "key").unwrap();
+
+        // Query with all missing keys
+        let result = table.get(&["x", "y", "z"], &["value"]).unwrap();
+        assert_eq!(result.num_rows(), 3);
+
+        let values = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+
+        // All values should be null
+        assert!(values.is_null(0));
+        assert!(values.is_null(1));
+        assert!(values.is_null(2));
+    }
+
+    #[test]
+    fn test_table_get_order_preserved_with_missing() {
+        let file = create_test_arrow_file(3, 100); // 3 batches, 100 rows each (keys 0-299)
+        let table = Table::open(file.path(), "key").unwrap();
+
+        // Query keys from different batches with missing keys interspersed
+        // Order: batch2, missing, batch0, batch1, missing
+        let result = table
+            .get(&["250", "missing1", "50", "150", "missing2"], &["value"])
+            .unwrap();
+        assert_eq!(result.num_rows(), 5);
+
+        let values = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+
+        // Verify exact order matches input keys
+        assert_eq!(values.value(0), 250.0); // key "250" from batch 2
+        assert!(values.is_null(1)); // missing key
+        assert_eq!(values.value(2), 50.0); // key "50" from batch 0
+        assert_eq!(values.value(3), 150.0); // key "150" from batch 1
+        assert!(values.is_null(4)); // missing key
     }
 }
