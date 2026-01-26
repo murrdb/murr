@@ -45,4 +45,10 @@ impl TableManager {
     pub fn ipc_path(&self, name: &str) -> PathBuf {
         self.data_dir.join(format!("{}.ipc", name))
     }
+
+    /// Get the count of currently loaded tables.
+    pub async fn table_count(&self) -> usize {
+        let tables = self.tables.read().await;
+        tables.len()
+    }
 }

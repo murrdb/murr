@@ -22,8 +22,13 @@ async-trait = "0.1"
 chrono = "0.4"
 memmap2 = "0.9"
 bytes = "1"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["trace"] }
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
 rand = "0.8"
 rstest = "0.24"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
