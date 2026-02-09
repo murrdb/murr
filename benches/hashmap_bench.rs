@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ahash::AHashMap;
 use arrow::array::{Array, Float32Array};
-use arrow::buffer::NullBuffer;
+use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use bitvec::prelude::*;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -22,35 +21,48 @@ trait Column {
 
 struct Float32Column {
     data: Vec<f32>,
-    validity: BitVec<u8, Lsb0>,
+    validity: Vec<u8>, // bit-packed, LSB first (Arrow convention)
 }
 
 impl Column for Float32Column {
     fn get(&self, offsets: &[usize]) -> Arc<dyn Array> {
-        let values: Vec<f32> = offsets.iter().map(|&i| self.data[i]).collect();
-        let valids: Vec<bool> = offsets.iter().map(|&i| self.validity[i]).collect();
-        let nulls = NullBuffer::from(valids);
+        let len = offsets.len();
+        let values: Vec<f32> = offsets
+            .iter()
+            .map(|&i| unsafe { *self.data.get_unchecked(i) })
+            .collect();
+        let mut validity_bytes = vec![0u8; (len + 7) / 8];
+        for (out_idx, &src_idx) in offsets.iter().enumerate() {
+            unsafe {
+                let src_bit =
+                    (*self.validity.get_unchecked(src_idx >> 3) >> (src_idx & 7)) & 1;
+                *validity_bytes.get_unchecked_mut(out_idx >> 3) |= src_bit << (out_idx & 7);
+            }
+        }
+
+        let buffer = Buffer::from_vec(validity_bytes);
+        let bool_buf = BooleanBuffer::new(buffer, 0, len);
+        let nulls = NullBuffer::new(bool_buf);
         Arc::new(Float32Array::new(values.into(), Some(nulls)))
     }
 }
 
 struct SimpleTable {
-    index: HashMap<String, usize>,
-    columns: HashMap<String, Box<dyn Column>>,
+    index: AHashMap<String, usize>,
+    columns: AHashMap<String, Box<dyn Column>>,
 }
 
 impl SimpleTable {
     fn new(num_rows: usize, num_columns: usize) -> Self {
-        let mut index = HashMap::with_capacity(num_rows);
+        let mut index = AHashMap::with_capacity(num_rows);
         for i in 0..num_rows {
             index.insert(i.to_string(), i);
         }
 
-        let mut columns: HashMap<String, Box<dyn Column>> = HashMap::with_capacity(num_columns);
+        let mut columns: AHashMap<String, Box<dyn Column>> = AHashMap::with_capacity(num_columns);
         for c in 0..num_columns {
             let data: Vec<f32> = (0..num_rows).map(|i| i as f32).collect();
-            let mut validity = BitVec::<u8, Lsb0>::with_capacity(num_rows);
-            validity.resize(num_rows, true);
+            let validity = vec![0xFFu8; (num_rows + 7) / 8];
             columns.insert(
                 format!("col_{}", c),
                 Box::new(Float32Column { data, validity }),

@@ -1890,6 +1890,7 @@ dependencies = [
 name = "murr"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "anyhow",
  "arrow",
  "async-trait",
@@ -1909,6 +1910,7 @@ dependencies = [
  "object_store",
  "parquet",
  "rand 0.8.5",
+ "rayon",
  "redis",
  "rstest",
  "serde",
