@@ -1,11 +1,14 @@
 use std::time::Duration;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use murr::testutil::{bench_column_names, bench_generate_keys, setup_benchmark_table};
 
-const ROW_COUNTS: &[usize] = &[100_000, 1_000_000, 10_000_000];
-const KEY_COUNTS: &[usize] = &[10, 100, 1000];
+// const ROW_COUNTS: &[usize] = &[100_000, 1_000_000, 10_000_000];
+// const KEY_COUNTS: &[usize] = &[10, 100, 1000];
+
+const ROW_COUNTS: &[usize] = &[10_000_000];
+const KEY_COUNTS: &[usize] = &[1000];
 
 fn bench_table_get(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -13,8 +16,10 @@ fn bench_table_get(c: &mut Criterion) {
     let column_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
 
     for &num_rows in ROW_COUNTS {
-        let (state, _temp_dir) =
-            rt.block_on(setup_benchmark_table(&format!("bench_{}", num_rows), num_rows));
+        let (state, _temp_dir) = rt.block_on(setup_benchmark_table(
+            &format!("bench_{}", num_rows),
+            num_rows,
+        ));
         let table = &state.table;
 
         let mut group = c.benchmark_group(format!("table/rows_{}", num_rows));
