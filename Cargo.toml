@@ -36,6 +36,8 @@ murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 rand = "0.8"
 bitvec = "1"
+ahash = "0.8"
+rayon = "1"
 rstest = "0.24"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
