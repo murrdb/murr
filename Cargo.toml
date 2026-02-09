@@ -34,6 +34,8 @@ rand = { version = "0.8", optional = true }
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+rand = "0.8"
+bitvec = "1"
 rstest = "0.24"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
@@ -49,16 +51,20 @@ harness = false
 name = "api_bench"
 harness = false
 
+[[bench]]
+name = "hashmap_bench"
+harness = false
+
 [profile.bench]                                                                                                                                                                                                 
 debug = true              # Include debug symbols (DWARF)                                                                                                                                                       
-force-frame-pointers = true  # Required for stack sampling (Rust 1.79+)
-opt-level = 2        # Less aggressive inlining                                                                                                                                                                 
-lto = false          # Disable LTO     
+# force-frame-pointers = true  # Required for stack sampling (Rust 1.79+)
+# opt-level = 2        # Less aggressive inlining                                                                                                                                                                 
+# lto = false          # Disable LTO     
 
 [profile.bench.build-override]                                                                                                                                                                                  
 debug = true                                                                                                                                                                                                    
-force-frame-pointers = true                                                                                                                                                                                     
+# force-frame-pointers = true                                                                                                                                                                                     
                                                                                                                                                                                                                 
 [profile.bench.package."*"]                                                                                                                                                                                     
 debug = true                                                                                                                                                                                                    
-force-frame-pointers = true 
+# force-frame-pointers = true 
