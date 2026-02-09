@@ -57,6 +57,10 @@ harness = false
 name = "hashmap_bench"
 harness = false
 
+[[bench]]
+name = "hashmap_row_bench"
+harness = false
+
 [profile.bench]                                                                                                                                                                                                 
 debug = true              # Include debug symbols (DWARF)                                                                                                                                                       
 # force-frame-pointers = true  # Required for stack sampling (Rust 1.79+)
