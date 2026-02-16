@@ -18,6 +18,8 @@ pub enum MurrError {
     DiscoveryError(String),
     #[error("No valid partition found: {0}")]
     NoValidPartition(String),
+    #[error("Directory error: {0}")]
+    DirectoryError(String),
 }
 
 impl From<std::io::Error> for MurrError {
