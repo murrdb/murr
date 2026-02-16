@@ -199,11 +199,66 @@ for (&src_idx, &out_idx) in sorted_offsets.iter().zip(perm.iter()) {
 
 ---
 
+---
+
+## Experiment 11: Row-based byte blob layout (hashmap_row_bench)
+
+**Idea:** PoC for type-agnostic row storage. Each row is a `Vec<u8>` byte blob. Per column: 1-byte validity marker (1=valid, 0=null), followed by 4-byte LE f32 if valid (null omits value bytes). Rows stored as `Vec<Vec<u8>>`, index maps key → row index. Sequential scan required to reach column N (variable-width due to null omission). Uses `AHashMap`, `get_unchecked`, `Vec::push` for output.
+
+**Result: 33ms**
+
+**Profile:**
+- `ByteBlobTable::get` self-time: **29.4%** — inner loop byte parsing
+- `Vec::push` overhead: **15.0%** — capacity check per element, lost `extend_trusted`
+- String key comparison: **12.6%** — `memcmp` per HashMap hit
+- AHash hashing: **3.2%**
+- Allocator (malloc/realloc/free): **~7%** — per-column Vec allocations
+
+**Lesson:** Row-oriented blob scan forces `push()` per value (can't use `.collect()` since values come from scanning rows, not iterating a column). This is a fundamental cost of the row layout.
+
+---
+
+## Experiment 12: Indexed write instead of push
+
+**Idea:** Replace `Vec::with_capacity` + `push()` with `vec![0.0f32; num_out_rows]` + `get_unchecked_mut` indexed writes. Eliminates per-element capacity check.
+
+**Result: 27ms** (-18% from 33ms)
+
+**Profile:**
+- `ByteBlobTable::get` self-time: **30.4%** — unchanged (scanning cost)
+- `DerefMut` (indexed write): **12.2%** — `col_values[out_col][out_row] = value`, double Vec deref
+- `Range::next`: **5.0%** — loop counter
+- String key comparison: **13.2%**
+- Allocator: **~3%** (down from ~7%)
+
+**Lesson:** Pre-allocating with exact size and using indexed writes eliminates all `push()` overhead. However, `Vec<Vec<f32>>` output buffers introduce double deref on every write (outer Vec → inner Vec → element).
+
+---
+
+## Experiment 13: Flat contiguous Vec\<u8\> storage
+
+**Idea:** Replace `Vec<Vec<u8>>` (10M separate heap allocations, pointer chase per row) with a single contiguous `Vec<u8>`. Index maps key → byte offset directly. Uses `data_ptr.add(offset)` for direct pointer arithmetic.
+
+**Result: 21ms** (-22% from 27ms, -36% from 33ms)
+
+**Profile:**
+- `ByteBlobTable::get` self-time: **30.9%** (~6.5ms) — sequential byte parsing
+- `DerefMut` (output writes): **11.4%** (~2.4ms) — still from `Vec<Vec<f32>>` output buffers
+- `Range::next`: **5.0%** (~1.0ms) — loop counter
+- String key comparison: **13.7%** (~2.9ms) — `SlicePartialEq::equal` (10.6%) + `memcmp` (3.1%)
+- AHash hashing: **5.8%** (~1.2ms)
+- Hashbrown probe/bitmask: **3.3%** (~0.7ms)
+- Allocator: **~1.8%** (down from ~7% in experiment 11)
+
+**Lesson:** Flat storage eliminates 10M Vec headers (24 bytes each = 240MB overhead), removes one pointer dereference per row, and dramatically reduces allocator pressure. The remaining `DerefMut` at 11.4% is from the **output** buffers (`Vec<Vec<f32>>`), not the input data.
+
+---
+
 ## Summary
 
 | Experiment | Latency | vs Baseline | Key Finding |
 |---|---|---|---|
-| Baseline (no nulls) | 30ms | — | SipHash dominates |
+| Baseline (no nulls, columnar) | 30ms | — | SipHash dominates |
 | bitvec + Vec\<bool\> | 70ms | +133% | bitvec abstraction layers are expensive |
 | Manual Vec\<u8\> two loops | 54ms | +80% | Manual bit ops >> bitvec, keep .collect() |
 | Fused single loop | 54ms | +80% | .push() kills .collect() optimization |
@@ -213,14 +268,22 @@ for (&src_idx, &out_idx) in sorted_offsets.iter().zip(perm.iter()) {
 | AHash | 42ms | +40% | Hashing eliminated, str compare exposed |
 | AHash + unsafe | 39ms | +30% | Bounds checks removed |
 | Table-level sort | 42ms | +40% | Sort amortized, but fused loop + Zip overhead > cache savings |
+| Row byte blob (Vec\<Vec\<u8\>\> + push) | 33ms | +10% | Row scan forces push(), 15% overhead |
+| Row byte blob + indexed write | 27ms | -10% | Indexed write eliminates push overhead |
+| Row byte blob + flat Vec\<u8\> | 21ms | -30% | Flat storage removes per-row alloc + pointer chase |
 
-## Remaining Bottlenecks (at 39ms)
+## Remaining Bottlenecks (at 21ms)
 
-1. **Bitmap gather loop (26.9%)** — Random reads into 1.25MB bitmap. Cache-miss-bound.
-   - Mitigation: null_count fast path — if column has zero nulls, skip bitmap entirely and pass `None`.
+1. **Blob scanning self-time (30.9%, ~6.5ms)** — Sequential column scan with variable-width null handling. Irreducible with current layout.
+   - Mitigation: Fixed-stride layout (null columns still occupy value bytes) → direct offset to any column, skip unneeded columns entirely.
 
-2. **String key comparison (23.2%)** — `memcmp` on every HashMap hit.
-   - Mitigation: Key interning at API boundary — convert `String` -> `u32` once per request, use integer keys internally. Or use fixed-size `[u8; N]` key representation for SIMD comparison.
+2. **Output buffer DerefMut (11.4%, ~2.4ms)** — `Vec<Vec<f32>>` double indirection on every write.
+   - Mitigation: Flatten to single `Vec<f32>` with `col_idx * num_out_rows + out_row` stride arithmetic.
+
+3. **String key comparison (13.7%, ~2.9ms)** — `memcmp` on every HashMap hit.
+   - Mitigation: Key interning at API boundary — convert `String` -> `u64` once per request, use integer keys internally.
+
+4. **AHash hashing (5.8%, ~1.2ms)** — Already fast, limited further optimization potential.
 
 ## Key Lessons
 
@@ -232,3 +295,6 @@ for (&src_idx, &out_idx) in sorted_offsets.iter().zip(perm.iter()) {
 - Once hashing is fast (ahash), string comparison dominates HashMap lookups.
 - `get_unchecked` gives small but real gains when bounds are guaranteed by construction.
 - For dense data, the single biggest optimization is skipping the validity bitmap entirely (null_count fast path).
+- Pre-allocated indexed writes (`vec![0.0; n]` + `get_unchecked_mut`) are the correct replacement for `push()` in fused loops where `.collect()` isn't possible.
+- Flat contiguous storage (`Vec<u8>` with byte offsets) vastly outperforms Vec-of-Vec: eliminates per-row heap allocation, removes pointer indirection, and reduces allocator pressure from ~7% to ~1.8%.
+- `Vec<Vec<T>>` double indirection shows up as ~11% `DerefMut` overhead even with `get_unchecked_mut` — flatten to single Vec with stride arithmetic when possible.

@@ -80,37 +80,31 @@ impl RowTable {
 }
 
 struct ByteBlobTable {
-    index: AHashMap<String, usize>,
-    data: Vec<Vec<u8>>,
+    index: AHashMap<String, usize>, // key -> byte offset into data
+    data: Vec<u8>,                  // all rows contiguous
     col_index: AHashMap<String, usize>,
     num_columns: usize,
 }
 
 impl ByteBlobTable {
     fn new(num_rows: usize, num_columns: usize) -> Self {
+        let row_size = num_columns * 5; // 1 byte validity + 4 bytes f32 per column
+        let mut data = Vec::with_capacity(num_rows * row_size);
         let mut index = AHashMap::with_capacity(num_rows);
+
         for i in 0..num_rows {
-            index.insert(i.to_string(), i);
+            let offset = data.len();
+            index.insert(i.to_string(), offset);
+            for c in 0..num_columns {
+                data.push(1u8); // valid
+                data.extend_from_slice(&((i * num_columns + c) as f32).to_le_bytes());
+            }
         }
 
         let mut col_index = AHashMap::with_capacity(num_columns);
         for c in 0..num_columns {
             col_index.insert(format!("col_{}", c), c);
         }
-
-        // Each column: 1 byte validity + 4 bytes f32 = 5 bytes per column
-        // All values are non-null in test data
-        let row_size = num_columns * 5;
-        let data: Vec<Vec<u8>> = (0..num_rows)
-            .map(|i| {
-                let mut row = Vec::with_capacity(row_size);
-                for c in 0..num_columns {
-                    row.push(1u8); // valid
-                    row.extend_from_slice(&((i * num_columns + c) as f32).to_le_bytes());
-                }
-                row
-            })
-            .collect();
 
         ByteBlobTable {
             index,
@@ -136,25 +130,26 @@ impl ByteBlobTable {
             schema_pos_to_out[pos] = out_idx;
         }
 
-        let row_indices: Vec<usize> = keys
+        let byte_offsets: Vec<usize> = keys
             .iter()
             .filter_map(|k| self.index.get(*k).copied())
             .collect();
 
-        let num_out_rows = row_indices.len();
+        let num_out_rows = byte_offsets.len();
         let num_out_cols = columns.len();
 
         // Pre-allocate per-column value and validity buffers with exact size
         let mut col_values: Vec<Vec<f32>> = vec![vec![0.0f32; num_out_rows]; num_out_cols];
         let mut col_validity: Vec<Vec<u8>> = vec![vec![0u8; (num_out_rows + 7) / 8]; num_out_cols];
 
+        let data_ptr = self.data.as_ptr();
+
         // Scan each row's byte blob sequentially
-        for (out_row, &row_idx) in row_indices.iter().enumerate() {
-            let blob = unsafe { self.data.get_unchecked(row_idx) };
-            let mut offset = 0usize;
+        for (out_row, &blob_offset) in byte_offsets.iter().enumerate() {
+            let mut offset = blob_offset;
 
             for col_pos in 0..self.num_columns {
-                let valid = unsafe { *blob.get_unchecked(offset) };
+                let valid = unsafe { *data_ptr.add(offset) };
                 offset += 1;
 
                 if unsafe { *requested_set.get_unchecked(col_pos) } {
@@ -162,10 +157,10 @@ impl ByteBlobTable {
                     if valid != 0 {
                         let value = f32::from_le_bytes(unsafe {
                             [
-                                *blob.get_unchecked(offset),
-                                *blob.get_unchecked(offset + 1),
-                                *blob.get_unchecked(offset + 2),
-                                *blob.get_unchecked(offset + 3),
+                                *data_ptr.add(offset),
+                                *data_ptr.add(offset + 1),
+                                *data_ptr.add(offset + 2),
+                                *data_ptr.add(offset + 3),
                             ]
                         });
                         unsafe {
