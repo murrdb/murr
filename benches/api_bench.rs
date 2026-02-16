@@ -1,31 +1,40 @@
-use std::sync::Arc;
+//! Benchmark comparing Murr API against Redis backends.
+
+mod backends;
+
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::http::{header, Request};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use http_body_util::BodyExt;
-use tower::ServiceExt;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use murr::api::{create_router, AppState};
-use murr::manager::TableManager;
-use murr::testutil::{bench_column_names, bench_generate_keys, setup_benchmark_table};
+use backends::murr::MurrBackend;
+use backends::redis_blob::RedisBlobBackend;
+use backends::redis_feast::RedisFeastBackend;
+use backends::testdata::{BENCH_NUM_COLUMNS, bench_column_names, bench_generate_keys};
+use backends::{BenchBackend, BenchConfig};
 
-const ROW_COUNTS: &[usize] = &[100_000, 1_000_000, 10_000_000];
-const KEY_COUNTS: &[usize] = &[10, 100, 1000];
+const ROW_COUNTS: &[usize] = &[10_000_000];
+const KEY_COUNTS: &[usize] = &[1000];
 
-fn bench_api_fetch(c: &mut Criterion) {
+/// Benchmark a specific backend implementation.
+fn bench_backend<B>(c: &mut Criterion, mut backend: B)
+where
+    B: BenchBackend,
+{
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let columns = bench_column_names();
+    let columns = bench_column_names(BENCH_NUM_COLUMNS);
 
     for &num_rows in ROW_COUNTS {
-        let (state, temp_dir) = rt.block_on(setup_benchmark_table("bench_table", num_rows));
+        let config = BenchConfig {
+            table_name: "bench_table".to_string(),
+            num_rows,
+            num_columns: BENCH_NUM_COLUMNS,
+        };
 
-        let manager = Arc::new(TableManager::new(temp_dir.path().join("data")));
-        rt.block_on(manager.insert("bench_table".to_string(), state));
-        let app_state = AppState { manager };
+        // Initialize backend outside timing loop
+        rt.block_on(backend.init(&config))
+            .expect("Backend init failed");
 
-        let mut group = c.benchmark_group(format!("api/rows_{}", num_rows));
+        let mut group = c.benchmark_group(format!("fetch/rows_{}/{}", num_rows, backend.name()));
 
         if num_rows >= 10_000_000 {
             group.sample_size(10);
@@ -35,35 +44,44 @@ fn bench_api_fetch(c: &mut Criterion) {
 
         for &num_keys in KEY_COUNTS {
             let keys = bench_generate_keys(num_keys, num_rows);
-            let request_body = serde_json::json!({
-                "keys": keys,
-                "columns": columns,
-            })
-            .to_string();
 
             group.throughput(Throughput::Elements(num_keys as u64));
             group.bench_with_input(BenchmarkId::new("keys", num_keys), &num_keys, |b, _| {
                 b.iter(|| {
                     rt.block_on(async {
-                        let app = create_router(app_state.clone());
-                        let request = Request::builder()
-                            .method("POST")
-                            .uri("/v1/bench_table/_fetch")
-                            .header(header::CONTENT_TYPE, "application/json")
-                            .header(header::ACCEPT, "application/vnd.apache.arrow.stream")
-                            .body(Body::from(request_body.clone()))
+                        let result = backend
+                            .fetch(black_box(&keys), black_box(&columns))
+                            .await
                             .unwrap();
-
-                        let response = app.oneshot(request).await.unwrap();
-                        let body = response.into_body().collect().await.unwrap().to_bytes();
-                        black_box(body)
+                        black_box(result)
                     })
                 })
             });
         }
         group.finish();
+
+        // Cleanup within runtime context
+        rt.block_on(backend.cleanup()).ok();
     }
+
+    // Final cleanup - ensure backend is fully dropped within runtime context
+    rt.block_on(async {
+        // Backend will be dropped here within the async context
+        drop(backend);
+    });
 }
 
-criterion_group!(benches, bench_api_fetch);
+fn bench_murr(c: &mut Criterion) {
+    bench_backend(c, MurrBackend::new());
+}
+
+fn bench_redis_blob(c: &mut Criterion) {
+    bench_backend(c, RedisBlobBackend::new());
+}
+
+fn bench_redis_feast(c: &mut Criterion) {
+    bench_backend(c, RedisFeastBackend::new());
+}
+
+criterion_group!(benches, bench_murr, bench_redis_blob, bench_redis_feast);
 criterion_main!(benches);
