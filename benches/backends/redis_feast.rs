@@ -7,8 +7,8 @@ use std::error::Error;
 
 use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
-use testcontainers::runners::AsyncRunner;
 use testcontainers::ContainerAsync;
+use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::Redis;
 
 use super::testdata::{bench_column_names, generate_bench_data};

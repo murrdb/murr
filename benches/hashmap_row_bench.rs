@@ -164,8 +164,9 @@ impl ByteBlobTable {
                             ]
                         });
                         unsafe {
-                            *col_values.get_unchecked_mut(out_col).get_unchecked_mut(out_row) =
-                                value;
+                            *col_values
+                                .get_unchecked_mut(out_col)
+                                .get_unchecked_mut(out_row) = value;
                             let validity = col_validity.get_unchecked_mut(out_col);
                             *validity.get_unchecked_mut(out_row >> 3) |= 1 << (out_row & 7);
                         }
