@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::Array;
+use arrow::datatypes::Field;
 
 use crate::core::MurrError;
 
@@ -14,6 +15,9 @@ pub enum KeyOffset {
 }
 
 pub trait Column {
+    /// Arrow field definition for this column.
+    fn field(&self) -> &Field;
+
     /// Pull N elements by index from segments, return Arrow Array.
     /// MissingKey entries produce null values in the output.
     fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;

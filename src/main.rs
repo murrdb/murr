@@ -1,9 +1,11 @@
 mod api;
 mod conf;
 mod core;
+mod directory;
 mod discovery;
 mod manager;
 mod parquet;
+mod segment;
 mod table;
 
 use std::net::SocketAddr;
