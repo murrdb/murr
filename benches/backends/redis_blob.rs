@@ -5,10 +5,10 @@
 use std::error::Error;
 
 use async_trait::async_trait;
-use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
-use testcontainers::runners::AsyncRunner;
+use redis::aio::MultiplexedConnection;
 use testcontainers::ContainerAsync;
+use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::Redis;
 
 use super::testdata::{generate_bench_data, pack_floats};

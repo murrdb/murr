@@ -1,7 +1,6 @@
 mod api;
 mod conf;
 mod core;
-mod directory;
 mod discovery;
 mod manager;
 mod parquet;

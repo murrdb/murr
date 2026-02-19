@@ -4,6 +4,7 @@ pub mod core;
 pub mod discovery;
 pub mod manager;
 pub mod parquet;
+pub mod segment;
 pub mod table;
 
 #[cfg(feature = "testutil")]

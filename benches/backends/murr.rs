@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::body::Body;
-use axum::http::{header, Request};
+use axum::http::{Request, header};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use murr::api::{create_router, AppState};
+use murr::api::{AppState, create_router};
 use murr::manager::TableManager;
 use murr::testutil::setup_benchmark_table;
 
