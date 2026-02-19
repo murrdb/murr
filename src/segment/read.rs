@@ -13,21 +13,34 @@ use super::format::{FOOTER_LEN_SIZE, HEADER_SIZE, MAGIC, VERSION, read_u16_le, r
 /// to named column payloads.
 #[derive(Debug)]
 pub struct Segment {
+    id: u32,
     mmap: Mmap,
     columns: HashMap<String, Range<u32>>,
 }
 
 impl Segment {
     /// Open a `.seg` file, validate the header, parse the footer, and
-    /// build column index.
+    /// build column index. The segment id is parsed from the filename stem
+    /// (e.g. `00000000.seg` → id 0).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, MurrError> {
-        let file = File::open(path.as_ref())?;
+        let path = path.as_ref();
+        let id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| {
+                MurrError::SegmentError(format!(
+                    "cannot parse segment id from filename: {}",
+                    path.display()
+                ))
+            })?;
+        let file = File::open(path)?;
         // SAFETY: the file is opened read-only and we treat the mapping as immutable.
         let mmap = unsafe { Mmap::map(&file) }?;
-        Self::from_mmap(mmap)
+        Self::from_mmap(id, mmap)
     }
 
-    fn from_mmap(mmap: Mmap) -> Result<Self, MurrError> {
+    fn from_mmap(id: u32, mmap: Mmap) -> Result<Self, MurrError> {
         let len = mmap.len();
         let min_size = HEADER_SIZE + FOOTER_LEN_SIZE;
         if len < min_size {
@@ -93,7 +106,16 @@ impl Segment {
             columns.insert(name, offset..end);
         }
 
-        Ok(Self { mmap, columns })
+        Ok(Self { id, mmap, columns })
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Iterator over column names in this segment.
+    pub fn column_names(&self) -> impl Iterator<Item = &str> {
+        self.columns.keys().map(|s| s.as_str())
     }
 
     /// Get a zero-copy slice of a column's payload.
@@ -107,22 +129,25 @@ impl Segment {
 mod tests {
     use super::*;
     use crate::segment::write::WriteSegment;
-    use tempfile::NamedTempFile;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
-    fn write_to_temp(ws: &WriteSegment) -> NamedTempFile {
-        let tmp = NamedTempFile::new().unwrap();
-        let mut file = File::create(tmp.path()).unwrap();
+    fn write_to_dir(ws: &WriteSegment, id: u32) -> (TempDir, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(format!("{:08}.seg", id));
+        let mut file = File::create(&path).unwrap();
         ws.write(&mut file).unwrap();
-        tmp
+        (dir, path)
     }
 
     #[test]
     fn test_round_trip_single_column() {
         let mut ws = WriteSegment::new();
         ws.add_column("data", vec![1, 2, 3, 4, 5]);
-        let tmp = write_to_temp(&ws);
+        let (_dir, path) = write_to_dir(&ws, 0);
 
-        let seg = Segment::open(tmp.path()).unwrap();
+        let seg = Segment::open(&path).unwrap();
+        assert_eq!(seg.id(), 0);
         assert_eq!(seg.column("data").unwrap(), &[1, 2, 3, 4, 5]);
         assert!(seg.column("missing").is_none());
     }
@@ -133,9 +158,10 @@ mod tests {
         ws.add_column("floats", vec![0xAA; 16]);
         ws.add_column("ints", vec![0xBB; 8]);
         ws.add_column("strings", vec![0xCC; 32]);
-        let tmp = write_to_temp(&ws);
+        let (_dir, path) = write_to_dir(&ws, 5);
 
-        let seg = Segment::open(tmp.path()).unwrap();
+        let seg = Segment::open(&path).unwrap();
+        assert_eq!(seg.id(), 5);
         assert_eq!(seg.column("floats").unwrap(), &[0xAA; 16]);
         assert_eq!(seg.column("ints").unwrap(), &[0xBB; 8]);
         assert_eq!(seg.column("strings").unwrap(), &[0xCC; 32]);
@@ -144,40 +170,43 @@ mod tests {
     #[test]
     fn test_empty_segment() {
         let ws = WriteSegment::new();
-        let tmp = write_to_temp(&ws);
+        let (_dir, path) = write_to_dir(&ws, 0);
 
-        let seg = Segment::open(tmp.path()).unwrap();
+        let seg = Segment::open(&path).unwrap();
         assert!(seg.column("anything").is_none());
     }
 
     #[test]
     fn test_bad_magic() {
-        let tmp = NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), b"BAAD\x01\x00\x00\x00\x00\x00\x00\x00").unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("00000000.seg");
+        std::fs::write(&path, b"BAAD\x01\x00\x00\x00\x00\x00\x00\x00").unwrap();
 
-        let err = Segment::open(tmp.path()).unwrap_err();
+        let err = Segment::open(&path).unwrap_err();
         assert!(err.to_string().contains("bad magic"));
     }
 
     #[test]
     fn test_bad_version() {
-        let tmp = NamedTempFile::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("00000000.seg");
         let mut buf = Vec::new();
         buf.extend_from_slice(b"MURR");
         buf.extend_from_slice(&99u32.to_le_bytes());
         buf.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(tmp.path(), &buf).unwrap();
+        std::fs::write(&path, &buf).unwrap();
 
-        let err = Segment::open(tmp.path()).unwrap_err();
+        let err = Segment::open(&path).unwrap_err();
         assert!(err.to_string().contains("unsupported version"));
     }
 
     #[test]
     fn test_file_too_small() {
-        let tmp = NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), b"MURR").unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("00000000.seg");
+        std::fs::write(&path, b"MURR").unwrap();
 
-        let err = Segment::open(tmp.path()).unwrap_err();
+        let err = Segment::open(&path).unwrap_err();
         assert!(err.to_string().contains("too small"));
     }
 
@@ -186,10 +215,18 @@ mod tests {
         let mut ws = WriteSegment::new();
         ws.add_column("empty", vec![]);
         ws.add_column("notempty", vec![42]);
-        let tmp = write_to_temp(&ws);
+        let (_dir, path) = write_to_dir(&ws, 0);
 
-        let seg = Segment::open(tmp.path()).unwrap();
+        let seg = Segment::open(&path).unwrap();
         assert_eq!(seg.column("empty").unwrap(), &[] as &[u8]);
         assert_eq!(seg.column("notempty").unwrap(), &[42]);
+    }
+
+    #[test]
+    fn test_segment_id_parsed_from_filename() {
+        let ws = WriteSegment::new();
+        let (_dir, path) = write_to_dir(&ws, 42);
+        let seg = Segment::open(&path).unwrap();
+        assert_eq!(seg.id(), 42);
     }
 }

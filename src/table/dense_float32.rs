@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, Float32Array, Float32Builder};
+use arrow::datatypes::{DataType, Field};
 
 use crate::core::MurrError;
 
@@ -64,10 +65,11 @@ impl<'a> DenseFloat32Segment<'a> {
 pub struct DenseFloat32Column<'a> {
     segments: Vec<DenseFloat32Segment<'a>>,
     nullable: bool,
+    field: Field,
 }
 
 impl<'a> DenseFloat32Column<'a> {
-    pub fn new(segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
+    pub fn new(name: &str, segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
             .iter()
             .map(|data| DenseFloat32Segment::parse(data, nullable))
@@ -75,6 +77,7 @@ impl<'a> DenseFloat32Column<'a> {
         Ok(Self {
             segments: parsed?,
             nullable,
+            field: Field::new(name, DataType::Float32, nullable),
         })
     }
 
@@ -107,6 +110,10 @@ impl<'a> DenseFloat32Column<'a> {
 }
 
 impl<'a> Column for DenseFloat32Column<'a> {
+    fn field(&self) -> &Field {
+        &self.field
+    }
+
     fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let mut builder = Float32Builder::with_capacity(indexes.len());
 
@@ -184,7 +191,7 @@ mod tests {
         let array = make_float32_array(&[Some(1.0), Some(2.5), Some(0.0)]);
         let bytes = DenseFloat32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 3);
 
         let result = col.get_all().unwrap();
@@ -205,7 +212,7 @@ mod tests {
         let array = make_float32_array(&[Some(1.0), Some(2.0)]);
         let bytes = DenseFloat32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], true).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
         let result = col.get_all().unwrap();
         let result = result.as_any().downcast_ref::<Float32Array>().unwrap();
 
@@ -220,7 +227,7 @@ mod tests {
         let array = make_float32_array(&[Some(1.5), None, Some(3.14), None]);
         let bytes = DenseFloat32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], true).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 4);
 
         let result = col.get_all().unwrap();
@@ -238,7 +245,7 @@ mod tests {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0), Some(40.0)]);
         let bytes = DenseFloat32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -269,7 +276,7 @@ mod tests {
         let array = make_float32_array(&[Some(1.0), None, Some(3.0)]);
         let bytes = DenseFloat32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], true).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -303,7 +310,7 @@ mod tests {
         let bytes1 = DenseFloat32Column::write(&array1, false).unwrap();
         let bytes2 = DenseFloat32Column::write(&array2, false).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes1[..], &bytes2[..]], false).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
         assert_eq!(col.size(), 5);
 
         let result = col.get_all().unwrap();
@@ -336,7 +343,7 @@ mod tests {
         let array = make_float32_array(&[]);
         let bytes = DenseFloat32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 0);
 
         let result = col.get_all().unwrap();
@@ -348,7 +355,7 @@ mod tests {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0)]);
         let bytes = DenseFloat32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -383,7 +390,7 @@ mod tests {
         let array = make_float32_array(&values);
         let bytes = DenseFloat32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new(&[&bytes[..]], true).unwrap();
+        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 64);
 
         let result = col.get_all().unwrap();

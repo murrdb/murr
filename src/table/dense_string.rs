@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, StringBuilder, StringArray};
+use arrow::datatypes::{DataType, Field};
 
 use crate::core::MurrError;
 
@@ -98,10 +99,11 @@ impl<'a> DenseStringSegment<'a> {
 pub struct DenseStringColumn<'a> {
     segments: Vec<DenseStringSegment<'a>>,
     nullable: bool,
+    field: Field,
 }
 
 impl<'a> DenseStringColumn<'a> {
-    pub fn new(segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
+    pub fn new(name: &str, segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
             .iter()
             .map(|data| DenseStringSegment::parse(data, nullable))
@@ -109,6 +111,7 @@ impl<'a> DenseStringColumn<'a> {
         Ok(Self {
             segments: parsed?,
             nullable,
+            field: Field::new(name, DataType::Utf8, nullable),
         })
     }
 
@@ -159,6 +162,10 @@ impl<'a> DenseStringColumn<'a> {
 }
 
 impl<'a> Column for DenseStringColumn<'a> {
+    fn field(&self) -> &Field {
+        &self.field
+    }
+
     fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let mut builder = StringBuilder::with_capacity(indexes.len(), 0);
 
@@ -247,7 +254,7 @@ mod tests {
         let array = make_string_array(&[Some("hello"), Some("world"), Some("")]);
         let bytes = DenseStringColumn::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], false).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 3);
 
         let result = col.get_all().unwrap();
@@ -268,7 +275,7 @@ mod tests {
         let array = make_string_array(&[Some("a"), Some("b")]);
         let bytes = DenseStringColumn::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], true).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
         let result = col.get_all().unwrap();
         let result = result.as_any().downcast_ref::<StringArray>().unwrap();
 
@@ -284,7 +291,7 @@ mod tests {
         let array = make_string_array(&[Some("hello"), None, Some("world"), None]);
         let bytes = DenseStringColumn::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], true).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 4);
 
         let result = col.get_all().unwrap();
@@ -302,7 +309,7 @@ mod tests {
         let array = make_string_array(&[Some("a"), Some("b"), Some("c"), Some("d")]);
         let bytes = DenseStringColumn::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], false).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -333,7 +340,7 @@ mod tests {
         let array = make_string_array(&[Some("x"), None, Some("z")]);
         let bytes = DenseStringColumn::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], true).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -367,7 +374,7 @@ mod tests {
         let bytes1 = DenseStringColumn::write(&array1, false).unwrap();
         let bytes2 = DenseStringColumn::write(&array2, false).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes1[..], &bytes2[..]], false).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
         assert_eq!(col.size(), 5);
 
         // get_all across segments
@@ -402,7 +409,7 @@ mod tests {
         let array = make_string_array(&[]);
         let bytes = DenseStringColumn::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], false).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 0);
 
         let result = col.get_all().unwrap();
@@ -414,7 +421,7 @@ mod tests {
         let array = make_string_array(&[Some("hello"), Some("world"), Some("foo")]);
         let bytes = DenseStringColumn::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], false).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -450,7 +457,7 @@ mod tests {
         let array = make_string_array(&values);
         let bytes = DenseStringColumn::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new(&[&bytes[..]], true).unwrap();
+        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 64);
 
         let result = col.get_all().unwrap();
