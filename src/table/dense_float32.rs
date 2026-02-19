@@ -7,7 +7,7 @@ use crate::core::MurrError;
 use super::bitmap::{
     build_bitmap_words, parse_null_bitmap, read_f32_le, read_u32_le, write_bitmap, NullBitmap,
 };
-use super::column::{Column, SegmentIndex};
+use super::column::{Column, KeyOffset};
 
 /// Parsed zero-copy view over a single segment's dense float32 column data.
 ///
@@ -107,32 +107,42 @@ impl<'a> DenseFloat32Column<'a> {
 }
 
 impl<'a> Column for DenseFloat32Column<'a> {
-    fn get_indexes(&self, indexes: &[SegmentIndex]) -> Result<Arc<dyn Array>, MurrError> {
+    fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let mut builder = Float32Builder::with_capacity(indexes.len());
 
         for idx in indexes {
-            let seg = self
-                .segments
-                .get(idx.segment_id as usize)
-                .ok_or_else(|| {
-                    MurrError::TableError(format!(
-                        "segment_id {} out of range (have {})",
-                        idx.segment_id,
-                        self.segments.len()
-                    ))
-                })?;
+            match idx {
+                KeyOffset::MissingKey => {
+                    builder.append_null();
+                }
+                KeyOffset::SegmentOffset {
+                    segment_id,
+                    segment_offset,
+                } => {
+                    let seg = self
+                        .segments
+                        .get(*segment_id as usize)
+                        .ok_or_else(|| {
+                            MurrError::TableError(format!(
+                                "segment_id {} out of range (have {})",
+                                segment_id,
+                                self.segments.len()
+                            ))
+                        })?;
 
-            if idx.segment_offset >= seg.size {
-                return Err(MurrError::TableError(format!(
-                    "segment_offset {} out of range (segment has {} values)",
-                    idx.segment_offset, seg.size
-                )));
-            }
+                    if *segment_offset >= seg.size {
+                        return Err(MurrError::TableError(format!(
+                            "segment_offset {} out of range (segment has {} values)",
+                            segment_offset, seg.size
+                        )));
+                    }
 
-            if !seg.nulls.is_valid(idx.segment_offset) {
-                builder.append_null();
-            } else {
-                builder.append_value(seg.value_at(idx.segment_offset));
+                    if !seg.nulls.is_valid(*segment_offset) {
+                        builder.append_null();
+                    } else {
+                        builder.append_value(seg.value_at(*segment_offset));
+                    }
+                }
             }
         }
 
@@ -231,15 +241,15 @@ mod tests {
         let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
 
         let indexes = vec![
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 2,
             },
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 0,
             },
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 3,
             },
@@ -262,15 +272,15 @@ mod tests {
         let col = DenseFloat32Column::new(&[&bytes[..]], true).unwrap();
 
         let indexes = vec![
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 1,
             },
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 0,
             },
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 2,
             },
@@ -306,11 +316,11 @@ mod tests {
         assert_eq!(result.value(4), 5.0);
 
         let indexes = vec![
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 1,
                 segment_offset: 2,
             },
-            SegmentIndex {
+            KeyOffset::SegmentOffset {
                 segment_id: 0,
                 segment_offset: 0,
             },
@@ -331,6 +341,38 @@ mod tests {
 
         let result = col.get_all().unwrap();
         assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_get_indexes_with_missing_keys() {
+        let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0)]);
+        let bytes = DenseFloat32Column::write(&array, false).unwrap();
+
+        let col = DenseFloat32Column::new(&[&bytes[..]], false).unwrap();
+
+        let indexes = vec![
+            KeyOffset::SegmentOffset {
+                segment_id: 0,
+                segment_offset: 0,
+            },
+            KeyOffset::MissingKey,
+            KeyOffset::SegmentOffset {
+                segment_id: 0,
+                segment_offset: 2,
+            },
+            KeyOffset::MissingKey,
+        ];
+
+        let result = col.get_indexes(&indexes).unwrap();
+        let result = result.as_any().downcast_ref::<Float32Array>().unwrap();
+
+        assert_eq!(result.len(), 4);
+        assert_eq!(result.value(0), 10.0);
+        assert!(!result.is_null(0));
+        assert!(result.is_null(1));
+        assert_eq!(result.value(2), 30.0);
+        assert!(!result.is_null(2));
+        assert!(result.is_null(3));
     }
 
     #[test]
