@@ -4,6 +4,9 @@ use arrow::array::{Array, StringBuilder, StringArray};
 
 use crate::core::MurrError;
 
+use super::bitmap::{
+    build_bitmap_words, parse_null_bitmap, read_i32_le, read_u32_le, write_bitmap, NullBitmap,
+};
 use super::column::{Column, SegmentIndex};
 
 /// Parsed zero-copy view over a single segment's dense string column data.
@@ -22,7 +25,7 @@ struct DenseStringSegment<'a> {
     value_offsets: &'a [u8], // raw bytes, read as i32 LE per element
     payload: &'a [u8],
     payload_size: u32,
-    nulls: Option<&'a [u8]>, // raw bytes, read as u32 LE per word
+    nulls: NullBitmap<'a>,
 }
 
 impl<'a> DenseStringSegment<'a> {
@@ -63,25 +66,7 @@ impl<'a> DenseStringSegment<'a> {
         let payload = &data[pos..pos + payload_size as usize];
         pos += payload_size as usize;
 
-        if pos + 4 > data.len() {
-            return Err(MurrError::TableError(
-                "dense string segment truncated at null_bitmap_size".into(),
-            ));
-        }
-        let null_bitmap_size = read_u32_le(data, pos);
-        pos += 4;
-
-        let nulls = if nullable && null_bitmap_size > 0 {
-            let bitmap_byte_len = null_bitmap_size as usize * 4;
-            if pos + bitmap_byte_len > data.len() {
-                return Err(MurrError::TableError(
-                    "dense string segment truncated at null_bitmap".into(),
-                ));
-            }
-            Some(&data[pos..pos + bitmap_byte_len])
-        } else {
-            None
-        };
+        let (nulls, _) = parse_null_bitmap(data, pos, nullable, "dense string")?;
 
         Ok(Self {
             size: num_values,
@@ -107,20 +92,6 @@ impl<'a> DenseStringSegment<'a> {
             self.payload_size as usize
         };
         (start, end)
-    }
-
-    /// Check if value at `idx` is valid (not null).
-    /// Returns true if non-nullable or if the presence bit is set.
-    fn is_valid(&self, idx: u32) -> bool {
-        match self.nulls {
-            None => true,
-            Some(bitmap) => {
-                let word_idx = (idx / 32) as usize;
-                let bit_idx = idx % 32;
-                let word = read_u32_le(bitmap, word_idx * 4);
-                (word >> bit_idx) & 1 == 1
-            }
-        }
     }
 }
 
@@ -159,23 +130,11 @@ impl<'a> DenseStringColumn<'a> {
 
         let payload_size = payload.len() as u32;
 
-        // Build null bitmap if nullable.
         let bitmap_words: Vec<u32> = if nullable {
-            let word_count = (num_values as usize + 31) / 32;
-            let mut words = vec![0u32; word_count];
-            for i in 0..values.len() {
-                if !values.is_null(i) {
-                    let word_idx = i / 32;
-                    let bit_idx = i % 32;
-                    words[word_idx] |= 1 << bit_idx;
-                }
-            }
-            words
+            build_bitmap_words(values.len(), |i| values.is_null(i))
         } else {
             Vec::new()
         };
-
-        let null_bitmap_size = bitmap_words.len() as u32;
 
         // Calculate total size and write.
         let total_size = 4 // num_values
@@ -183,7 +142,7 @@ impl<'a> DenseStringColumn<'a> {
             + 4 // payload_size
             + payload_size as usize // payload
             + 4 // null_bitmap_size
-            + (null_bitmap_size as usize * 4); // bitmap words
+            + (bitmap_words.len() * 4); // bitmap words
 
         let mut buf = Vec::with_capacity(total_size);
 
@@ -193,10 +152,7 @@ impl<'a> DenseStringColumn<'a> {
         }
         buf.extend_from_slice(&payload_size.to_le_bytes());
         buf.extend_from_slice(&payload);
-        buf.extend_from_slice(&null_bitmap_size.to_le_bytes());
-        for word in &bitmap_words {
-            buf.extend_from_slice(&word.to_le_bytes());
-        }
+        write_bitmap(&mut buf, &bitmap_words);
 
         Ok(buf)
     }
@@ -225,7 +181,7 @@ impl<'a> Column for DenseStringColumn<'a> {
                 )));
             }
 
-            if !seg.is_valid(idx.segment_offset) {
+            if !seg.nulls.is_valid(idx.segment_offset) {
                 builder.append_null();
             } else {
                 let (start, end) = seg.string_range(idx.segment_offset);
@@ -245,7 +201,7 @@ impl<'a> Column for DenseStringColumn<'a> {
 
         for seg in &self.segments {
             for i in 0..seg.size {
-                if !seg.is_valid(i) {
+                if !seg.nulls.is_valid(i) {
                     builder.append_null();
                 } else {
                     let (start, end) = seg.string_range(i);
@@ -263,14 +219,6 @@ impl<'a> Column for DenseStringColumn<'a> {
     fn size(&self) -> u32 {
         self.segments.iter().map(|s| s.size).sum()
     }
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
-}
-
-fn read_i32_le(data: &[u8], offset: usize) -> i32 {
-    i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
 #[cfg(test)]
