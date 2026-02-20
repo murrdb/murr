@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use common::{generate_parquet_file, make_table_config, verify_array_values};
 use murr::conf::DType;
-use murr::manager::TableLoader;
+use murr::old::manager::TableLoader;
 
 /// Test the full pipeline with a simple 2-column (key + value) parquet file.
 #[tokio::test]

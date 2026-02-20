@@ -15,8 +15,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::conf::{ColumnConfig, DType, LocalSourceConfig, SourceConfig, TableConfig};
-use crate::manager::{TableLoader, TableState};
-use crate::parquet::dtype_to_arrow;
+use crate::old::manager::{TableLoader, TableState};
+use crate::old::parquet::dtype_to_arrow;
 
 /// Generate a deterministic Parquet file based on a TableConfig.
 ///

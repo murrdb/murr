@@ -10,8 +10,8 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use murr::api::{AppState, create_router};
-use murr::manager::TableManager;
+use murr::old::api::{AppState, create_router};
+use murr::old::manager::TableManager;
 use murr::testutil::setup_benchmark_table;
 
 use super::{BenchBackend, BenchConfig};

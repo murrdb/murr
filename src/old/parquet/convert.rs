@@ -13,7 +13,7 @@ use tokio_stream::StreamExt;
 
 use crate::conf::TableConfig;
 use crate::core::MurrError;
-use crate::parquet::schema::validate_schema;
+use crate::old::parquet::schema::validate_schema;
 
 /// Converts Parquet files to a single Arrow IPC file.
 ///
