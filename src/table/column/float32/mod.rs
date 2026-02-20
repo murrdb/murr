@@ -66,7 +66,7 @@ impl<'a> Column for Float32Column<'a> {
                         )));
                     }
 
-                    if !seg.nulls.is_valid(*segment_offset) {
+                    if !seg.nulls.is_valid(*segment_offset as u64) {
                         builder.append_null();
                     } else {
                         builder.append_value(seg.payload[*segment_offset as usize]);
@@ -84,7 +84,7 @@ impl<'a> Column for Float32Column<'a> {
 
         for seg in &self.segments {
             for i in 0..seg.header.num_values {
-                if !seg.nulls.is_valid(i) {
+                if !seg.nulls.is_valid(i as u64) {
                     builder.append_null();
                 } else {
                     builder.append_value(seg.payload[i as usize]);
