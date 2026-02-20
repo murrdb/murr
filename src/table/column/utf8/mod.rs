@@ -15,6 +15,7 @@ use segment::Utf8Segment;
 pub struct Utf8Column<'a> {
     segments: Vec<Utf8Segment<'a>>,
     field: Field,
+    nullable: bool,
 }
 
 impl<'a> Utf8Column<'a> {
@@ -30,6 +31,7 @@ impl<'a> Utf8Column<'a> {
         Ok(Self {
             segments: parsed?,
             field: Field::new(name, DataType::Utf8, config.nullable),
+            nullable: config.nullable,
         })
     }
 }
@@ -42,33 +44,72 @@ impl<'a> Column for Utf8Column<'a> {
     fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let mut builder = StringBuilder::with_capacity(indexes.len(), 0);
 
-        for idx in indexes {
-            match idx {
-                KeyOffset::MissingKey => {
-                    builder.append_null();
-                }
-                KeyOffset::SegmentOffset {
-                    segment_id,
-                    segment_offset,
-                } => {
-                    let seg = self.segments.get(*segment_id as usize).ok_or_else(|| {
-                        MurrError::TableError(format!(
-                            "segment_id {} out of range (have {})",
-                            segment_id,
-                            self.segments.len()
-                        ))
-                    })?;
-
-                    if *segment_offset >= seg.header.num_values {
-                        return Err(MurrError::TableError(format!(
-                            "segment_offset {} out of range (segment has {} values)",
-                            segment_offset, seg.header.num_values
-                        )));
-                    }
-
-                    if !seg.nulls.is_valid(*segment_offset as u64) {
+        if self.nullable {
+            for idx in indexes {
+                match idx {
+                    KeyOffset::MissingKey => {
                         builder.append_null();
-                    } else {
+                    }
+                    KeyOffset::SegmentOffset {
+                        segment_id,
+                        segment_offset,
+                    } => {
+                        let seg =
+                            self.segments.get(*segment_id as usize).ok_or_else(|| {
+                                MurrError::TableError(format!(
+                                    "segment_id {} out of range (have {})",
+                                    segment_id,
+                                    self.segments.len()
+                                ))
+                            })?;
+
+                        if *segment_offset >= seg.header.num_values {
+                            return Err(MurrError::TableError(format!(
+                                "segment_offset {} out of range (segment has {} values)",
+                                segment_offset, seg.header.num_values
+                            )));
+                        }
+
+                        if let Some(ref nulls) = seg.nulls {
+                            if !nulls.is_valid(*segment_offset as u64) {
+                                builder.append_null();
+                                continue;
+                            }
+                        }
+                        let (start, end) = seg.string_range(*segment_offset);
+                        let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
+                            MurrError::TableError(format!("invalid utf8 in string column: {e}"))
+                        })?;
+                        builder.append_value(s);
+                    }
+                }
+            }
+        } else {
+            for idx in indexes {
+                match idx {
+                    KeyOffset::MissingKey => {
+                        builder.append_null();
+                    }
+                    KeyOffset::SegmentOffset {
+                        segment_id,
+                        segment_offset,
+                    } => {
+                        let seg =
+                            self.segments.get(*segment_id as usize).ok_or_else(|| {
+                                MurrError::TableError(format!(
+                                    "segment_id {} out of range (have {})",
+                                    segment_id,
+                                    self.segments.len()
+                                ))
+                            })?;
+
+                        if *segment_offset >= seg.header.num_values {
+                            return Err(MurrError::TableError(format!(
+                                "segment_offset {} out of range (segment has {} values)",
+                                segment_offset, seg.header.num_values
+                            )));
+                        }
+
                         let (start, end) = seg.string_range(*segment_offset);
                         let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
                             MurrError::TableError(format!("invalid utf8 in string column: {e}"))
@@ -86,11 +127,36 @@ impl<'a> Column for Utf8Column<'a> {
         let total = self.size() as usize;
         let mut builder = StringBuilder::with_capacity(total, 0);
 
-        for seg in &self.segments {
-            for i in 0..seg.header.num_values {
-                if !seg.nulls.is_valid(i as u64) {
-                    builder.append_null();
+        if self.nullable {
+            for seg in &self.segments {
+                if let Some(ref nulls) = seg.nulls {
+                    for i in 0..seg.header.num_values {
+                        if !nulls.is_valid(i as u64) {
+                            builder.append_null();
+                        } else {
+                            let (start, end) = seg.string_range(i);
+                            let s =
+                                std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
+                                    MurrError::TableError(format!(
+                                        "invalid utf8 in string column: {e}"
+                                    ))
+                                })?;
+                            builder.append_value(s);
+                        }
+                    }
                 } else {
+                    for i in 0..seg.header.num_values {
+                        let (start, end) = seg.string_range(i);
+                        let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
+                            MurrError::TableError(format!("invalid utf8 in string column: {e}"))
+                        })?;
+                        builder.append_value(s);
+                    }
+                }
+            }
+        } else {
+            for seg in &self.segments {
+                for i in 0..seg.header.num_values {
                     let (start, end) = seg.string_range(i);
                     let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
                         MurrError::TableError(format!("invalid utf8 in string column: {e}"))

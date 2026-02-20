@@ -48,7 +48,7 @@ pub(crate) struct Utf8Segment<'a> {
     pub(super) header: &'a Utf8Header,
     pub(super) value_offsets: &'a [i32],
     pub(super) payload: &'a [u8],
-    pub(super) nulls: NullBitmap<'a>,
+    pub(super) nulls: Option<NullBitmap<'a>>,
 }
 
 impl<'a> Utf8Segment<'a> {
@@ -206,8 +206,7 @@ mod tests {
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 2);
-        assert!(seg.nulls.is_valid(0));
-        assert!(seg.nulls.is_valid(1));
+        assert!(seg.nulls.is_none());
     }
 
     #[test]
@@ -218,10 +217,11 @@ mod tests {
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 4);
-        assert!(seg.nulls.is_valid(0));
-        assert!(!seg.nulls.is_valid(1));
-        assert!(seg.nulls.is_valid(2));
-        assert!(!seg.nulls.is_valid(3));
+        let nulls = seg.nulls.as_ref().unwrap();
+        assert!(nulls.is_valid(0));
+        assert!(!nulls.is_valid(1));
+        assert!(nulls.is_valid(2));
+        assert!(!nulls.is_valid(3));
     }
 
     #[test]
@@ -246,11 +246,12 @@ mod tests {
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 64);
 
+        let nulls = seg.nulls.as_ref().unwrap();
         for i in 0..64u64 {
             if i % 3 == 0 {
-                assert!(!seg.nulls.is_valid(i), "expected null at index {i}");
+                assert!(!nulls.is_valid(i), "expected null at index {i}");
             } else {
-                assert!(seg.nulls.is_valid(i), "expected valid at index {i}");
+                assert!(nulls.is_valid(i), "expected valid at index {i}");
             }
         }
     }
