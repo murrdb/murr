@@ -172,7 +172,7 @@ impl<'a> TableReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::directory::{Directory, LocalDirectory};
+    use crate::io::directory::{Directory, LocalDirectory, TableSchema};
     use crate::io::segment::WriteSegment;
     use crate::io::table::column::ColumnSegment as _;
     use crate::io::table::column::float32::segment::Float32Segment;
@@ -223,15 +223,37 @@ mod tests {
         schema
     }
 
+    fn write_table_json(dir: &std::path::Path) {
+        let mut columns = HashMap::new();
+        columns.insert(
+            "key".to_string(),
+            ColumnConfig {
+                dtype: DType::Utf8,
+                nullable: false,
+            },
+        );
+        columns.insert(
+            "value".to_string(),
+            ColumnConfig {
+                dtype: DType::Float32,
+                nullable: true,
+            },
+        );
+        let schema = TableSchema { columns };
+        let data = serde_json::to_vec_pretty(&schema).unwrap();
+        std::fs::write(dir.join("table.json"), data).unwrap();
+    }
+
     async fn open_view(dir: &std::path::Path) -> TableView {
         let local = LocalDirectory::new(dir);
-        let infos = local.segments().await.unwrap();
-        TableView::open(dir, &infos).unwrap()
+        let index = local.index().await.unwrap().unwrap();
+        TableView::open(dir, &index.segments).unwrap()
     }
 
     #[tokio::test]
     async fn test_single_segment_get() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["a", "b", "c"], &[1.0, 2.0, 3.0]);
 
         let view = open_view(dir.path()).await;
@@ -252,6 +274,7 @@ mod tests {
     #[tokio::test]
     async fn test_missing_keys_produce_nulls() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["a", "b"], &[10.0, 20.0]);
 
         let view = open_view(dir.path()).await;
@@ -273,6 +296,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_keys_returns_empty_batch() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
         let view = open_view(dir.path()).await;
@@ -286,6 +310,7 @@ mod tests {
     #[tokio::test]
     async fn test_multi_segment_later_wins() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["a", "b"], &[1.0, 2.0]);
         write_segment(dir.path(), 1, &["a", "c"], &[100.0, 3.0]);
 
@@ -307,6 +332,7 @@ mod tests {
     #[tokio::test]
     async fn test_order_preserved() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["x", "y", "z"], &[1.0, 2.0, 3.0]);
 
         let view = open_view(dir.path()).await;
@@ -327,6 +353,33 @@ mod tests {
     #[tokio::test]
     async fn test_mixed_string_and_float_columns() {
         let dir = TempDir::new().unwrap();
+        {
+            let mut columns = HashMap::new();
+            columns.insert(
+                "key".to_string(),
+                ColumnConfig {
+                    dtype: DType::Utf8,
+                    nullable: false,
+                },
+            );
+            columns.insert(
+                "score".to_string(),
+                ColumnConfig {
+                    dtype: DType::Float32,
+                    nullable: true,
+                },
+            );
+            columns.insert(
+                "name".to_string(),
+                ColumnConfig {
+                    dtype: DType::Utf8,
+                    nullable: true,
+                },
+            );
+            let schema = TableSchema { columns };
+            let data = serde_json::to_vec_pretty(&schema).unwrap();
+            std::fs::write(dir.path().join("table.json"), data).unwrap();
+        }
 
         let keys: StringArray = ["k1", "k2"].iter().map(|k| Some(*k)).collect();
         let floats: Float32Array = [10.0f32, 20.0].iter().map(|v| Some(*v)).collect();
@@ -388,6 +441,7 @@ mod tests {
     #[tokio::test]
     async fn test_all_missing_keys() {
         let dir = TempDir::new().unwrap();
+        write_table_json(dir.path());
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
         let view = open_view(dir.path()).await;
