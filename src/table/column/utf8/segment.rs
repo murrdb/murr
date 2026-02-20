@@ -4,9 +4,7 @@ use bytemuck::{Pod, Zeroable, cast_slice};
 use crate::conf::ColumnConfig;
 use crate::core::MurrError;
 use crate::table::column::ColumnSegment;
-use crate::table::column::bitmap::{
-    NullBitmap, align4_padding, build_bitmap_words, parse_null_bitmap,
-};
+use crate::table::column::bitmap::{NullBitmap, align8_padding};
 
 /// Fixed-size header at the start of a dense string column segment.
 ///
@@ -90,7 +88,7 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
         }
         let payload = &data[header.payload_offset as usize..payload_end];
 
-        let nulls = parse_null_bitmap(
+        let nulls = NullBitmap::parse(
             data,
             header.null_bitmap_offset as usize,
             header.null_bitmap_size,
@@ -121,10 +119,9 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
         }
 
         let payload_size = payload.len() as u32;
-        let payload_padding = align4_padding(payload.len());
 
-        let bitmap_words: Vec<u32> = if config.nullable {
-            build_bitmap_words(values.len(), |i| values.is_null(i))
+        let bitmap_bytes: Vec<u8> = if config.nullable {
+            NullBitmap::write(values)
         } else {
             Vec::new()
         };
@@ -132,13 +129,15 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
         // Compute offsets for header.
         let offsets_byte_len = num_values as usize * 4;
         let payload_offset = (HEADER_SIZE + offsets_byte_len) as u32;
-        let null_bitmap_offset = payload_offset + payload_size + payload_padding as u32;
+        let bitmap_unpadded = HEADER_SIZE + offsets_byte_len + payload_size as usize;
+        let payload_padding = align8_padding(bitmap_unpadded);
+        let null_bitmap_offset = (bitmap_unpadded + payload_padding) as u32;
 
         let total_size = HEADER_SIZE
             + offsets_byte_len
             + payload_size as usize
             + payload_padding
-            + bitmap_words.len() * 4;
+            + bitmap_bytes.len();
 
         let mut buf = Vec::with_capacity(total_size);
 
@@ -147,13 +146,13 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
             payload_offset,
             payload_size,
             null_bitmap_offset,
-            null_bitmap_size: bitmap_words.len() as u32,
+            null_bitmap_size: bitmap_bytes.len() as u32,
         };
         buf.extend_from_slice(bytemuck::bytes_of(&header));
         buf.extend_from_slice(cast_slice(&offsets));
         buf.extend_from_slice(&payload);
-        buf.extend_from_slice(&[0u8; 3][..payload_padding]);
-        buf.extend_from_slice(cast_slice(&bitmap_words));
+        buf.extend_from_slice(&[0u8; 7][..payload_padding]);
+        buf.extend_from_slice(&bitmap_bytes);
 
         Ok(buf)
     }
@@ -247,7 +246,7 @@ mod tests {
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 64);
 
-        for i in 0..64u32 {
+        for i in 0..64u64 {
             if i % 3 == 0 {
                 assert!(!seg.nulls.is_valid(i), "expected null at index {i}");
             } else {

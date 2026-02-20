@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable, cast_slice};
 use crate::conf::ColumnConfig;
 use crate::core::MurrError;
 use crate::table::column::ColumnSegment;
-use crate::table::column::bitmap::{NullBitmap, build_bitmap_words, parse_null_bitmap};
+use crate::table::column::bitmap::{NullBitmap, align8_padding};
 
 /// Fixed-size header at the start of a dense float32 column segment.
 ///
@@ -61,7 +61,7 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
         }
         let payload: &[f32] = cast_slice(&data[header.payload_offset as usize..payload_end]);
 
-        let nulls = parse_null_bitmap(
+        let nulls = NullBitmap::parse(
             data,
             header.null_bitmap_offset as usize,
             header.null_bitmap_size,
@@ -79,24 +79,25 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
     fn write(config: &ColumnConfig, values: &Float32Array) -> Result<Vec<u8>, MurrError> {
         let num_values = values.len() as u32;
 
-        let bitmap_words: Vec<u32> = if config.nullable {
-            build_bitmap_words(values.len(), |i| values.is_null(i))
+        let bitmap_bytes: Vec<u8> = if config.nullable {
+            NullBitmap::write(values)
         } else {
             Vec::new()
         };
 
         let payload_offset = HEADER_SIZE as u32;
         let payload_byte_len = num_values as usize * 4;
-        let null_bitmap_offset = payload_offset + payload_byte_len as u32;
+        let payload_padding = align8_padding(HEADER_SIZE + payload_byte_len);
+        let null_bitmap_offset = (HEADER_SIZE + payload_byte_len + payload_padding) as u32;
 
-        let total_size = HEADER_SIZE + payload_byte_len + bitmap_words.len() * 4;
+        let total_size = HEADER_SIZE + payload_byte_len + payload_padding + bitmap_bytes.len();
         let mut buf = Vec::with_capacity(total_size);
 
         let header = Float32Header {
             num_values,
             payload_offset,
             null_bitmap_offset,
-            null_bitmap_size: bitmap_words.len() as u32,
+            null_bitmap_size: bitmap_bytes.len() as u32,
         };
         buf.extend_from_slice(bytemuck::bytes_of(&header));
 
@@ -110,7 +111,8 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
             })
             .collect();
         buf.extend_from_slice(cast_slice(&payload));
-        buf.extend_from_slice(cast_slice(&bitmap_words));
+        buf.extend_from_slice(&[0u8; 7][..payload_padding]);
+        buf.extend_from_slice(&bitmap_bytes);
 
         Ok(buf)
     }
@@ -204,7 +206,7 @@ mod tests {
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 64);
 
-        for i in 0..64u32 {
+        for i in 0..64u64 {
             if i % 3 == 0 {
                 assert!(!seg.nulls.is_valid(i), "expected null at index {i}");
             } else {
