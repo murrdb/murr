@@ -8,31 +8,31 @@ use arrow::record_batch::RecordBatch;
 
 use crate::conf::{ColumnConfig, DType};
 use crate::core::MurrError;
-use crate::directory::Directory;
 
 use super::column::read_u32;
 use super::column::{Column, Float32Column, KeyOffset, Utf8Column};
+use super::view::TableView;
 
-pub struct Table2<'a> {
+pub struct TableReader<'a> {
     columns: AHashMap<String, Box<dyn Column + 'a>>,
     index: AHashMap<String, KeyOffset>,
 }
 
-impl<'a> Table2<'a> {
-    /// Build a table from a directory of segments and an explicit column schema.
+impl<'a> TableReader<'a> {
+    /// Build a table reader from a TableView and an explicit column schema.
     ///
     /// The key column is always loaded as a non-nullable `Utf8Column` and
     /// is used to build the key index. It does not need to appear in `schema`,
     /// but if present it will also be queryable via `get()`.
     ///
-    /// Segments are processed in directory order (sorted by filename). When
-    /// multiple segments contain the same key, the last segment wins.
-    pub fn from_directory(
-        dir: &'a dyn Directory,
+    /// Segments are processed in order. When multiple segments contain the
+    /// same key, the last segment wins.
+    pub fn from_table(
+        table: &'a TableView,
         key_column: &str,
         schema: &HashMap<String, ColumnConfig>,
     ) -> Result<Self, MurrError> {
-        let segments = dir.segments();
+        let segments = table.segments();
 
         let mut columns: AHashMap<String, Box<dyn Column + 'a>> = AHashMap::new();
 
@@ -172,7 +172,7 @@ impl<'a> Table2<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::directory::LocalDirectory;
+    use crate::directory::{Directory, LocalDirectory};
     use crate::segment::WriteSegment;
     use crate::table::column::ColumnSegment as _;
     use crate::table::column::float32::segment::Float32Segment;
@@ -223,13 +223,19 @@ mod tests {
         schema
     }
 
-    #[test]
-    fn test_single_segment_get() {
+    async fn open_view(dir: &std::path::Path) -> TableView {
+        let local = LocalDirectory::new(dir);
+        let infos = local.segments().await.unwrap();
+        TableView::open(dir, &infos).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_single_segment_get() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["a", "b", "c"], &[1.0, 2.0, 3.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&["b", "a"], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 2);
@@ -243,13 +249,13 @@ mod tests {
         assert_eq!(vals.value(1), 1.0);
     }
 
-    #[test]
-    fn test_missing_keys_produce_nulls() {
+    #[tokio::test]
+    async fn test_missing_keys_produce_nulls() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["a", "b"], &[10.0, 20.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&["a", "missing", "b"], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 3);
@@ -264,27 +270,27 @@ mod tests {
         assert_eq!(vals.value(2), 20.0);
     }
 
-    #[test]
-    fn test_empty_keys_returns_empty_batch() {
+    #[tokio::test]
+    async fn test_empty_keys_returns_empty_batch() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&[], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 0);
         assert_eq!(result.num_columns(), 1);
     }
 
-    #[test]
-    fn test_multi_segment_later_wins() {
+    #[tokio::test]
+    async fn test_multi_segment_later_wins() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["a", "b"], &[1.0, 2.0]);
         write_segment(dir.path(), 1, &["a", "c"], &[100.0, 3.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&["a", "b", "c"], &["value"]).unwrap();
         let vals = result
@@ -298,13 +304,13 @@ mod tests {
         assert_eq!(vals.value(2), 3.0); // "c" from segment 1
     }
 
-    #[test]
-    fn test_order_preserved() {
+    #[tokio::test]
+    async fn test_order_preserved() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["x", "y", "z"], &[1.0, 2.0, 3.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&["z", "x", "y"], &["value"]).unwrap();
         let vals = result
@@ -318,8 +324,8 @@ mod tests {
         assert_eq!(vals.value(2), 2.0);
     }
 
-    #[test]
-    fn test_mixed_string_and_float_columns() {
+    #[tokio::test]
+    async fn test_mixed_string_and_float_columns() {
         let dir = TempDir::new().unwrap();
 
         let keys: StringArray = ["k1", "k2"].iter().map(|k| Some(*k)).collect();
@@ -355,8 +361,8 @@ mod tests {
             },
         );
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &schema).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &schema).unwrap();
 
         let result = table.get(&["k2", "k1"], &["score", "name"]).unwrap();
         assert_eq!(result.num_rows(), 2);
@@ -379,13 +385,13 @@ mod tests {
         assert_eq!(result_names.value(1), "alice");
     }
 
-    #[test]
-    fn test_all_missing_keys() {
+    #[tokio::test]
+    async fn test_all_missing_keys() {
         let dir = TempDir::new().unwrap();
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
-        let local = LocalDirectory::open(dir.path()).unwrap();
-        let table = Table2::from_directory(&local, "key", &make_schema()).unwrap();
+        let view = open_view(dir.path()).await;
+        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
 
         let result = table.get(&["x", "y", "z"], &["value"]).unwrap();
         let vals = result
