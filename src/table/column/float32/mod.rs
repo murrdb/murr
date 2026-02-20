@@ -1,57 +1,34 @@
+mod header;
+
 use std::sync::Arc;
 
 use arrow::array::{Array, Float32Array, Float32Builder};
 use arrow::datatypes::{DataType, Field};
-use bytemuck::{Pod, Zeroable, cast_slice};
+use bytemuck::cast_slice;
 
 use crate::core::MurrError;
+use crate::table::column::bitmap::{build_bitmap_words, parse_null_bitmap, NullBitmap};
+use crate::table::column::{Column, KeyOffset};
 
-use super::bitmap::{build_bitmap_words, parse_null_bitmap, NullBitmap};
-use super::{Column, KeyOffset};
-
-/// Fixed-size header at the start of a dense float32 column segment.
-///
-/// All byte offsets are relative to the start of the column data.
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-struct DenseFloat32Header {
-    num_values: u32,
-    payload_offset: u32,
-    null_bitmap_offset: u32,
-    null_bitmap_size: u32,
-}
-
-const HEADER_SIZE: usize = std::mem::size_of::<DenseFloat32Header>();
-
-impl DenseFloat32Header {
-    /// Parse the header from the beginning of a column data slice.
-    fn parse(data: &[u8]) -> Result<&DenseFloat32Header, MurrError> {
-        if data.len() < HEADER_SIZE {
-            return Err(MurrError::TableError(
-                "dense float32 segment too small for header".into(),
-            ));
-        }
-        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
-    }
-}
+use header::{Float32Header, HEADER_SIZE};
 
 /// Parsed zero-copy view over a single segment's dense float32 column data.
 ///
 /// Wire format:
 /// ```text
-/// [header: DenseFloat32Header]        // 16 bytes
+/// [header: Float32Header]             // 16 bytes
 /// [payload: [f32; num_values]]        // at payload_offset
 /// [null_bitmap: [u32; bitmap_size]]   // at null_bitmap_offset
 /// ```
-struct DenseFloat32Segment<'a> {
-    header: &'a DenseFloat32Header,
+struct Float32Segment<'a> {
+    header: &'a Float32Header,
     payload: &'a [f32],
     nulls: NullBitmap<'a>,
 }
 
-impl<'a> DenseFloat32Segment<'a> {
+impl<'a> Float32Segment<'a> {
     fn parse(data: &'a [u8], nullable: bool) -> Result<Self, MurrError> {
-        let header = DenseFloat32Header::parse(data)?;
+        let header = Float32Header::parse(data)?;
 
         let payload_byte_len = header.num_values as usize * 4;
         let payload_end = header.payload_offset as usize + payload_byte_len;
@@ -83,17 +60,17 @@ impl<'a> DenseFloat32Segment<'a> {
     }
 }
 
-pub struct DenseFloat32Column<'a> {
-    segments: Vec<DenseFloat32Segment<'a>>,
+pub struct Float32Column<'a> {
+    segments: Vec<Float32Segment<'a>>,
     nullable: bool,
     field: Field,
 }
 
-impl<'a> DenseFloat32Column<'a> {
+impl<'a> Float32Column<'a> {
     pub fn new(name: &str, segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
             .iter()
-            .map(|data| DenseFloat32Segment::parse(data, nullable))
+            .map(|data| Float32Segment::parse(data, nullable))
             .collect();
         Ok(Self {
             segments: parsed?,
@@ -119,7 +96,7 @@ impl<'a> DenseFloat32Column<'a> {
         let total_size = HEADER_SIZE + payload_byte_len + bitmap_words.len() * 4;
         let mut buf = Vec::with_capacity(total_size);
 
-        let header = DenseFloat32Header {
+        let header = Float32Header {
             num_values,
             payload_offset,
             null_bitmap_offset,
@@ -137,7 +114,7 @@ impl<'a> DenseFloat32Column<'a> {
     }
 }
 
-impl<'a> Column for DenseFloat32Column<'a> {
+impl<'a> Column for Float32Column<'a> {
     fn field(&self) -> &Field {
         &self.field
     }
@@ -217,9 +194,9 @@ mod tests {
     #[test]
     fn test_round_trip_non_nullable() {
         let array = make_float32_array(&[Some(1.0), Some(2.5), Some(0.0)]);
-        let bytes = DenseFloat32Column::write(&array, false).unwrap();
+        let bytes = Float32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 3);
 
         let result = col.get_all().unwrap();
@@ -238,9 +215,9 @@ mod tests {
     #[test]
     fn test_round_trip_nullable_no_nulls() {
         let array = make_float32_array(&[Some(1.0), Some(2.0)]);
-        let bytes = DenseFloat32Column::write(&array, true).unwrap();
+        let bytes = Float32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], true).unwrap();
         let result = col.get_all().unwrap();
         let result = result.as_any().downcast_ref::<Float32Array>().unwrap();
 
@@ -253,9 +230,9 @@ mod tests {
     #[test]
     fn test_round_trip_nullable_with_nulls() {
         let array = make_float32_array(&[Some(1.5), None, Some(3.14), None]);
-        let bytes = DenseFloat32Column::write(&array, true).unwrap();
+        let bytes = Float32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 4);
 
         let result = col.get_all().unwrap();
@@ -271,9 +248,9 @@ mod tests {
     #[test]
     fn test_get_indexes() {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0), Some(40.0)]);
-        let bytes = DenseFloat32Column::write(&array, false).unwrap();
+        let bytes = Float32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -302,9 +279,9 @@ mod tests {
     #[test]
     fn test_get_indexes_with_nulls() {
         let array = make_float32_array(&[Some(1.0), None, Some(3.0)]);
-        let bytes = DenseFloat32Column::write(&array, true).unwrap();
+        let bytes = Float32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], true).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -335,10 +312,10 @@ mod tests {
         let array1 = make_float32_array(&[Some(1.0), Some(2.0)]);
         let array2 = make_float32_array(&[Some(3.0), Some(4.0), Some(5.0)]);
 
-        let bytes1 = DenseFloat32Column::write(&array1, false).unwrap();
-        let bytes2 = DenseFloat32Column::write(&array2, false).unwrap();
+        let bytes1 = Float32Column::write(&array1, false).unwrap();
+        let bytes2 = Float32Column::write(&array2, false).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
+        let col = Float32Column::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
         assert_eq!(col.size(), 5);
 
         let result = col.get_all().unwrap();
@@ -369,9 +346,9 @@ mod tests {
     #[test]
     fn test_empty_segment() {
         let array = make_float32_array(&[]);
-        let bytes = DenseFloat32Column::write(&array, false).unwrap();
+        let bytes = Float32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 0);
 
         let result = col.get_all().unwrap();
@@ -381,9 +358,9 @@ mod tests {
     #[test]
     fn test_get_indexes_with_missing_keys() {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0)]);
-        let bytes = DenseFloat32Column::write(&array, false).unwrap();
+        let bytes = Float32Column::write(&array, false).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], false).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -416,9 +393,9 @@ mod tests {
             .map(|i| if i % 3 == 0 { None } else { Some(i as f32) })
             .collect();
         let array = make_float32_array(&values);
-        let bytes = DenseFloat32Column::write(&array, true).unwrap();
+        let bytes = Float32Column::write(&array, true).unwrap();
 
-        let col = DenseFloat32Column::new("test", &[&bytes[..]], true).unwrap();
+        let col = Float32Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 64);
 
         let result = col.get_all().unwrap();

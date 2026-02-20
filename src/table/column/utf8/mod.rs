@@ -1,64 +1,39 @@
+mod header;
+
 use std::sync::Arc;
 
 use arrow::array::{Array, StringBuilder, StringArray};
 use arrow::datatypes::{DataType, Field};
-use bytemuck::{Pod, Zeroable, cast_slice};
+use bytemuck::cast_slice;
 
 use crate::core::MurrError;
-
-use super::bitmap::{
+use crate::table::column::bitmap::{
     align4_padding, build_bitmap_words, parse_null_bitmap, NullBitmap,
 };
-use super::{Column, KeyOffset};
+use crate::table::column::{Column, KeyOffset};
 
-/// Fixed-size header at the start of a dense string column segment.
-///
-/// All byte offsets are relative to the start of the column data.
-/// Value offsets (`[i32; num_values]`) immediately follow the header.
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-struct DenseStringHeader {
-    num_values: u32,
-    payload_offset: u32,
-    payload_size: u32,
-    null_bitmap_offset: u32,
-    null_bitmap_size: u32,
-}
-
-const HEADER_SIZE: usize = std::mem::size_of::<DenseStringHeader>();
-
-impl DenseStringHeader {
-    /// Parse the header from the beginning of a column data slice.
-    fn parse(data: &[u8]) -> Result<&DenseStringHeader, MurrError> {
-        if data.len() < HEADER_SIZE {
-            return Err(MurrError::TableError(
-                "dense string segment too small for header".into(),
-            ));
-        }
-        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
-    }
-}
+use header::{Utf8Header, HEADER_SIZE};
 
 /// Parsed zero-copy view over a single segment's dense string column data.
 ///
 /// Wire format:
 /// ```text
-/// [header: DenseStringHeader]            // 20 bytes
+/// [header: Utf8Header]                   // 20 bytes
 /// [value_offsets: [i32; num_values]]     // immediately after header (4-byte aligned)
 /// [payload: [u8; payload_size]]          // at payload_offset
 /// [padding: 0..3 bytes]                  // align to 4 bytes
 /// [null_bitmap: [u32; bitmap_size]]      // at null_bitmap_offset (4-byte aligned)
 /// ```
-struct DenseStringSegment<'a> {
-    header: &'a DenseStringHeader,
+struct Utf8Segment<'a> {
+    header: &'a Utf8Header,
     value_offsets: &'a [i32],
     payload: &'a [u8],
     nulls: NullBitmap<'a>,
 }
 
-impl<'a> DenseStringSegment<'a> {
+impl<'a> Utf8Segment<'a> {
     fn parse(data: &'a [u8], nullable: bool) -> Result<Self, MurrError> {
-        let header = DenseStringHeader::parse(data)?;
+        let header = Utf8Header::parse(data)?;
 
         let offsets_start = HEADER_SIZE;
         let offsets_byte_len = header.num_values as usize * 4;
@@ -111,17 +86,17 @@ impl<'a> DenseStringSegment<'a> {
     }
 }
 
-pub struct DenseStringColumn<'a> {
-    segments: Vec<DenseStringSegment<'a>>,
+pub struct Utf8Column<'a> {
+    segments: Vec<Utf8Segment<'a>>,
     nullable: bool,
     field: Field,
 }
 
-impl<'a> DenseStringColumn<'a> {
+impl<'a> Utf8Column<'a> {
     pub fn new(name: &str, segments: &[&'a [u8]], nullable: bool) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
             .iter()
-            .map(|data| DenseStringSegment::parse(data, nullable))
+            .map(|data| Utf8Segment::parse(data, nullable))
             .collect();
         Ok(Self {
             segments: parsed?,
@@ -167,7 +142,7 @@ impl<'a> DenseStringColumn<'a> {
 
         let mut buf = Vec::with_capacity(total_size);
 
-        let header = DenseStringHeader {
+        let header = Utf8Header {
             num_values,
             payload_offset,
             payload_size,
@@ -184,7 +159,7 @@ impl<'a> DenseStringColumn<'a> {
     }
 }
 
-impl<'a> Column for DenseStringColumn<'a> {
+impl<'a> Column for Utf8Column<'a> {
     fn field(&self) -> &Field {
         &self.field
     }
@@ -275,9 +250,9 @@ mod tests {
     #[test]
     fn test_round_trip_non_nullable() {
         let array = make_string_array(&[Some("hello"), Some("world"), Some("")]);
-        let bytes = DenseStringColumn::write(&array, false).unwrap();
+        let bytes = Utf8Column::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 3);
 
         let result = col.get_all().unwrap();
@@ -296,9 +271,9 @@ mod tests {
     #[test]
     fn test_round_trip_nullable_no_nulls() {
         let array = make_string_array(&[Some("a"), Some("b")]);
-        let bytes = DenseStringColumn::write(&array, true).unwrap();
+        let bytes = Utf8Column::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], true).unwrap();
         let result = col.get_all().unwrap();
         let result = result.as_any().downcast_ref::<StringArray>().unwrap();
 
@@ -311,9 +286,9 @@ mod tests {
     #[test]
     fn test_round_trip_nullable_with_nulls() {
         let array = make_string_array(&[Some("hello"), None, Some("world"), None]);
-        let bytes = DenseStringColumn::write(&array, true).unwrap();
+        let bytes = Utf8Column::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 4);
 
         let result = col.get_all().unwrap();
@@ -329,9 +304,9 @@ mod tests {
     #[test]
     fn test_get_indexes() {
         let array = make_string_array(&[Some("a"), Some("b"), Some("c"), Some("d")]);
-        let bytes = DenseStringColumn::write(&array, false).unwrap();
+        let bytes = Utf8Column::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -360,9 +335,9 @@ mod tests {
     #[test]
     fn test_get_indexes_with_nulls() {
         let array = make_string_array(&[Some("x"), None, Some("z")]);
-        let bytes = DenseStringColumn::write(&array, true).unwrap();
+        let bytes = Utf8Column::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], true).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -393,10 +368,10 @@ mod tests {
         let array1 = make_string_array(&[Some("seg0_a"), Some("seg0_b")]);
         let array2 = make_string_array(&[Some("seg1_a"), Some("seg1_b"), Some("seg1_c")]);
 
-        let bytes1 = DenseStringColumn::write(&array1, false).unwrap();
-        let bytes2 = DenseStringColumn::write(&array2, false).unwrap();
+        let bytes1 = Utf8Column::write(&array1, false).unwrap();
+        let bytes2 = Utf8Column::write(&array2, false).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
+        let col = Utf8Column::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
         assert_eq!(col.size(), 5);
 
         let result = col.get_all().unwrap();
@@ -427,9 +402,9 @@ mod tests {
     #[test]
     fn test_empty_segment() {
         let array = make_string_array(&[]);
-        let bytes = DenseStringColumn::write(&array, false).unwrap();
+        let bytes = Utf8Column::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], false).unwrap();
         assert_eq!(col.size(), 0);
 
         let result = col.get_all().unwrap();
@@ -439,9 +414,9 @@ mod tests {
     #[test]
     fn test_get_indexes_with_missing_keys() {
         let array = make_string_array(&[Some("hello"), Some("world"), Some("foo")]);
-        let bytes = DenseStringColumn::write(&array, false).unwrap();
+        let bytes = Utf8Column::write(&array, false).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], false).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], false).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -474,9 +449,9 @@ mod tests {
             .map(|i| if i % 3 == 0 { None } else { Some("v") })
             .collect();
         let array = make_string_array(&values);
-        let bytes = DenseStringColumn::write(&array, true).unwrap();
+        let bytes = Utf8Column::write(&array, true).unwrap();
 
-        let col = DenseStringColumn::new("test", &[&bytes[..]], true).unwrap();
+        let col = Utf8Column::new("test", &[&bytes[..]], true).unwrap();
         assert_eq!(col.size(), 64);
 
         let result = col.get_all().unwrap();
