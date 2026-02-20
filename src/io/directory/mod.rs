@@ -21,6 +21,7 @@ pub struct SegmentInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
+    pub key: String,
     pub columns: HashMap<String, ColumnConfig>,
 }
 

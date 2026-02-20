@@ -33,7 +33,7 @@ fn test_schema() -> TableSchema {
             nullable: true,
         },
     );
-    TableSchema { columns }
+    TableSchema { key: "key".to_string(), columns }
 }
 
 fn test_batch() -> RecordBatch {
