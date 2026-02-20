@@ -43,7 +43,7 @@ impl Float32Header {
 pub(crate) struct Float32Segment<'a> {
     pub(super) header: &'a Float32Header,
     pub(super) payload: &'a [f32],
-    pub(super) nulls: NullBitmap<'a>,
+    pub(super) nulls: Option<NullBitmap<'a>>,
 }
 
 impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
@@ -164,8 +164,7 @@ mod tests {
         assert_eq!(seg.header.num_values, 2);
         assert_eq!(seg.payload[0], 1.0);
         assert_eq!(seg.payload[1], 2.0);
-        assert!(seg.nulls.is_valid(0));
-        assert!(seg.nulls.is_valid(1));
+        assert!(seg.nulls.is_none());
     }
 
     #[test]
@@ -177,11 +176,12 @@ mod tests {
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 4);
         assert_eq!(seg.payload[0], 1.5);
-        assert!(seg.nulls.is_valid(0));
-        assert!(!seg.nulls.is_valid(1));
+        let nulls = seg.nulls.as_ref().unwrap();
+        assert!(nulls.is_valid(0));
+        assert!(!nulls.is_valid(1));
         assert_eq!(seg.payload[2], 3.25);
-        assert!(seg.nulls.is_valid(2));
-        assert!(!seg.nulls.is_valid(3));
+        assert!(nulls.is_valid(2));
+        assert!(!nulls.is_valid(3));
     }
 
     #[test]
@@ -206,11 +206,12 @@ mod tests {
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
         assert_eq!(seg.header.num_values, 64);
 
+        let nulls = seg.nulls.as_ref().unwrap();
         for i in 0..64u64 {
             if i % 3 == 0 {
-                assert!(!seg.nulls.is_valid(i), "expected null at index {i}");
+                assert!(!nulls.is_valid(i), "expected null at index {i}");
             } else {
-                assert!(seg.nulls.is_valid(i), "expected valid at index {i}");
+                assert!(nulls.is_valid(i), "expected valid at index {i}");
                 assert_eq!(seg.payload[i as usize], i as f32);
             }
         }

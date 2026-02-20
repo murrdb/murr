@@ -4,32 +4,28 @@ use bytemuck::cast_slice;
 use crate::core::MurrError;
 
 pub(super) struct NullBitmap<'a> {
-    data: Option<&'a [u64]>,
+    data: &'a [u64],
 }
 
 impl<'a> NullBitmap<'a> {
     pub fn is_valid(&self, idx: u64) -> bool {
-        match self.data {
-            None => true,
-            Some(words) => {
-                let word_idx = (idx / 64) as usize;
-                let bit_idx = idx % 64;
-                (words[word_idx] >> bit_idx) & 1 == 1
-            }
-        }
+        let word_idx = (idx / 64) as usize;
+        let bit_idx = idx % 64;
+        (self.data[word_idx] >> bit_idx) & 1 == 1
     }
 
     /// Parse a null bitmap from `data` at the given byte offset and byte count.
     /// The offset must be 8-byte aligned.
+    /// Returns `None` if the column is non-nullable or the segment has no bitmap.
     pub fn parse(
         data: &'a [u8],
         offset: usize,
         bitmap_size: u32,
         nullable: bool,
         type_name: &str,
-    ) -> Result<NullBitmap<'a>, MurrError> {
+    ) -> Result<Option<NullBitmap<'a>>, MurrError> {
         if !nullable || bitmap_size == 0 {
-            return Ok(NullBitmap { data: None });
+            return Ok(None);
         }
 
         let byte_len = bitmap_size as usize;
@@ -40,7 +36,7 @@ impl<'a> NullBitmap<'a> {
         }
 
         let words: &[u64] = cast_slice(&data[offset..offset + byte_len]);
-        Ok(NullBitmap { data: Some(words) })
+        Ok(Some(NullBitmap { data: words }))
     }
 
     /// Build a serialized null bitmap from an Arrow array.
@@ -118,7 +114,9 @@ mod tests {
         let array = Int32Array::from(vec![Some(1), None, Some(3), None, Some(5)]);
         let bytes = NullBitmap::write(&array);
 
-        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test").unwrap();
+        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test")
+            .unwrap()
+            .unwrap();
         assert!(bitmap.is_valid(0));
         assert!(!bitmap.is_valid(1));
         assert!(bitmap.is_valid(2));
@@ -129,15 +127,13 @@ mod tests {
     #[test]
     fn test_parse_non_nullable() {
         let bitmap = NullBitmap::parse(&[], 0, 0, false, "test").unwrap();
-        assert!(bitmap.is_valid(0));
-        assert!(bitmap.is_valid(100));
+        assert!(bitmap.is_none());
     }
 
     #[test]
-    fn test_is_valid_no_bitmap() {
-        let bitmap = NullBitmap { data: None };
-        assert!(bitmap.is_valid(0));
-        assert!(bitmap.is_valid(999));
+    fn test_parse_nullable_no_nulls() {
+        let bitmap = NullBitmap::parse(&[], 0, 0, true, "test").unwrap();
+        assert!(bitmap.is_none());
     }
 
     #[test]
@@ -149,7 +145,9 @@ mod tests {
         let bytes = NullBitmap::write(&array);
         assert_eq!(bytes.len(), 8); // exactly one u64
 
-        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test").unwrap();
+        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test")
+            .unwrap()
+            .unwrap();
         for i in 0..63u64 {
             assert!(bitmap.is_valid(i), "expected valid at {i}");
         }
@@ -165,7 +163,9 @@ mod tests {
         let bytes = NullBitmap::write(&array);
         assert_eq!(bytes.len(), 16); // two u64 words
 
-        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test").unwrap();
+        let bitmap = NullBitmap::parse(&bytes, 0, bytes.len() as u32, true, "test")
+            .unwrap()
+            .unwrap();
         for i in 0..64u64 {
             assert!(bitmap.is_valid(i), "expected valid at {i}");
         }
