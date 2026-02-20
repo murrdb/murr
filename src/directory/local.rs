@@ -29,8 +29,7 @@ impl LocalDirectory {
 
         entries.sort();
 
-        let segments: Result<Vec<_>, _> =
-            entries.iter().map(|p| Segment::open(p)).collect();
+        let segments: Result<Vec<_>, _> = entries.iter().map(|p| Segment::open(p)).collect();
 
         Ok(Self {
             segments: segments?,

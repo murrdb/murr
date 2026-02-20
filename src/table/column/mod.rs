@@ -9,6 +9,7 @@ use std::sync::Arc;
 use arrow::array::Array;
 use arrow::datatypes::Field;
 
+use crate::conf::ColumnConfig;
 use crate::core::MurrError;
 
 pub use float32::Float32Column;
@@ -21,6 +22,14 @@ pub enum KeyOffset {
         segment_offset: u32,
     },
     MissingKey,
+}
+
+pub trait ColumnSegment<'a>: Sized {
+    type ArrayType: Array;
+
+    fn parse(name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError>;
+
+    fn write(config: &ColumnConfig, array: &Self::ArrayType) -> Result<Vec<u8>, MurrError>;
 }
 
 pub trait Column {

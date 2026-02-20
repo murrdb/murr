@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ahash::AHashMap;
-use arrow::array::{new_null_array, Array, StringArray};
+use arrow::array::{Array, StringArray, new_null_array};
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 
@@ -51,16 +51,8 @@ impl<'a> Table2<'a> {
                 .collect::<Result<_, _>>()?;
 
             let column: Box<dyn Column + 'a> = match col_config.dtype {
-                DType::Float32 => Box::new(Float32Column::new(
-                    col_name,
-                    &col_slices,
-                    col_config.nullable,
-                )?),
-                DType::Utf8 => Box::new(Utf8Column::new(
-                    col_name,
-                    &col_slices,
-                    col_config.nullable,
-                )?),
+                DType::Float32 => Box::new(Float32Column::new(col_name, col_config, &col_slices)?),
+                DType::Utf8 => Box::new(Utf8Column::new(col_name, col_config, &col_slices)?),
                 ref other => {
                     return Err(MurrError::TableError(format!(
                         "unsupported dtype {:?} for column '{}'",
@@ -99,14 +91,16 @@ impl<'a> Table2<'a> {
             })
             .collect::<Result<_, _>>()?;
 
-        let key_col = Utf8Column::new(key_column, &key_slices, false)?;
+        let key_config = ColumnConfig {
+            dtype: DType::Utf8,
+            nullable: false,
+        };
+        let key_col = Utf8Column::new(key_column, &key_config, &key_slices)?;
         let key_array = key_col.get_all()?;
         let key_strings = key_array
             .as_any()
             .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                MurrError::TableError("key column must produce StringArray".into())
-            })?;
+            .ok_or_else(|| MurrError::TableError("key column must produce StringArray".into()))?;
 
         // Build index: walk the flat key array, tracking segment boundaries.
         let mut index: AHashMap<String, KeyOffset> = AHashMap::new();
@@ -134,9 +128,9 @@ impl<'a> Table2<'a> {
         let resolved: Vec<&Box<dyn Column + 'a>> = columns
             .iter()
             .map(|name| {
-                self.columns.get(*name).ok_or_else(|| {
-                    MurrError::TableError(format!("column '{}' not found", name))
-                })
+                self.columns
+                    .get(*name)
+                    .ok_or_else(|| MurrError::TableError(format!("column '{}' not found", name)))
             })
             .collect::<Result<_, _>>()?;
 
@@ -180,16 +174,33 @@ mod tests {
     use super::*;
     use crate::directory::LocalDirectory;
     use crate::segment::WriteSegment;
+    use crate::table::column::ColumnSegment as _;
+    use crate::table::column::float32::segment::Float32Segment;
+    use crate::table::column::utf8::segment::Utf8Segment;
     use arrow::array::Float32Array;
     use std::fs::File;
     use tempfile::TempDir;
+
+    fn non_nullable_utf8_config() -> ColumnConfig {
+        ColumnConfig {
+            dtype: DType::Utf8,
+            nullable: false,
+        }
+    }
+
+    fn non_nullable_float32_config() -> ColumnConfig {
+        ColumnConfig {
+            dtype: DType::Float32,
+            nullable: false,
+        }
+    }
 
     fn write_segment(dir: &std::path::Path, id: u32, keys: &[&str], values: &[f32]) {
         let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
         let val_array: Float32Array = values.iter().map(|v| Some(*v)).collect();
 
-        let key_bytes = Utf8Column::write(&key_array, false).unwrap();
-        let val_bytes = Float32Column::write(&val_array, false).unwrap();
+        let key_bytes = Utf8Segment::write(&non_nullable_utf8_config(), &key_array).unwrap();
+        let val_bytes = Float32Segment::write(&non_nullable_float32_config(), &val_array).unwrap();
 
         let mut ws = WriteSegment::new();
         ws.add_column("key", key_bytes);
@@ -315,9 +326,9 @@ mod tests {
         let floats: Float32Array = [10.0f32, 20.0].iter().map(|v| Some(*v)).collect();
         let names: StringArray = ["alice", "bob"].iter().map(|s| Some(*s)).collect();
 
-        let key_bytes = Utf8Column::write(&keys, false).unwrap();
-        let float_bytes = Float32Column::write(&floats, false).unwrap();
-        let name_bytes = Utf8Column::write(&names, false).unwrap();
+        let key_bytes = Utf8Segment::write(&non_nullable_utf8_config(), &keys).unwrap();
+        let float_bytes = Float32Segment::write(&non_nullable_float32_config(), &floats).unwrap();
+        let name_bytes = Utf8Segment::write(&non_nullable_utf8_config(), &names).unwrap();
 
         let mut ws = WriteSegment::new();
         ws.add_column("key", key_bytes);
