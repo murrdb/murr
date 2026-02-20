@@ -1,6 +1,6 @@
 mod bitmap;
-pub mod dense_float32;
-pub mod dense_string;
+pub mod float32;
+pub mod utf8;
 
 pub(crate) use bitmap::read_u32;
 
@@ -11,8 +11,8 @@ use arrow::datatypes::Field;
 
 use crate::core::MurrError;
 
-pub use dense_float32::DenseFloat32Column;
-pub use dense_string::DenseStringColumn;
+pub use float32::Float32Column;
+pub use utf8::Utf8Column;
 
 #[derive(Clone, Copy, Debug)]
 pub enum KeyOffset {

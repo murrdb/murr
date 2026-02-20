@@ -11,7 +11,7 @@ use crate::core::MurrError;
 use crate::directory::Directory;
 
 use super::column::read_u32;
-use super::column::{Column, DenseFloat32Column, DenseStringColumn, KeyOffset};
+use super::column::{Column, Float32Column, KeyOffset, Utf8Column};
 
 pub struct Table2<'a> {
     columns: AHashMap<String, Box<dyn Column + 'a>>,
@@ -21,7 +21,7 @@ pub struct Table2<'a> {
 impl<'a> Table2<'a> {
     /// Build a table from a directory of segments and an explicit column schema.
     ///
-    /// The key column is always loaded as a non-nullable `DenseStringColumn` and
+    /// The key column is always loaded as a non-nullable `Utf8Column` and
     /// is used to build the key index. It does not need to appear in `schema`,
     /// but if present it will also be queryable via `get()`.
     ///
@@ -51,12 +51,12 @@ impl<'a> Table2<'a> {
                 .collect::<Result<_, _>>()?;
 
             let column: Box<dyn Column + 'a> = match col_config.dtype {
-                DType::Float32 => Box::new(DenseFloat32Column::new(
+                DType::Float32 => Box::new(Float32Column::new(
                     col_name,
                     &col_slices,
                     col_config.nullable,
                 )?),
-                DType::Utf8 => Box::new(DenseStringColumn::new(
+                DType::Utf8 => Box::new(Utf8Column::new(
                     col_name,
                     &col_slices,
                     col_config.nullable,
@@ -99,7 +99,7 @@ impl<'a> Table2<'a> {
             })
             .collect::<Result<_, _>>()?;
 
-        let key_col = DenseStringColumn::new(key_column, &key_slices, false)?;
+        let key_col = Utf8Column::new(key_column, &key_slices, false)?;
         let key_array = key_col.get_all()?;
         let key_strings = key_array
             .as_any()
@@ -188,8 +188,8 @@ mod tests {
         let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
         let val_array: Float32Array = values.iter().map(|v| Some(*v)).collect();
 
-        let key_bytes = DenseStringColumn::write(&key_array, false).unwrap();
-        let val_bytes = DenseFloat32Column::write(&val_array, false).unwrap();
+        let key_bytes = Utf8Column::write(&key_array, false).unwrap();
+        let val_bytes = Float32Column::write(&val_array, false).unwrap();
 
         let mut ws = WriteSegment::new();
         ws.add_column("key", key_bytes);
@@ -315,9 +315,9 @@ mod tests {
         let floats: Float32Array = [10.0f32, 20.0].iter().map(|v| Some(*v)).collect();
         let names: StringArray = ["alice", "bob"].iter().map(|s| Some(*s)).collect();
 
-        let key_bytes = DenseStringColumn::write(&keys, false).unwrap();
-        let float_bytes = DenseFloat32Column::write(&floats, false).unwrap();
-        let name_bytes = DenseStringColumn::write(&names, false).unwrap();
+        let key_bytes = Utf8Column::write(&keys, false).unwrap();
+        let float_bytes = Float32Column::write(&floats, false).unwrap();
+        let name_bytes = Utf8Column::write(&names, false).unwrap();
 
         let mut ws = WriteSegment::new();
         ws.add_column("key", key_bytes);
