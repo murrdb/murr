@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::core::MurrError;
-use crate::directory::SegmentInfo;
-use crate::segment::Segment;
+use crate::io::directory::SegmentInfo;
+use crate::io::segment::Segment;
 
 pub struct TableView {
     segments: Vec<Segment>,

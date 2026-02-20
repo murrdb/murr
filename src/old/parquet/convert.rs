@@ -114,7 +114,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::conf::{ColumnConfig, DType, LocalSourceConfig, SourceConfig};
-    use crate::table::Table;
+    use crate::io::table::Table;
 
     fn make_config(columns: Vec<(&str, DType, bool)>) -> TableConfig {
         TableConfig {

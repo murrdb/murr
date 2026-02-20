@@ -1,9 +1,7 @@
 mod conf;
 mod core;
-mod directory;
+mod io;
 mod old;
-mod segment;
-mod table;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::table::Table;
+use crate::io::table::Table;
 
 use super::state::TableState;
 

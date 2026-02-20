@@ -128,7 +128,7 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::segment::write::WriteSegment;
+    use crate::io::segment::write::WriteSegment;
     use std::path::PathBuf;
     use tempfile::TempDir;
 

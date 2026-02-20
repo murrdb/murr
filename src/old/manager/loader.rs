@@ -7,7 +7,7 @@ use crate::conf::TableConfig;
 use crate::core::MurrError;
 use crate::old::discovery::{Discovery, DiscoveryKind, DiscoveryResult};
 use crate::old::parquet::convert_parquet_to_ipc;
-use crate::table::Table;
+use crate::io::table::Table;
 
 use super::state::TableState;
 

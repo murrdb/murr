@@ -7,8 +7,8 @@ use arrow::datatypes::{DataType, Field};
 
 use crate::conf::ColumnConfig;
 use crate::core::MurrError;
-use crate::table::column::ColumnSegment;
-use crate::table::column::{Column, KeyOffset};
+use crate::io::table::column::ColumnSegment;
+use crate::io::table::column::{Column, KeyOffset};
 
 use segment::Float32Segment;
 

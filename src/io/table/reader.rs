@@ -172,11 +172,11 @@ impl<'a> TableReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::directory::{Directory, LocalDirectory};
-    use crate::segment::WriteSegment;
-    use crate::table::column::ColumnSegment as _;
-    use crate::table::column::float32::segment::Float32Segment;
-    use crate::table::column::utf8::segment::Utf8Segment;
+    use crate::io::directory::{Directory, LocalDirectory};
+    use crate::io::segment::WriteSegment;
+    use crate::io::table::column::ColumnSegment as _;
+    use crate::io::table::column::float32::segment::Float32Segment;
+    use crate::io::table::column::utf8::segment::Utf8Segment;
     use arrow::array::Float32Array;
     use std::fs::File;
     use tempfile::TempDir;
