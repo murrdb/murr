@@ -1,9 +1,18 @@
+mod bitmap;
+pub mod dense_float32;
+pub mod dense_string;
+
+pub(crate) use bitmap::read_u32;
+
 use std::sync::Arc;
 
 use arrow::array::Array;
 use arrow::datatypes::Field;
 
 use crate::core::MurrError;
+
+pub use dense_float32::DenseFloat32Column;
+pub use dense_string::DenseStringColumn;
 
 #[derive(Clone, Copy, Debug)]
 pub enum KeyOffset {
