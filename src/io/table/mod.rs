@@ -1,9 +1,11 @@
+pub mod cached;
 pub mod column;
 mod table;
 pub mod reader;
 pub mod view;
 pub mod writer;
 
+pub use cached::CachedTable;
 pub use column::{Column, Float32Column, KeyOffset, Utf8Column};
 pub use table::KeyIndex;
 pub use table::Table;
