@@ -7,8 +7,8 @@ use arrow::record_batch::RecordBatch;
 
 use crate::conf::{ColumnConfig, DType};
 use crate::core::MurrError;
-use crate::directory::{Directory, LocalDirectory, SegmentInfo};
-use crate::segment::WriteSegment;
+use crate::io::directory::{Directory, LocalDirectory, SegmentInfo};
+use crate::io::segment::WriteSegment;
 
 use super::column::ColumnSegment;
 use super::column::float32::segment::Float32Segment;
@@ -103,9 +103,9 @@ impl<'a> TableWriter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::directory::{Directory, LocalDirectory};
-    use crate::table::reader::TableReader;
-    use crate::table::view::TableView;
+    use crate::io::directory::{Directory, LocalDirectory};
+    use crate::io::table::reader::TableReader;
+    use crate::io::table::view::TableView;
     use arrow::array::Float32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;

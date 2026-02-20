@@ -3,8 +3,8 @@ use bytemuck::{Pod, Zeroable, cast_slice};
 
 use crate::conf::ColumnConfig;
 use crate::core::MurrError;
-use crate::table::column::ColumnSegment;
-use crate::table::column::bitmap::{NullBitmap, align8_padding};
+use crate::io::table::column::ColumnSegment;
+use crate::io::table::column::bitmap::{NullBitmap, align8_padding};
 
 /// Fixed-size header at the start of a dense string column segment.
 ///

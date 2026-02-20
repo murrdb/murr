@@ -98,7 +98,7 @@ impl Directory for LocalDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::segment::WriteSegment;
+    use crate::io::segment::WriteSegment;
     use std::fs::File;
     use tempfile::TempDir;
 

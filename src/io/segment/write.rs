@@ -76,7 +76,7 @@ impl WriteSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::segment::format::{FOOTER_LEN_SIZE, HEADER_SIZE};
+    use crate::io::segment::format::{FOOTER_LEN_SIZE, HEADER_SIZE};
 
     #[test]
     fn test_empty_segment() {

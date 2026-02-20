@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::table::Table;
+use crate::io::table::Table;
 
 /// Represents the current state of a loaded table.
 pub struct TableState {
