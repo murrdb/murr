@@ -10,10 +10,8 @@ use crate::conf::{ColumnConfig, DType};
 use crate::core::MurrError;
 use crate::directory::Directory;
 
-use super::bitmap::read_u32_le;
-use super::column::{Column, KeyOffset};
-use super::dense_float32::DenseFloat32Column;
-use super::dense_string::DenseStringColumn;
+use super::column::read_u32;
+use super::column::{Column, DenseFloat32Column, DenseStringColumn, KeyOffset};
 
 pub struct Table2<'a> {
     columns: AHashMap<String, Box<dyn Column + 'a>>,
@@ -97,7 +95,7 @@ impl<'a> Table2<'a> {
                         "key column segment too small for num_values".into(),
                     ));
                 }
-                Ok(read_u32_le(data, 0))
+                Ok(read_u32(data, 0))
             })
             .collect::<Result<_, _>>()?;
 

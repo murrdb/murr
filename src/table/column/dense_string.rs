@@ -2,95 +2,110 @@ use std::sync::Arc;
 
 use arrow::array::{Array, StringBuilder, StringArray};
 use arrow::datatypes::{DataType, Field};
+use bytemuck::{Pod, Zeroable, cast_slice};
 
 use crate::core::MurrError;
 
 use super::bitmap::{
-    build_bitmap_words, parse_null_bitmap, read_i32_le, read_u32_le, write_bitmap, NullBitmap,
+    align4_padding, build_bitmap_words, parse_null_bitmap, NullBitmap,
 };
-use super::column::{Column, KeyOffset};
+use super::{Column, KeyOffset};
+
+/// Fixed-size header at the start of a dense string column segment.
+///
+/// All byte offsets are relative to the start of the column data.
+/// Value offsets (`[i32; num_values]`) immediately follow the header.
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct DenseStringHeader {
+    num_values: u32,
+    payload_offset: u32,
+    payload_size: u32,
+    null_bitmap_offset: u32,
+    null_bitmap_size: u32,
+}
+
+const HEADER_SIZE: usize = std::mem::size_of::<DenseStringHeader>();
+
+impl DenseStringHeader {
+    /// Parse the header from the beginning of a column data slice.
+    fn parse(data: &[u8]) -> Result<&DenseStringHeader, MurrError> {
+        if data.len() < HEADER_SIZE {
+            return Err(MurrError::TableError(
+                "dense string segment too small for header".into(),
+            ));
+        }
+        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
+    }
+}
 
 /// Parsed zero-copy view over a single segment's dense string column data.
 ///
 /// Wire format:
 /// ```text
-/// [num_values: u32]
-/// [value_offsets: [i32; num_values]]
-/// [payload_size: u32]
-/// [payload: [u8; payload_size]]
-/// [null_bitmap_size: u32]            // count of u32 words (0 if non-nullable)
-/// [null_bitmap: [u32; null_bitmap_size]]
+/// [header: DenseStringHeader]            // 20 bytes
+/// [value_offsets: [i32; num_values]]     // immediately after header (4-byte aligned)
+/// [payload: [u8; payload_size]]          // at payload_offset
+/// [padding: 0..3 bytes]                  // align to 4 bytes
+/// [null_bitmap: [u32; bitmap_size]]      // at null_bitmap_offset (4-byte aligned)
 /// ```
 struct DenseStringSegment<'a> {
-    size: u32,
-    value_offsets: &'a [u8], // raw bytes, read as i32 LE per element
+    header: &'a DenseStringHeader,
+    value_offsets: &'a [i32],
     payload: &'a [u8],
-    payload_size: u32,
     nulls: NullBitmap<'a>,
 }
 
 impl<'a> DenseStringSegment<'a> {
     fn parse(data: &'a [u8], nullable: bool) -> Result<Self, MurrError> {
-        let mut pos: usize = 0;
+        let header = DenseStringHeader::parse(data)?;
 
-        if data.len() < 4 {
-            return Err(MurrError::TableError(
-                "dense string segment too small for num_values".into(),
-            ));
-        }
-
-        let num_values = read_u32_le(data, pos);
-        pos += 4;
-
-        let offsets_byte_len = num_values as usize * 4;
-        if pos + offsets_byte_len > data.len() {
+        let offsets_start = HEADER_SIZE;
+        let offsets_byte_len = header.num_values as usize * 4;
+        let offsets_end = offsets_start + offsets_byte_len;
+        if offsets_end > data.len() {
             return Err(MurrError::TableError(
                 "dense string segment truncated at value_offsets".into(),
             ));
         }
-        let value_offsets = &data[pos..pos + offsets_byte_len];
-        pos += offsets_byte_len;
+        let value_offsets: &[i32] = cast_slice(&data[offsets_start..offsets_end]);
 
-        if pos + 4 > data.len() {
-            return Err(MurrError::TableError(
-                "dense string segment truncated at payload_size".into(),
-            ));
-        }
-        let payload_size = read_u32_le(data, pos);
-        pos += 4;
-
-        if pos + payload_size as usize > data.len() {
+        let payload_end = header.payload_offset as usize + header.payload_size as usize;
+        if payload_end > data.len() {
             return Err(MurrError::TableError(
                 "dense string segment truncated at payload".into(),
             ));
         }
-        let payload = &data[pos..pos + payload_size as usize];
-        pos += payload_size as usize;
+        let payload = &data[header.payload_offset as usize..payload_end];
 
-        let (nulls, _) = parse_null_bitmap(data, pos, nullable, "dense string")?;
+        let nulls = parse_null_bitmap(
+            data,
+            header.null_bitmap_offset as usize,
+            header.null_bitmap_size,
+            nullable,
+            "dense string",
+        )?;
 
         Ok(Self {
-            size: num_values,
+            header,
             value_offsets,
             payload,
-            payload_size,
             nulls,
         })
     }
 
     /// Get the i32 offset at the given value index.
     fn offset_at(&self, idx: u32) -> i32 {
-        let byte_pos = idx as usize * 4;
-        read_i32_le(self.value_offsets, byte_pos)
+        self.value_offsets[idx as usize]
     }
 
     /// Get the string byte range for value at `idx`.
     fn string_range(&self, idx: u32) -> (usize, usize) {
         let start = self.offset_at(idx) as usize;
-        let end = if idx + 1 < self.size {
+        let end = if idx + 1 < self.header.num_values {
             self.offset_at(idx + 1) as usize
         } else {
-            self.payload_size as usize
+            self.header.payload_size as usize
         };
         (start, end)
     }
@@ -128,10 +143,10 @@ impl<'a> DenseStringColumn<'a> {
             if !values.is_null(i) {
                 payload.extend_from_slice(values.value(i).as_bytes());
             }
-            // Null values get same offset as next value (zero-length string in payload).
         }
 
         let payload_size = payload.len() as u32;
+        let payload_padding = align4_padding(payload.len());
 
         let bitmap_words: Vec<u32> = if nullable {
             build_bitmap_words(values.len(), |i| values.is_null(i))
@@ -139,23 +154,31 @@ impl<'a> DenseStringColumn<'a> {
             Vec::new()
         };
 
-        // Calculate total size and write.
-        let total_size = 4 // num_values
-            + (num_values as usize * 4) // offsets
-            + 4 // payload_size
-            + payload_size as usize // payload
-            + 4 // null_bitmap_size
-            + (bitmap_words.len() * 4); // bitmap words
+        // Compute offsets for header.
+        let offsets_byte_len = num_values as usize * 4;
+        let payload_offset = (HEADER_SIZE + offsets_byte_len) as u32;
+        let null_bitmap_offset = payload_offset + payload_size + payload_padding as u32;
+
+        let total_size = HEADER_SIZE
+            + offsets_byte_len
+            + payload_size as usize
+            + payload_padding
+            + bitmap_words.len() * 4;
 
         let mut buf = Vec::with_capacity(total_size);
 
-        buf.extend_from_slice(&num_values.to_le_bytes());
-        for off in &offsets {
-            buf.extend_from_slice(&off.to_le_bytes());
-        }
-        buf.extend_from_slice(&payload_size.to_le_bytes());
+        let header = DenseStringHeader {
+            num_values,
+            payload_offset,
+            payload_size,
+            null_bitmap_offset,
+            null_bitmap_size: bitmap_words.len() as u32,
+        };
+        buf.extend_from_slice(bytemuck::bytes_of(&header));
+        buf.extend_from_slice(cast_slice(&offsets));
         buf.extend_from_slice(&payload);
-        write_bitmap(&mut buf, &bitmap_words);
+        buf.extend_from_slice(&[0u8; 3][..payload_padding]);
+        buf.extend_from_slice(cast_slice(&bitmap_words));
 
         Ok(buf)
     }
@@ -189,10 +212,10 @@ impl<'a> Column for DenseStringColumn<'a> {
                             ))
                         })?;
 
-                    if *segment_offset >= seg.size {
+                    if *segment_offset >= seg.header.num_values {
                         return Err(MurrError::TableError(format!(
                             "segment_offset {} out of range (segment has {} values)",
-                            segment_offset, seg.size
+                            segment_offset, seg.header.num_values
                         )));
                     }
 
@@ -220,7 +243,7 @@ impl<'a> Column for DenseStringColumn<'a> {
         let mut builder = StringBuilder::with_capacity(total, 0);
 
         for seg in &self.segments {
-            for i in 0..seg.size {
+            for i in 0..seg.header.num_values {
                 if !seg.nulls.is_valid(i) {
                     builder.append_null();
                 } else {
@@ -237,7 +260,7 @@ impl<'a> Column for DenseStringColumn<'a> {
     }
 
     fn size(&self) -> u32 {
-        self.segments.iter().map(|s| s.size).sum()
+        self.segments.iter().map(|s| s.header.num_values).sum()
     }
 }
 
@@ -282,7 +305,6 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result.value(0), "a");
         assert_eq!(result.value(1), "b");
-        // No append_null was called, so Arrow shouldn't allocate a null buffer.
         assert!(result.nulls().is_none());
     }
 
@@ -377,7 +399,6 @@ mod tests {
         let col = DenseStringColumn::new("test", &[&bytes1[..], &bytes2[..]], false).unwrap();
         assert_eq!(col.size(), 5);
 
-        // get_all across segments
         let result = col.get_all().unwrap();
         let result = result.as_any().downcast_ref::<StringArray>().unwrap();
         assert_eq!(result.len(), 5);
@@ -387,7 +408,6 @@ mod tests {
         assert_eq!(result.value(3), "seg1_b");
         assert_eq!(result.value(4), "seg1_c");
 
-        // get_indexes across segments
         let indexes = vec![
             KeyOffset::SegmentOffset {
                 segment_id: 1,
@@ -450,7 +470,6 @@ mod tests {
 
     #[test]
     fn test_many_values_bitmap_spans_multiple_words() {
-        // 64 values to exercise 2 u32 words in null bitmap
         let values: Vec<Option<&str>> = (0..64)
             .map(|i| if i % 3 == 0 { None } else { Some("v") })
             .collect();

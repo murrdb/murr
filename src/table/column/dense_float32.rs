@@ -2,63 +2,84 @@ use std::sync::Arc;
 
 use arrow::array::{Array, Float32Array, Float32Builder};
 use arrow::datatypes::{DataType, Field};
+use bytemuck::{Pod, Zeroable, cast_slice};
 
 use crate::core::MurrError;
 
-use super::bitmap::{
-    build_bitmap_words, parse_null_bitmap, read_f32_le, read_u32_le, write_bitmap, NullBitmap,
-};
-use super::column::{Column, KeyOffset};
+use super::bitmap::{build_bitmap_words, parse_null_bitmap, NullBitmap};
+use super::{Column, KeyOffset};
+
+/// Fixed-size header at the start of a dense float32 column segment.
+///
+/// All byte offsets are relative to the start of the column data.
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct DenseFloat32Header {
+    num_values: u32,
+    payload_offset: u32,
+    null_bitmap_offset: u32,
+    null_bitmap_size: u32,
+}
+
+const HEADER_SIZE: usize = std::mem::size_of::<DenseFloat32Header>();
+
+impl DenseFloat32Header {
+    /// Parse the header from the beginning of a column data slice.
+    fn parse(data: &[u8]) -> Result<&DenseFloat32Header, MurrError> {
+        if data.len() < HEADER_SIZE {
+            return Err(MurrError::TableError(
+                "dense float32 segment too small for header".into(),
+            ));
+        }
+        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
+    }
+}
 
 /// Parsed zero-copy view over a single segment's dense float32 column data.
 ///
 /// Wire format:
 /// ```text
-/// [num_values: u32]
-/// [payload: [f32; num_values]]
-/// [null_bitmap_size: u32]            // count of u32 words (0 if non-nullable)
-/// [null_bitmap: [u32; null_bitmap_size]]
+/// [header: DenseFloat32Header]        // 16 bytes
+/// [payload: [f32; num_values]]        // at payload_offset
+/// [null_bitmap: [u32; bitmap_size]]   // at null_bitmap_offset
 /// ```
 struct DenseFloat32Segment<'a> {
-    size: u32,
-    payload: &'a [u8], // raw bytes, read as f32 LE per element
+    header: &'a DenseFloat32Header,
+    payload: &'a [f32],
     nulls: NullBitmap<'a>,
 }
 
 impl<'a> DenseFloat32Segment<'a> {
     fn parse(data: &'a [u8], nullable: bool) -> Result<Self, MurrError> {
-        let mut pos: usize = 0;
+        let header = DenseFloat32Header::parse(data)?;
 
-        if data.len() < 4 {
-            return Err(MurrError::TableError(
-                "dense float32 segment too small for num_values".into(),
-            ));
-        }
-
-        let num_values = read_u32_le(data, pos);
-        pos += 4;
-
-        let payload_byte_len = num_values as usize * 4;
-        if pos + payload_byte_len > data.len() {
+        let payload_byte_len = header.num_values as usize * 4;
+        let payload_end = header.payload_offset as usize + payload_byte_len;
+        if payload_end > data.len() {
             return Err(MurrError::TableError(
                 "dense float32 segment truncated at payload".into(),
             ));
         }
-        let payload = &data[pos..pos + payload_byte_len];
-        pos += payload_byte_len;
+        let payload: &[f32] =
+            cast_slice(&data[header.payload_offset as usize..payload_end]);
 
-        let (nulls, _) = parse_null_bitmap(data, pos, nullable, "dense float32")?;
+        let nulls = parse_null_bitmap(
+            data,
+            header.null_bitmap_offset as usize,
+            header.null_bitmap_size,
+            nullable,
+            "dense float32",
+        )?;
 
         Ok(Self {
-            size: num_values,
+            header,
             payload,
             nulls,
         })
     }
 
     fn value_at(&self, idx: u32) -> f32 {
-        let byte_pos = idx as usize * 4;
-        read_f32_le(self.payload, byte_pos)
+        self.payload[idx as usize]
     }
 }
 
@@ -91,19 +112,26 @@ impl<'a> DenseFloat32Column<'a> {
             Vec::new()
         };
 
-        let total_size = 4 // num_values
-            + (num_values as usize * 4) // payload
-            + 4 // null_bitmap_size
-            + (bitmap_words.len() * 4); // bitmap words
+        let payload_offset = HEADER_SIZE as u32;
+        let payload_byte_len = num_values as usize * 4;
+        let null_bitmap_offset = payload_offset + payload_byte_len as u32;
 
+        let total_size = HEADER_SIZE + payload_byte_len + bitmap_words.len() * 4;
         let mut buf = Vec::with_capacity(total_size);
 
-        buf.extend_from_slice(&num_values.to_le_bytes());
-        for i in 0..values.len() {
-            let v = if values.is_null(i) { 0.0f32 } else { values.value(i) };
-            buf.extend_from_slice(&v.to_le_bytes());
-        }
-        write_bitmap(&mut buf, &bitmap_words);
+        let header = DenseFloat32Header {
+            num_values,
+            payload_offset,
+            null_bitmap_offset,
+            null_bitmap_size: bitmap_words.len() as u32,
+        };
+        buf.extend_from_slice(bytemuck::bytes_of(&header));
+
+        let payload: Vec<f32> = (0..values.len())
+            .map(|i| if values.is_null(i) { 0.0f32 } else { values.value(i) })
+            .collect();
+        buf.extend_from_slice(cast_slice(&payload));
+        buf.extend_from_slice(cast_slice(&bitmap_words));
 
         Ok(buf)
     }
@@ -137,10 +165,10 @@ impl<'a> Column for DenseFloat32Column<'a> {
                             ))
                         })?;
 
-                    if *segment_offset >= seg.size {
+                    if *segment_offset >= seg.header.num_values {
                         return Err(MurrError::TableError(format!(
                             "segment_offset {} out of range (segment has {} values)",
-                            segment_offset, seg.size
+                            segment_offset, seg.header.num_values
                         )));
                     }
 
@@ -161,7 +189,7 @@ impl<'a> Column for DenseFloat32Column<'a> {
         let mut builder = Float32Builder::with_capacity(total);
 
         for seg in &self.segments {
-            for i in 0..seg.size {
+            for i in 0..seg.header.num_values {
                 if !seg.nulls.is_valid(i) {
                     builder.append_null();
                 } else {
@@ -174,7 +202,7 @@ impl<'a> Column for DenseFloat32Column<'a> {
     }
 
     fn size(&self) -> u32 {
-        self.segments.iter().map(|s| s.size).sum()
+        self.segments.iter().map(|s| s.header.num_values).sum()
     }
 }
 

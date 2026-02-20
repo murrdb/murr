@@ -31,7 +31,9 @@ impl WriteSegment {
         w.write_all(MAGIC)?;
         w.write_all(&VERSION.to_le_bytes())?;
 
-        // Column payloads — track offsets for footer
+        // Column payloads — track offsets for footer.
+        // Each column is padded to 4-byte alignment so typed data
+        // (f32, i32, u32 via bytemuck::cast_slice) can be read zero-copy.
         let mut offset = HEADER_SIZE as u32;
         let mut entries: Vec<(u32, u32)> = Vec::with_capacity(self.columns.len());
         for (_name, data) in &self.columns {
@@ -39,6 +41,11 @@ impl WriteSegment {
             let size = data.len() as u32;
             entries.push((offset, size));
             offset += size;
+            let padding = (4 - (size % 4)) % 4;
+            if padding > 0 {
+                w.write_all(&[0u8; 3][..padding as usize])?;
+                offset += padding;
+            }
         }
 
         // Footer entries
@@ -95,8 +102,9 @@ mod tests {
         assert_eq!(&buf[0..4], b"MURR");
         assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 1);
 
-        // Payload at offset 8
+        // Payload at offset 8 (3 bytes + 1 byte padding to align to 4)
         assert_eq!(&buf[8..11], &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(buf[11], 0x00); // padding byte
 
         // Footer entry: name_len(2) + "col1"(4) + offset(4) + size(4) = 14 bytes
         let footer_size_offset = buf.len() - 4;
@@ -118,6 +126,6 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(payload_offset, HEADER_SIZE as u32);
-        assert_eq!(payload_size, 3);
+        assert_eq!(payload_size, 3); // size in footer is original, without padding
     }
 }
