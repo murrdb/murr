@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::manager::TableManager;
+use crate::old::manager::TableManager;
 
 /// Shared application state for HTTP handlers.
 #[derive(Clone)]

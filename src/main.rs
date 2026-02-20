@@ -1,10 +1,7 @@
-mod api;
 mod conf;
 mod core;
 mod directory;
-mod discovery;
-mod manager;
-mod parquet;
+mod old;
 mod segment;
 mod table;
 
@@ -17,10 +14,10 @@ use log::{error, info};
 use tokio::net::TcpListener;
 use tokio::time::interval;
 
-use crate::api::{AppState, create_router};
 use crate::conf::{Config, ServerConfig, TableConfig};
 use crate::core::{CliArgs, MurrError, setup_logging};
-use crate::manager::{TableLoader, TableManager};
+use crate::old::api::{AppState, create_router};
+use crate::old::manager::{TableLoader, TableManager};
 
 #[tokio::main]
 async fn main() -> Result<(), MurrError> {

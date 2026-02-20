@@ -10,8 +10,8 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use common::setup_test_table;
-use murr::api::{AppState, create_router};
-use murr::manager::TableManager;
+use murr::old::api::{AppState, create_router};
+use murr::old::manager::TableManager;
 
 /// Create an AppState with a pre-loaded table for testing.
 async fn create_test_app_state(table_name: &str, num_rows: usize) -> (AppState, tempfile::TempDir) {
