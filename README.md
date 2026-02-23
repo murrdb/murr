@@ -42,11 +42,11 @@ Batch feature lookup: 10M rows, 10 Float32 columns, fetching 1000 random keys pe
 - **Redis MGET**: all columns packed into a single binary blob per key, fetched with pipelined MGET
 - **Redis Feast**: one HSET per key with a field per column (standard Feast layout), fetched with pipelined HGETALL
 
-| Approach | Latency (p50) | Throughput |
-|----------|---------------|------------|
-| Murr (HTTP + Arrow IPC) | 140 µs | 7.15 Mkeys/s |
-| Redis MGET (feature blobs) | 263 µs | 3.80 Mkeys/s |
-| Redis Feast (HSET per row) | 3.80 ms | 263 Kkeys/s |
+| Approach | Latency (mean) | 95% CI | Throughput |
+|----------|----------------|--------|------------|
+| Murr (HTTP + Arrow IPC) | 140 µs | [139—140 µs] | 7.15 Mkeys/s |
+| Redis MGET (feature blobs) | 263 µs | [262—264 µs] | 3.80 Mkeys/s |
+| Redis Feast (HSET per row) | 3.80 ms | [3.76—3.89 ms] | 263 Kkeys/s |
 
 Murr is ~1.9x faster than the best Redis layout (MGET with packed blobs) and ~27x faster than Feast-style hash-per-row storage.
 
