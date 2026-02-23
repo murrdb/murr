@@ -18,10 +18,13 @@ jobs:
         include:
           - os: ubuntu-22.04
             artifact: murr-linux-x64
+            binary: murr
           - os: macos-14
             artifact: murr-macos-arm64
+            binary: murr
           - os: windows-2022
             artifact: murr-windows-x64.exe
+            binary: murr.exe
     runs-on: ${{ matrix.os }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -41,7 +44,8 @@ jobs:
         run: cargo build --release
 
       - name: Prepare release artifact
-        run: cp target/release/murr ${{ matrix.artifact }}
+        shell: bash
+        run: cp target/release/${{ matrix.binary }} ${{ matrix.artifact }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
