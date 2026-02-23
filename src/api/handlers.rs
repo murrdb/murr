@@ -4,6 +4,7 @@ use std::sync::{Arc, LazyLock};
 
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -18,6 +19,7 @@ use super::convert::{FetchResponse, WriteRequest};
 use super::error::ApiError;
 
 const ARROW_IPC_MIME: &str = "application/vnd.apache.arrow.stream";
+const PARQUET_MIME: &str = "application/vnd.apache.parquet";
 
 static OPENAPI_JSON: LazyLock<serde_json::Value> = LazyLock::new(|| {
     let yaml = include_str!("../../openapi.yaml");
@@ -96,12 +98,12 @@ pub async fn write_table(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    let is_arrow = headers
+    let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.contains(ARROW_IPC_MIME));
+        .unwrap_or("");
 
-    let batch = if is_arrow {
+    let batch = if content_type.contains(ARROW_IPC_MIME) {
         let cursor = Cursor::new(&body);
         let mut reader = StreamReader::try_new(cursor, None)
             .map_err(|e| ApiError(e.into()))?;
@@ -109,6 +111,19 @@ pub async fn write_table(
             .next()
             .ok_or_else(|| ApiError(MurrError::TableError("empty Arrow IPC stream".into())))?
             .map_err(|e| ApiError(e.into()))?
+    } else if content_type.contains(PARQUET_MIME) {
+        let reader = ParquetRecordBatchReaderBuilder::try_new(body)
+            .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?
+            .build()
+            .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?;
+        let batches: Vec<_> = reader
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ApiError(e.into()))?;
+        arrow::compute::concat_batches(
+            &batches[0].schema(),
+            &batches,
+        )
+        .map_err(|e| ApiError(e.into()))?
     } else {
         let write: WriteRequest = serde_json::from_slice(&body)
             .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;

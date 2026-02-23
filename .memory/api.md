@@ -31,6 +31,7 @@
 **Write:** Response is always `200 OK`. Request format is determined by `Content-Type` header:
 - `application/json` (default) → `{"columns": {"col1": [v1, v2], ...}}` (needs table schema to know column types)
 - `application/vnd.apache.arrow.stream` → Arrow IPC stream bytes (self-describing, no schema lookup needed)
+- `application/vnd.apache.parquet` → Parquet bytes (self-describing, no schema lookup needed). Uses `ParquetRecordBatchReaderBuilder` to read all row groups, then `concat_batches` to merge into a single `RecordBatch`.
 
 ## RecordBatch ↔ JSON Conversion (`convert.rs`)
 
@@ -70,4 +71,4 @@ The API schema lives in `openapi.yaml` (OpenAPI 3.1, YAML for human editability)
 ## Testing
 
 - Unit tests in `convert.rs`: direct conversion + round-trip tests for both directions
-- E2E tests in `tests/api_test.rs`: uses `tower::ServiceExt::oneshot()` against the `Router` — no real TCP server needed. Covers full create→write(JSON)→write(Arrow)→fetch(JSON)→fetch(Arrow) flow, plus OpenAPI endpoint validation.
+- E2E tests in `tests/api_test.rs`: uses `tower::ServiceExt::oneshot()` against the `Router` — no real TCP server needed. Covers full create→write(JSON)→write(Arrow)→write(Parquet)→fetch(JSON)→fetch(Arrow) flow, plus OpenAPI endpoint validation.
