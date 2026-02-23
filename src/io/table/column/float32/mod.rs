@@ -2,7 +2,8 @@ pub(crate) mod segment;
 
 use std::sync::Arc;
 
-use arrow::array::{Array, Float32Builder};
+use arrow::array::{Array, Float32Array, Float32Builder};
+use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::{DataType, Field};
 
 use crate::core::ColumnConfig;
@@ -42,77 +43,60 @@ impl<'a> Column for Float32Column<'a> {
     }
 
     fn get_indexes(&self, indexes: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
-        let mut builder = Float32Builder::with_capacity(indexes.len());
+        let len = indexes.len();
+        let mut values = vec![0.0f32; len];
+        // Pre-fill validity bitmap as all-valid (0xFF). Missing keys are rare,
+        // so we only clear bits in the uncommon path.
+        let mut validity_bytes = vec![0xFFu8; (len + 7) / 8];
+        // Mask off trailing bits beyond `len` so Arrow doesn't see phantom valid entries.
+        let trailing = len % 8;
+        if trailing != 0 {
+            validity_bytes[len / 8] = (1u8 << trailing) - 1;
+        }
 
-        if self.nullable {
-            for idx in indexes {
-                match idx {
-                    KeyOffset::MissingKey => {
-                        builder.append_null();
-                    }
-                    KeyOffset::SegmentOffset {
-                        segment_id,
-                        segment_offset,
-                    } => {
-                        let seg =
-                            self.segments.get(*segment_id as usize).ok_or_else(|| {
-                                MurrError::TableError(format!(
-                                    "segment_id {} out of range (have {})",
-                                    segment_id,
-                                    self.segments.len()
-                                ))
-                            })?;
-
-                        if *segment_offset >= seg.header.num_values {
-                            return Err(MurrError::TableError(format!(
-                                "segment_offset {} out of range (segment has {} values)",
-                                segment_offset, seg.header.num_values
-                            )));
-                        }
-
-                        if let Some(ref nulls) = seg.nulls
-                            && !nulls.is_valid(*segment_offset as u64)
-                        {
-                            builder.append_null();
-                            continue;
-                        }
-                        builder.append_value(seg.payload[*segment_offset as usize]);
-                    }
+        for (i, idx) in indexes.iter().enumerate() {
+            match idx {
+                KeyOffset::MissingKey => {
+                    validity_bytes[i >> 3] &= !(1 << (i & 7));
                 }
-            }
-        } else {
-            for idx in indexes {
-                match idx {
-                    KeyOffset::MissingKey => {
-                        builder.append_null();
-                    }
-                    KeyOffset::SegmentOffset {
-                        segment_id,
-                        segment_offset,
-                    } => {
-                        let seg =
-                            self.segments.get(*segment_id as usize).ok_or_else(|| {
-                                MurrError::TableError(format!(
-                                    "segment_id {} out of range (have {})",
-                                    segment_id,
-                                    self.segments.len()
-                                ))
-                            })?;
+                KeyOffset::SegmentOffset {
+                    segment_id,
+                    segment_offset,
+                } => {
+                    let seg =
+                        self.segments.get(*segment_id as usize).ok_or_else(|| {
+                            MurrError::TableError(format!(
+                                "segment_id {} out of range (have {})",
+                                segment_id,
+                                self.segments.len()
+                            ))
+                        })?;
 
-                        if *segment_offset >= seg.header.num_values {
-                            return Err(MurrError::TableError(format!(
-                                "segment_offset {} out of range (segment has {} values)",
-                                segment_offset, seg.header.num_values
-                            )));
+                    if *segment_offset >= seg.header.num_values {
+                        return Err(MurrError::TableError(format!(
+                            "segment_offset {} out of range (segment has {} values)",
+                            segment_offset, seg.header.num_values
+                        )));
+                    }
+
+                    if self.nullable {
+                        if let Some(ref nulls) = seg.nulls {
+                            if !nulls.is_valid(*segment_offset as u64) {
+                                validity_bytes[i >> 3] &= !(1 << (i & 7));
+                                continue;
+                            }
                         }
-
-                        builder.append_value(seg.payload[*segment_offset as usize]);
                     }
+
+                    values[i] = seg.payload[*segment_offset as usize];
                 }
             }
         }
 
-        Ok(Arc::new(builder.finish()))
+        let buffer = Buffer::from_vec(validity_bytes);
+        let bool_buf = BooleanBuffer::new(buffer, 0, len);
+        let nulls = NullBuffer::new(bool_buf);
+        Ok(Arc::new(Float32Array::new(values.into(), Some(nulls))))
     }
 
     fn get_all(&self) -> Result<Arc<dyn Array>, MurrError> {
