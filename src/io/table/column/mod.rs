@@ -32,7 +32,7 @@ pub trait ColumnSegment<'a>: Sized {
     fn write(config: &ColumnConfig, array: &Self::ArrayType) -> Result<Vec<u8>, MurrError>;
 }
 
-pub trait Column {
+pub trait Column: Send + Sync {
     /// Arrow field definition for this column.
     fn field(&self) -> &Field;
 

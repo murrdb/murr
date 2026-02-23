@@ -25,6 +25,7 @@ bytes = "1"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["trace"] }
 serde_json = "1"
+serde_yaml_ng = "0.10"
 ahash = "0.8"
 ouroboros = "0.18"
 bytemuck = { version = "1", features = ["derive"] }
@@ -44,14 +45,6 @@ tower = { version = "0.5", features = ["util"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["redis"] }
-
-[[bench]]
-name = "table_bench"
-harness = false
-
-[[bench]]
-name = "api_bench"
-harness = false
 
 [[bench]]
 name = "hashmap_bench"

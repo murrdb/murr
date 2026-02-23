@@ -84,6 +84,22 @@ impl MurrService {
         Ok(())
     }
 
+    pub async fn list_tables(&self) -> HashMap<String, TableSchema> {
+        let tables = self.tables.read().await;
+        tables
+            .iter()
+            .map(|(k, v)| (k.clone(), v.schema.clone()))
+            .collect()
+    }
+
+    pub async fn get_schema(&self, table_name: &str) -> Result<TableSchema, MurrError> {
+        let tables = self.tables.read().await;
+        let state = tables.get(table_name).ok_or_else(|| {
+            MurrError::TableError(format!("table '{}' not found", table_name))
+        })?;
+        Ok(state.schema.clone())
+    }
+
     pub async fn read(
         &self,
         table_name: &str,
