@@ -38,11 +38,13 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 ahash = "0.8"
 ouroboros = "0.18"
+mimalloc = { version = "0.1", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 
 [dev-dependencies]
+mimalloc = { version = "0.1", default-features = false }
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 rand = "0.10"
@@ -70,7 +72,11 @@ name = "table_bench"
 harness = false
 
 [[bench]]
-name = "api_bench"
+name = "http_bench"
+harness = false
+
+[[bench]]
+name = "flight_bench"
 harness = false
 
 [[bench]]
