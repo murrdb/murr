@@ -10,14 +10,8 @@ pub enum MurrError {
     ArrowError(String),
     #[error("Table error: {0}")]
     TableError(String),
-    #[error("Parquet error: {0}")]
-    ParquetError(String),
-    #[error("Object store error: {0}")]
-    ObjectStoreError(String),
-    #[error("Discovery error: {0}")]
-    DiscoveryError(String),
-    #[error("No valid partition found: {0}")]
-    NoValidPartition(String),
+    #[error("Segment error: {0}")]
+    SegmentError(String),
 }
 
 impl From<std::io::Error> for MurrError {
@@ -29,17 +23,5 @@ impl From<std::io::Error> for MurrError {
 impl From<arrow::error::ArrowError> for MurrError {
     fn from(err: arrow::error::ArrowError) -> Self {
         MurrError::ArrowError(err.to_string())
-    }
-}
-
-impl From<parquet::errors::ParquetError> for MurrError {
-    fn from(err: parquet::errors::ParquetError) -> Self {
-        MurrError::ParquetError(err.to_string())
-    }
-}
-
-impl From<object_store::Error> for MurrError {
-    fn from(err: object_store::Error) -> Self {
-        MurrError::ObjectStoreError(err.to_string())
     }
 }

@@ -1,45 +1,37 @@
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::json;
 
 use crate::core::MurrError;
 
-use super::types::ErrorResponse;
-
-/// API-specific errors with HTTP status code mapping.
-#[derive(Debug)]
-pub enum ApiError {
-    TableNotFound(String),
-    InvalidRequest(String),
-    Internal(String),
-}
+pub struct ApiError(pub MurrError);
 
 impl From<MurrError> for ApiError {
     fn from(err: MurrError) -> Self {
-        match &err {
-            MurrError::TableError(msg) => ApiError::InvalidRequest(msg.clone()),
-            _ => ApiError::Internal(err.to_string()),
-        }
+        ApiError(err)
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
-            ApiError::TableNotFound(name) => (
-                StatusCode::NOT_FOUND,
-                "TABLE_NOT_FOUND",
-                format!("Table '{}' not found or not yet loaded", name),
-            ),
-            ApiError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, "INVALID_REQUEST", msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", msg),
+        let (status, message) = match &self.0 {
+            MurrError::TableError(msg) if msg.contains("not found") => {
+                (StatusCode::NOT_FOUND, msg.clone())
+            }
+            MurrError::TableError(msg) if msg.contains("already exists") => {
+                (StatusCode::CONFLICT, msg.clone())
+            }
+            MurrError::TableError(msg) | MurrError::SegmentError(msg) => {
+                (StatusCode::BAD_REQUEST, msg.clone())
+            }
+            MurrError::IoError(msg)
+            | MurrError::ArrowError(msg)
+            | MurrError::ConfigParsingError(msg) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, msg.clone())
+            }
         };
 
-        let body = ErrorResponse {
-            error: message,
-            code: code.to_string(),
-        };
-
-        (status, Json(body)).into_response()
+        (status, Json(json!({"error": message}))).into_response()
     }
 }

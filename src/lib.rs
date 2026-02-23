@@ -1,10 +1,8 @@
 pub mod api;
 pub mod conf;
 pub mod core;
-pub mod discovery;
-pub mod manager;
-pub mod parquet;
-pub mod table;
+pub mod io;
+pub mod service;
 
 #[cfg(feature = "testutil")]
 pub mod testutil;
