@@ -19,9 +19,7 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The old Arrow IPC storage layer has been removed. The codebase now uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the new storage. `main.rs` declares the modules but does not yet instantiate a service or HTTP server — there is no API layer wired up yet. Only `Float32` and `Utf8` column types are implemented so far.
-
-A legacy `Table` type in `src/io/table/table.rs` still reads Arrow IPC files directly (used by some benchmarks) but is not part of the main data path.
+**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. An Axum HTTP API (`src/api/`) is wired up in `main.rs`, serving on `0.0.0.0:8080`. Only `Float32` and `Utf8` column types are implemented so far.
 
 ## Common Commands
 
@@ -62,14 +60,21 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, api_bench,
 - `utf8/` — `Utf8Column` with 20-byte segment header, i32 value offsets, concatenated strings, optional null bitmap
 - `bitmap.rs` — `NullBitmap` using u64-word bit array (bit set = valid)
 
-**`service/`** — High-level service wrapping the new storage
+**`service/`** — High-level service wrapping the storage layer
 - `MurrService` — `RwLock<HashMap<String, TableState>>` table registry
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
-- Each `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
+- `state.rs` — `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
 
-**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`)
+**`api/`** — Axum HTTP API layer
+- `mod.rs` — `MurrApi` struct: `new()`, `router()`, `serve()`
+- `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors
+- `convert.rs` — `FetchResponse` (batch→JSON) and `WriteRequest` (JSON→batch) conversions
+- `error.rs` — `ApiError` newtype mapping `MurrError` → HTTP status codes
+- Content negotiation: fetch supports JSON or Arrow IPC response (`Accept` header); write supports JSON or Arrow IPC request (`Content-Type` header)
 
-**`conf/`** — YAML configuration: `Config`, `ServerConfig`, `TableConfig`, `SourceConfig`, `DType` enum. Uses `#[serde(deny_unknown_fields)]` for strict validation.
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnConfig`, `TableSchema`)
+
+**`conf/`** — YAML configuration: `Config`, `ServerConfig`. Uses `#[serde(deny_unknown_fields)]` for strict validation.
 
 **`testutil.rs`** — Feature-gated (`testutil`) test helpers: `generate_parquet_file()`, `setup_test_table()`, `setup_benchmark_table()`, `bench_generate_keys()`
 
@@ -85,36 +90,20 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, api_bench,
 
 ```yaml
 server:
-  host: localhost
-  port: 8080
-  data_dir: /var/lib/murr
-
-tables:
-  user_features:
-    source:
-      s3:
-        bucket: my-bucket
-        prefix: features/
-        region: us-east-1
-        endpoint: http://localhost:9000  # optional, for MinIO/LocalStack
-    poll_interval: 5m  # default: 1m
-    parts: 8           # default: 8
-    key: [user_id]
-    columns:
-      user_id:
-        dtype: utf8
-        nullable: false
-      click_rate:
-        dtype: float32
-        nullable: true  # default: true
+  host: localhost    # default: localhost
+  port: 8080        # default: 8080
+  data_dir: /var/lib/murr  # default: /var/lib/murr
 ```
+
+Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `key`, and `columns` (each with `dtype` and optional `nullable`).
 
 Supported dtypes: `utf8`, `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float32`, `float64`, `bool`
 (Currently only `utf8` and `float32` are implemented in the segment column layer)
 
 ### Testing
 
-- Unit tests in most modules via `#[cfg(test)]` (including inline tests in `service/mod.rs`)
+- Unit tests in most modules via `#[cfg(test)]` (including inline tests in `service/mod.rs`, `convert.rs`)
+- E2E API tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
 - Benchmarks: `table_bench` (10M rows), `api_bench` (Murr vs Redis comparison via `testcontainers`), `hashmap_bench`, `hashmap_row_bench`
