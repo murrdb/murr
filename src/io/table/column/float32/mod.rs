@@ -70,11 +70,11 @@ impl<'a> Column for Float32Column<'a> {
                             )));
                         }
 
-                        if let Some(ref nulls) = seg.nulls {
-                            if !nulls.is_valid(*segment_offset as u64) {
-                                builder.append_null();
-                                continue;
-                            }
+                        if let Some(ref nulls) = seg.nulls
+                            && !nulls.is_valid(*segment_offset as u64)
+                        {
+                            builder.append_null();
+                            continue;
                         }
                         builder.append_value(seg.payload[*segment_offset as usize]);
                     }

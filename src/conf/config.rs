@@ -8,17 +8,17 @@ use crate::{
 use config::Config as CConfig;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    #[serde(default = "Config::default_server")]
+    #[serde(default)]
     pub server: ServerConfig,
 }
 
 impl Config {
     pub fn from_file(file_path: &str) -> Result<Config, MurrError> {
         let content = std::fs::read_to_string(file_path)?;
-        return Config::from_str(&content);
+        Config::from_str(&content)
     }
     pub fn from_str(yaml_str: &str) -> Result<Config, MurrError> {
         let config = CConfig::builder()
@@ -27,7 +27,7 @@ impl Config {
             .map_err(|e| ConfigParsingError(e.to_string()))?
             .try_deserialize::<Config>()
             .map_err(|e| ConfigParsingError(e.to_string()))?;
-        return Ok(config);
+        Ok(config)
     }
 
     pub fn from_args(args: &CliArgs) -> Result<Config, MurrError> {
@@ -37,17 +37,6 @@ impl Config {
         }
     }
 
-    fn default_server() -> ServerConfig {
-        ServerConfig::default()
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-        }
-    }
 }
 
 #[cfg(test)]

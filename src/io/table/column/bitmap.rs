@@ -49,7 +49,7 @@ impl<'a> NullBitmap<'a> {
             if values.is_null(i) {
                 words.get_or_insert_with(|| {
                     // First null: allocate and backfill all prior values as valid.
-                    let word_count = (len + 63) / 64;
+                    let word_count = len.div_ceil(64);
                     let mut v = vec![0u64; word_count];
                     for j in 0..i {
                         v[j / 64] |= 1 << (j % 64);

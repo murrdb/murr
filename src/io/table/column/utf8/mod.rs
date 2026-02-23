@@ -70,11 +70,11 @@ impl<'a> Column for Utf8Column<'a> {
                             )));
                         }
 
-                        if let Some(ref nulls) = seg.nulls {
-                            if !nulls.is_valid(*segment_offset as u64) {
-                                builder.append_null();
-                                continue;
-                            }
+                        if let Some(ref nulls) = seg.nulls
+                            && !nulls.is_valid(*segment_offset as u64)
+                        {
+                            builder.append_null();
+                            continue;
                         }
                         let (start, end) = seg.string_range(*segment_offset);
                         let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
