@@ -17,7 +17,8 @@ Murr is a caching layer for ML feature serving that sits between your batch data
 - **Zero-copy reads**: Memory-mapped segments with direct byte-level access — no deserialization overhead
 - **Pull-based sync**: Workers poll S3 for new Parquet partitions and reload automatically
 - **Stateless**: No primary/replica coordination, just point at S3 and scale horizontally
-- **Content-negotiated API**: JSON for debugging, Arrow IPC for production — maps directly to `np.ndarray` and `torch.Tensor`
+- **Dual API**: REST with content negotiation (JSON/Arrow IPC) and Arrow Flight gRPC for native integration with Arrow-based data tools
+- **Content-negotiated HTTP**: JSON for debugging, Arrow IPC for production — maps directly to `np.ndarray` and `torch.Tensor`
 - **Single-binary**: Written in Rust, deploys as one binary with a YAML config
 
 ## Why Murr?
@@ -38,24 +39,26 @@ Murr is designed around the batch read pattern from the start. Data lives in a c
 
 Batch feature lookup: 10M rows, 10 Float32 columns, fetching 1000 random keys per request.
 
-- **Murr**: full HTTP round-trip returning Arrow IPC streaming response
+- **Murr HTTP**: full HTTP round-trip returning Arrow IPC streaming response
+- **Murr Flight**: Arrow Flight gRPC round-trip
 - **Redis MGET**: all columns packed into a single binary blob per key, fetched with pipelined MGET
 - **Redis Feast**: one HSET per key with a field per column (standard Feast layout), fetched with pipelined HGETALL
 
 | Approach | Latency (mean) | 95% CI | Throughput |
 |----------|----------------|--------|------------|
-| Murr (HTTP + Arrow IPC) | 140 µs | [139—140 µs] | 7.15 Mkeys/s |
+| Murr (HTTP + Arrow IPC) | 104 µs | [103—104 µs] | 9.63 Mkeys/s |
+| Murr (Flight gRPC) | 105 µs | [104—105 µs] | 9.53 Mkeys/s |
 | Redis MGET (feature blobs) | 263 µs | [262—264 µs] | 3.80 Mkeys/s |
 | Redis Feast (HSET per row) | 3.80 ms | [3.76—3.89 ms] | 263 Kkeys/s |
 
-Murr is ~1.9x faster than the best Redis layout (MGET with packed blobs) and ~27x faster than Feast-style hash-per-row storage.
+Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36x faster than Feast-style hash-per-row storage.
 
 
 ## Status
 
 **Pre-alpha. Here be dragons.**
 
-The storage engine, service layer, and REST API are implemented and working. Data loading from S3 and the Python client are not yet built.
+The storage engine, service layer, REST API, and Arrow Flight gRPC API are implemented and working. Data loading from S3 and the Python client are not yet built.
 
 ## Architecture
 
@@ -90,7 +93,7 @@ Each column type has its own binary encoding optimized for scatter-gather reads:
 
 Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely — benchmarks showed this returns performance to the no-nulls baseline.
 
-### REST API
+### REST API (port 8080)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -103,6 +106,22 @@ Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns ski
 | PUT | `/api/v1/table/{name}/write` | Write data (JSON or Arrow IPC request) |
 
 **Content negotiation**: Fetch responses use `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` header for the same formats.
+
+### Arrow Flight gRPC API (port 8081)
+
+A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native integration with Arrow-based data tools. Both APIs run concurrently via `tokio::try_join!`.
+
+| RPC | Description |
+|-----|-------------|
+| `do_get` | Fetch rows by keys and columns (JSON-encoded `FetchTicket`) |
+| `get_flight_info` | Get table schema and metadata |
+| `get_schema` | Get schema in Arrow IPC format |
+| `list_flights` | List all available tables |
+
+Ticket format for `do_get`:
+```json
+{"table": "user_features", "keys": ["user_1", "user_2"], "columns": ["click_rate_7d"]}
+```
 
 ### Performance
 
@@ -137,6 +156,18 @@ curl -X POST http://localhost:8080/api/v1/table/user_features/fetch \
   --output response.arrow
 ```
 
+Arrow Flight gRPC (for Arrow-native clients):
+
+```python
+import pyarrow.flight as flight
+import json
+
+client = flight.FlightClient("grpc://localhost:8081")
+ticket = json.dumps({"table": "user_features", "keys": ["user_1", "user_2", "user_3"], "columns": ["click_rate_7d", "purchase_count_30d"]})
+reader = client.do_get(flight.Ticket(ticket.encode()))
+table = reader.read_all()
+```
+
 Python client (planned):
 
 ```python
@@ -161,7 +192,7 @@ cargo test                   # Run all tests
 cargo check                  # Fast syntax/type check
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a benchmark (hashmap_bench, hashmap_row_bench)
+cargo bench --bench <name>   # Run a benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
 ```
 
 ## Roadmap

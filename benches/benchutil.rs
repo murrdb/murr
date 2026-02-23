@@ -12,6 +12,7 @@ use murr::testutil::{bench_column_names, generate_batch};
 pub const NUM_ROWS: usize = 10_000_000;
 pub const NUM_KEYS: usize = 1000;
 
+#[allow(dead_code)]
 pub fn make_schema(col_names: &[String]) -> (TableSchema, Arc<Schema>) {
     let mut columns = HashMap::new();
     columns.insert(
@@ -45,6 +46,7 @@ pub fn make_schema(col_names: &[String]) -> (TableSchema, Arc<Schema>) {
 
 /// Set up a MurrService with a "bench" table containing NUM_ROWS rows of Float32 data.
 /// Returns the TempDir (must be kept alive) and the service.
+#[allow(dead_code)]
 pub fn setup_service(rt: &Runtime) -> (TempDir, MurrService) {
     let col_names = bench_column_names();
     let (table_schema, arrow_schema) = make_schema(&col_names);
