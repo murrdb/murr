@@ -22,7 +22,7 @@ const ARROW_IPC_MIME: &str = "application/vnd.apache.arrow.stream";
 const PARQUET_MIME: &str = "application/vnd.apache.parquet";
 
 static OPENAPI_JSON: LazyLock<serde_json::Value> = LazyLock::new(|| {
-    let yaml = include_str!("../../openapi.yaml");
+    let yaml = include_str!("../../../openapi.yaml");
     serde_yaml_ng::from_str(yaml).expect("openapi.yaml must be valid YAML")
 });
 

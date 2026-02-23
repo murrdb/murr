@@ -16,12 +16,8 @@ impl From<MurrError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match &self.0 {
-            MurrError::TableError(msg) if msg.contains("not found") => {
-                (StatusCode::NOT_FOUND, msg.clone())
-            }
-            MurrError::TableError(msg) if msg.contains("already exists") => {
-                (StatusCode::CONFLICT, msg.clone())
-            }
+            MurrError::TableNotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            MurrError::TableAlreadyExists(msg) => (StatusCode::CONFLICT, msg.clone()),
             MurrError::TableError(msg) | MurrError::SegmentError(msg) => {
                 (StatusCode::BAD_REQUEST, msg.clone())
             }

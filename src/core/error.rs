@@ -8,6 +8,10 @@ pub enum MurrError {
     IoError(String),
     #[error("Arrow error: {0}")]
     ArrowError(String),
+    #[error("table not found: {0}")]
+    TableNotFound(String),
+    #[error("table already exists: {0}")]
+    TableAlreadyExists(String),
     #[error("Table error: {0}")]
     TableError(String),
     #[error("Segment error: {0}")]
