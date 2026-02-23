@@ -17,12 +17,9 @@ log = { version = "0.4.29", features = ["kv"] }
 env_logger = "0.11"
 clap = { version = "4.5.54", features = ["derive"] }
 arrow = { version = "57", default-features = true, features = ["ipc"] }
-parquet = { version = "57", default-features = false, features = ["arrow", "async", "object_store"] }
-object_store = { version = "0.12", features = ["fs", "aws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "time", "sync", "macros"] }
 tokio-stream = "0.1"
 async-trait = "0.1"
-chrono = "0.4"
 memmap2 = "0.9"
 bytes = "1"
 axum = "0.8"

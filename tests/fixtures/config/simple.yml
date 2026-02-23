@@ -1,9 +1,0 @@
-tables:
-  clicks:
-    source:
-      local:
-        path: /data
-    poll_interval: 1m
-    parts: 8 # number of RecordBatch files per table, should be max(8, cpu_cores)
-    key: [id]
-    
