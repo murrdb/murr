@@ -55,16 +55,21 @@ harness = false
 name = "hashmap_row_bench"
 harness = false
 
-[profile.bench]                                                                                                                                                                                                 
-debug = true              # Include debug symbols (DWARF)                                                                                                                                                       
-# force-frame-pointers = true  # Required for stack sampling (Rust 1.79+)
-# opt-level = 2        # Less aggressive inlining                                                                                                                                                                 
-# lto = false          # Disable LTO     
+[[bench]]
+name = "table_bench"
+harness = false
 
-[profile.bench.build-override]                                                                                                                                                                                  
-debug = true                                                                                                                                                                                                    
+[profile.bench]
+debug = 1                   # line tables + symbols (good enough for perf)
+lto = false                 # optional: makes disasm easier to read
+codegen-units = 1           # optional: more stable codegen
+panic = "abort"             # optional
+force-frame-pointers = true
+
+[profile.bench.build-override]
+debug = true
 # force-frame-pointers = true                                                                                                                                                                                     
-                                                                                                                                                                                                                
-[profile.bench.package."*"]                                                                                                                                                                                     
-debug = true                                                                                                                                                                                                    
-# force-frame-pointers = true 
+
+[profile.bench.package."*"]
+debug = true
+# force-frame-pointers = true
