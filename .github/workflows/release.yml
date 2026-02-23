@@ -13,7 +13,18 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: murr-linux-x64
+          - os: macos-14
+            artifact: murr-macos-arm64
+          - os: windows-2019
+            artifact: murr-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -30,10 +41,10 @@ jobs:
         run: cargo build --release
 
       - name: Prepare release artifact
-        run: cp target/release/murr murr-linux-x64
+        run: cp target/release/murr ${{ matrix.artifact }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: murr-linux-x64
+          files: ${{ matrix.artifact }}
