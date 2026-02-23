@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use serde_json::json;
 use tokio::runtime::Runtime;
 
-use murr::api::MurrApi;
+use murr::api::MurrHttpService;
 use murr::testutil::{bench_column_names, bench_generate_keys};
 
 mod benchutil;
@@ -16,7 +16,7 @@ fn bench_api_fetch(c: &mut Criterion) {
     let col_names = bench_column_names();
     let (_dir, svc) = benchutil::setup_service(&rt);
 
-    let api = MurrApi::new(svc);
+    let api = MurrHttpService::new(std::sync::Arc::new(svc));
     let router = api.router();
 
     // Bind to an OS-assigned port and spawn the server.
