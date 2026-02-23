@@ -26,7 +26,7 @@ impl MurrApi {
             .route("/openapi.json", get(handlers::openapi))
             .route("/health", get(handlers::health))
             .route("/api/v1/table", get(handlers::list_tables))
-            .route("/api/v1/table/{name}", get(handlers::get_table))
+            .route("/api/v1/table/{name}/schema", get(handlers::get_schema))
             .route("/api/v1/table/{name}", put(handlers::create_table))
             .route("/api/v1/table/{name}/fetch", post(handlers::fetch))
             .route("/api/v1/table/{name}/write", put(handlers::write_table))

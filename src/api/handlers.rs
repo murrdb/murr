@@ -36,7 +36,7 @@ pub async fn list_tables(State(service): State<Arc<MurrService>>) -> impl IntoRe
     Json(service.list_tables().await)
 }
 
-pub async fn get_table(
+pub async fn get_schema(
     State(service): State<Arc<MurrService>>,
     Path(name): Path<String>,
 ) -> Result<Json<TableSchema>, ApiError> {

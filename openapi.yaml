@@ -45,21 +45,6 @@ paths:
                   $ref: "#/components/schemas/TableSchema"
 
   /api/v1/table/{name}:
-    get:
-      summary: Get table schema
-      operationId: getTable
-      parameters:
-        - $ref: "#/components/parameters/TableName"
-      responses:
-        "200":
-          description: Table schema
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TableSchema"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
     put:
       summary: Create a table
       operationId: createTable
@@ -80,6 +65,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/table/{name}/schema:
+    get:
+      summary: Get table schema
+      operationId: getSchema
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      responses:
+        "200":
+          description: Table schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableSchema"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/table/{name}/fetch:
     post:
