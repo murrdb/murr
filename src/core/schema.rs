@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,4 +29,12 @@ impl ColumnConfig {
     pub fn default_nullable() -> bool {
         true
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableSchema {
+    #[serde(default)]
+    pub name: String,
+    pub key: String,
+    pub columns: HashMap<String, ColumnConfig>,
 }

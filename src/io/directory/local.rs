@@ -138,7 +138,7 @@ impl Directory for LocalDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::{ColumnConfig, DType};
+    use crate::core::{ColumnConfig, DType};
     use crate::io::segment::WriteSegment;
     use std::collections::HashMap;
     use std::fs::File;
@@ -160,7 +160,7 @@ mod tests {
                 nullable: true,
             },
         );
-        TableSchema { key: "key".to_string(), columns }
+        TableSchema { name: "test".to_string(), key: "key".to_string(), columns }
     }
 
     fn write_table_json(dir: &std::path::Path, schema: &TableSchema) {

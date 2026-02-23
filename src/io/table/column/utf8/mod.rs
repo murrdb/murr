@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrow::array::{Array, StringBuilder};
 use arrow::datatypes::{DataType, Field};
 
-use crate::conf::ColumnConfig;
+use crate::core::ColumnConfig;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::{Column, KeyOffset};
@@ -177,7 +177,7 @@ impl<'a> Column for Utf8Column<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::DType;
+    use crate::core::DType;
     use arrow::array::StringArray;
     fn make_string_array(values: &[Option<&str>]) -> StringArray {
         values.iter().collect::<StringArray>()

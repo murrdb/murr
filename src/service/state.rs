@@ -1,4 +1,5 @@
-use crate::io::directory::{LocalDirectory, TableSchema};
+use crate::core::TableSchema;
+use crate::io::directory::LocalDirectory;
 use crate::io::table::CachedTable;
 
 pub(crate) struct TableState {

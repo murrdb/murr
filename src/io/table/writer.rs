@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use arrow::array::{Float32Array, StringArray};
 use arrow::record_batch::RecordBatch;
 
-use crate::conf::DType;
+use crate::core::DType;
 use crate::core::MurrError;
 use crate::io::directory::{Directory, LocalDirectory, SegmentInfo, TableSchema};
 use crate::io::segment::WriteSegment;
@@ -134,7 +134,7 @@ impl<'a> TableWriter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::ColumnConfig;
+    use crate::core::ColumnConfig;
     use crate::io::directory::{Directory, LocalDirectory};
     use crate::io::table::reader::TableReader;
     use crate::io::table::view::TableView;
@@ -160,7 +160,7 @@ mod tests {
                 nullable: true,
             },
         );
-        TableSchema { key: "key".to_string(), columns }
+        TableSchema { name: "test".to_string(), key: "key".to_string(), columns }
     }
 
     #[tokio::test]
@@ -275,7 +275,7 @@ mod tests {
                 nullable: false,
             },
         );
-        let schema = TableSchema { key: "key".to_string(), columns };
+        let schema = TableSchema { name: "test".to_string(), key: "key".to_string(), columns };
 
         let mut writer = TableWriter::create(&schema, &mut local).await.unwrap();
 

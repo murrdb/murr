@@ -1,7 +1,7 @@
 use arrow::array::{Array, Float32Array};
 use bytemuck::{Pod, Zeroable, cast_slice};
 
-use crate::conf::ColumnConfig;
+use crate::core::ColumnConfig;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::bitmap::{NullBitmap, align8_padding};
@@ -121,7 +121,7 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::DType;
+    use crate::core::DType;
 
     fn make_float32_array(values: &[Option<f32>]) -> Float32Array {
         values.iter().copied().collect::<Float32Array>()
