@@ -10,9 +10,6 @@ testutil = ["dep:tempfile", "dep:rand"]
 config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
-anyhow = "1.0.102"
-humantime-serde = "1"
-
 log = { version = "0.4.29", features = ["kv"] }
 env_logger = "0.11"
 clap = { version = "4.5.60", features = ["derive"] }
@@ -28,7 +25,6 @@ tokio = { version = "1", features = [
 tokio-stream = "0.1"
 async-trait = "0.1"
 memmap2 = "0.9"
-bytes = "1"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["trace"] }
 arrow-flight = "58"
@@ -48,10 +44,6 @@ mimalloc = { version = "0.1", default-features = false }
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 rand = "0.10"
-bitvec = "1"
-ahash = "0.8"
-rayon = "1"
-rstest = "0.26"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
