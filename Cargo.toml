@@ -46,6 +46,7 @@ tower = { version = "0.5", features = ["util"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["redis"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [[bench]]
 name = "hashmap_bench"
@@ -57,6 +58,18 @@ harness = false
 
 [[bench]]
 name = "table_bench"
+harness = false
+
+[[bench]]
+name = "api_bench"
+harness = false
+
+[[bench]]
+name = "redis_featureblob_bench"
+harness = false
+
+[[bench]]
+name = "redis_feast_bench"
 harness = false
 
 [profile.bench]
