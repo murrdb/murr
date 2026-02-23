@@ -6,6 +6,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use parquet::arrow::arrow_writer::ArrowWriter;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -227,4 +228,60 @@ async fn test_full_round_trip() {
     assert_eq!(scores.value(0), 1.0);
     assert_eq!(scores.value(1), 2.0);
     assert_eq!(scores.value(2), 3.0);
+}
+
+fn parquet_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("score", DataType::Float32, true),
+    ]));
+    let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
+    let score_array: Float32Array = scores.iter().map(|v| Some(*v)).collect();
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(key_array), Arc::new(score_array)])
+            .unwrap();
+
+    let mut buf = Vec::new();
+    let mut writer = ArrowWriter::try_new(&mut buf, schema, None).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+    buf
+}
+
+#[tokio::test]
+async fn test_write_parquet() {
+    let (_dir, router) = setup();
+
+    // 1. Create table
+    let schema = serde_json::to_vec(&table_schema_json()).unwrap();
+    let req = Request::put("/api/v1/table/features")
+        .header("content-type", "application/json")
+        .body(Body::from(schema))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // 2. Write as Parquet
+    let pq_bytes = parquet_batch(&["x", "y", "z"], &[10.0, 20.0, 30.0]);
+    let req = Request::put("/api/v1/table/features/write")
+        .header("content-type", "application/vnd.apache.parquet")
+        .body(Body::from(pq_bytes))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // 3. Fetch and verify
+    let fetch_body = json!({"keys": ["x", "y", "z"], "columns": ["score"]});
+    let req = Request::post("/api/v1/table/features/fetch")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&fetch_body).unwrap()))
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let scores = json["columns"]["score"].as_array().unwrap();
+    assert_eq!(scores.len(), 3);
+    assert_eq!(scores[0].as_f64().unwrap() as f32, 10.0);
+    assert_eq!(scores[1].as_f64().unwrap() as f32, 20.0);
+    assert_eq!(scores[2].as_f64().unwrap() as f32, 30.0);
 }
