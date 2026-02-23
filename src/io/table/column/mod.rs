@@ -9,7 +9,7 @@ use std::sync::Arc;
 use arrow::array::Array;
 use arrow::datatypes::Field;
 
-use crate::conf::ColumnConfig;
+use crate::core::ColumnConfig;
 use crate::core::MurrError;
 
 pub use float32::Float32Column;

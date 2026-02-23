@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use arrow::record_batch::RecordBatch;
 use tokio::sync::RwLock;
 
-use crate::core::MurrError;
-use crate::io::directory::{Directory, LocalDirectory, TableSchema};
+use crate::core::{MurrError, TableSchema};
+use crate::io::directory::{Directory, LocalDirectory};
 use crate::io::table::{CachedTable, TableWriter};
 
 use state::TableState;
@@ -107,7 +107,7 @@ impl MurrService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::{ColumnConfig, DType};
+    use crate::core::{ColumnConfig, DType};
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
@@ -130,6 +130,7 @@ mod tests {
             },
         );
         TableSchema {
+            name: "test".to_string(),
             key: "key".to_string(),
             columns,
         }

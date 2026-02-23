@@ -1,7 +1,7 @@
 use arrow::array::{Array, StringArray};
 use bytemuck::{Pod, Zeroable, cast_slice};
 
-use crate::conf::ColumnConfig;
+use crate::core::ColumnConfig;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::bitmap::{NullBitmap, align8_padding};
@@ -161,7 +161,7 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::DType;
+    use crate::core::DType;
 
     fn make_string_array(values: &[Option<&str>]) -> StringArray {
         values.iter().collect::<StringArray>()

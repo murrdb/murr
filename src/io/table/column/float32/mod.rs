@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrow::array::{Array, Float32Builder};
 use arrow::datatypes::{DataType, Field};
 
-use crate::conf::ColumnConfig;
+use crate::core::ColumnConfig;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::{Column, KeyOffset};
@@ -154,7 +154,7 @@ impl<'a> Column for Float32Column<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::DType;
+    use crate::core::DType;
     use arrow::array::Float32Array;
     fn make_float32_array(values: &[Option<f32>]) -> Float32Array {
         values.iter().copied().collect::<Float32Array>()
