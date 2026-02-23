@@ -9,15 +9,15 @@ testutil = ["dep:tempfile", "dep:rand"]
 [dependencies]
 config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.17"
-anyhow = "1.0.100"
+thiserror = "2.0.18"
+anyhow = "1.0.102"
 humantime-serde = "1"
 
 log = { version = "0.4.29", features = ["kv"] }
 env_logger = "0.11"
-clap = { version = "4.5.54", features = ["derive"] }
-arrow = { version = "57", default-features = true, features = ["ipc"] }
-parquet = { version = "57", default-features = false, features = ["arrow"] }
+clap = { version = "4.5.60", features = ["derive"] }
+arrow = { version = "58", default-features = true, features = ["ipc"] }
+parquet = { version = "58", default-features = false, features = ["arrow"] }
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "time", "sync", "macros"] }
 tokio-stream = "0.1"
 async-trait = "0.1"
@@ -31,22 +31,22 @@ ahash = "0.8"
 ouroboros = "0.18"
 bytemuck = { version = "1", features = ["derive"] }
 tempfile = { version = "3", optional = true }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.10", optional = true }
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-rand = "0.8"
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+rand = "0.10"
 bitvec = "1"
 ahash = "0.8"
 rayon = "1"
-rstest = "0.24"
+rstest = "0.26"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["redis"] }
-reqwest = { version = "0.12", features = ["json"] }
+redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["redis"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 [[bench]]
 name = "hashmap_bench"
