@@ -200,6 +200,7 @@ mod tests {
             ws.add_column("data", vec![id as u8]);
             let mut file = File::create(&path).unwrap();
             ws.write(&mut file).unwrap();
+            drop(file);
         }
 
         let local = LocalDirectory::new(dir.path());
@@ -222,6 +223,7 @@ mod tests {
         ws.add_column("data", vec![1]);
         let mut file = File::create(&path).unwrap();
         ws.write(&mut file).unwrap();
+        drop(file);
 
         std::fs::write(dir.path().join("readme.txt"), "hello").unwrap();
 
@@ -241,6 +243,7 @@ mod tests {
             let ws = WriteSegment::new();
             let mut file = File::create(&path).unwrap();
             ws.write(&mut file).unwrap();
+            drop(file);
         }
 
         let local = LocalDirectory::new(dir.path());
@@ -261,6 +264,7 @@ mod tests {
         ws.add_column("data", vec![1, 2, 3]);
         let mut file = File::create(&path).unwrap();
         ws.write(&mut file).unwrap();
+        drop(file);
 
         let local = LocalDirectory::new(dir.path());
         let index = local.index().await.unwrap().unwrap();
