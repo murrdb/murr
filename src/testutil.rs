@@ -8,7 +8,7 @@ use arrow::array::*;
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 pub fn generate_batch(schema: &Arc<Schema>, num_rows: usize) -> RecordBatch {
     let arrays: Vec<ArrayRef> = schema
@@ -84,6 +84,6 @@ pub fn bench_column_names() -> Vec<String> {
 pub fn bench_generate_keys(num_keys: usize, max_key: usize) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(BENCH_RNG_SEED);
     (0..num_keys)
-        .map(|_| rng.gen_range(0..max_key).to_string())
+        .map(|_| rng.random_range(0..max_key).to_string())
         .collect()
 }
