@@ -6,9 +6,11 @@ use arrow::array::{Array, Float32Array};
 use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rand::RngExt as _;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
+use std::hint::black_box;
 
 const NUM_ROWS: usize = 10_000_000;
 const NUM_COLUMNS: usize = 10;
@@ -95,7 +97,7 @@ impl SimpleTable {
 fn generate_keys(num_keys: usize, max_key: usize) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     (0..num_keys)
-        .map(|_| rng.gen_range(0..max_key).to_string())
+        .map(|_| rng.random_range(0..max_key).to_string())
         .collect()
 }
 
