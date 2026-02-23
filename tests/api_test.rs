@@ -93,7 +93,7 @@ async fn test_health() {
 #[tokio::test]
 async fn test_get_nonexistent_table() {
     let (_dir, router) = setup();
-    let req = Request::get("/api/v1/table/nope")
+    let req = Request::get("/api/v1/table/nope/schema")
         .body(Body::empty())
         .unwrap();
     let (status, _) = body_json(router, req).await;
@@ -143,7 +143,7 @@ async fn test_list_and_get_table() {
     assert_eq!(json["features"]["key"], "id");
 
     // Get single table
-    let req = Request::get("/api/v1/table/features")
+    let req = Request::get("/api/v1/table/features/schema")
         .body(Body::empty())
         .unwrap();
     let (status, json) = body_json(router, req).await;

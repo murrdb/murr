@@ -17,7 +17,7 @@
 | GET | `/openapi.json` | `openapi` | OpenAPI spec as JSON |
 | GET | `/health` | `health` | Returns `"OK"` |
 | GET | `/api/v1/table` | `list_tables` | JSON map of table name → schema |
-| GET | `/api/v1/table/{name}` | `get_table` | JSON schema for one table |
+| GET | `/api/v1/table/{name}/schema` | `get_schema` | JSON schema for one table |
 | PUT | `/api/v1/table/{name}` | `create_table` | Accepts `TableSchema` JSON, returns 201 |
 | POST | `/api/v1/table/{name}/fetch` | `fetch` | Read data (content negotiation on response) |
 | PUT | `/api/v1/table/{name}/write` | `write_table` | Write data (content negotiation on request) |
