@@ -1,22 +1,26 @@
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use serde_json::json;
-use tokio::runtime::Runtime;
-
-use murr::api::MurrApi;
+use murr::api::MurrHttpService;
 use murr::testutil::{bench_column_names, bench_generate_keys};
 
 mod benchutil;
 use benchutil::{NUM_KEYS, NUM_ROWS};
 
-fn bench_api_fetch(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+fn bench_http_fetch(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
 
     let col_names = bench_column_names();
     let (_dir, svc) = benchutil::setup_service(&rt);
 
-    let api = MurrApi::new(svc);
+    let api = MurrHttpService::new(std::sync::Arc::new(svc));
     let router = api.router();
 
     // Bind to an OS-assigned port and spawn the server.
@@ -38,7 +42,7 @@ fn bench_api_fetch(c: &mut Criterion) {
         "columns": col_names,
     });
 
-    let mut group = c.benchmark_group(format!("api/rows_{}", NUM_ROWS));
+    let mut group = c.benchmark_group(format!("http/rows_{}", NUM_ROWS));
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(30));
     group.warm_up_time(Duration::from_secs(5));
@@ -66,5 +70,5 @@ fn bench_api_fetch(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_api_fetch);
+criterion_group!(benches, bench_http_fetch);
 criterion_main!(benches);

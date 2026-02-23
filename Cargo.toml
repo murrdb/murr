@@ -22,18 +22,25 @@ tokio = { version = "1", features = [
     "sync",
     "macros",
 ] }
+tokio-stream = "0.1"
 async-trait = "0.1"
 memmap2 = "0.9"
 axum = "0.8"
+tower-http = { version = "0.6", features = ["trace"] }
+arrow-flight = "58"
+tonic = "0.14"
+futures = "0.3"
 serde_json = "1"
 serde_yaml_ng = "0.10"
 ahash = "0.8"
 ouroboros = "0.18"
+mimalloc = { version = "0.1", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 
 [dev-dependencies]
+mimalloc = { version = "0.1", default-features = false }
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 rand = "0.10"
@@ -57,7 +64,11 @@ name = "table_bench"
 harness = false
 
 [[bench]]
-name = "api_bench"
+name = "http_bench"
+harness = false
+
+[[bench]]
+name = "flight_bench"
 harness = false
 
 [[bench]]

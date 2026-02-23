@@ -7,12 +7,18 @@ pub struct ServerConfig {
     pub host: String,
     #[serde(default = "ServerConfig::default_port")]
     pub port: u16,
+    #[serde(default = "ServerConfig::default_flight_port")]
+    pub flight_port: u16,
     #[serde(default = "ServerConfig::default_dir")]
     pub data_dir: String,
 }
 impl ServerConfig {
     fn default_port() -> u16 {
         8080
+    }
+
+    fn default_flight_port() -> u16 {
+        8081
     }
 
     fn default_host() -> String {
@@ -29,6 +35,7 @@ impl Default for ServerConfig {
         Self {
             host: Self::default_host(),
             port: Self::default_port(),
+            flight_port: Self::default_flight_port(),
             data_dir: Self::default_dir(),
         }
     }
@@ -43,5 +50,6 @@ mod tests {
         let server = ServerConfig::default();
         assert_eq!(server.host, "localhost");
         assert_eq!(server.port, 8080);
+        assert_eq!(server.flight_port, 8081);
     }
 }

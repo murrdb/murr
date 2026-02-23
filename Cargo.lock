@@ -247,6 +247,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-flight"
+version = "58.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4f5cdf00ee0003ba0768d3575d0afc47d736b29673b14c3c228fdffa9a3fb29"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-cast",
+ "arrow-ipc",
+ "arrow-schema",
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
 name = "arrow-ipc"
 version = "58.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1983,6 +2003,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "667f4fec20f29dfc6bc7357c582d91796c169ad7e2fce709468aefeb2c099870"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2039,6 +2069,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimalloc"
+version = "0.1.48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1ee66a4b64c74f4ef288bcbb9192ad9c3feaad75193129ac8509af543894fd8"
+dependencies = [
+ "libmimalloc-sys",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2061,6 +2100,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "arrow",
+ "arrow-flight",
  "async-trait",
  "axum",
  "bytemuck",
@@ -2068,9 +2108,11 @@ dependencies = [
  "config",
  "criterion",
  "env_logger",
+ "futures",
  "http-body-util",
  "log",
  "memmap2",
+ "mimalloc",
  "murr",
  "ouroboros",
  "parquet",
@@ -2085,7 +2127,10 @@ dependencies = [
  "testcontainers-modules",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
+ "tonic",
  "tower",
+ "tower-http",
 ]
 
 [[package]]
@@ -3663,6 +3708,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

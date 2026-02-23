@@ -15,13 +15,13 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-use murr::api::MurrApi;
+use murr::api::MurrHttpService;
 use murr::service::MurrService;
 
 fn setup() -> (TempDir, Router) {
     let dir = TempDir::new().unwrap();
-    let service = MurrService::new(dir.path().to_path_buf());
-    let api = MurrApi::new(service);
+    let service = Arc::new(MurrService::new(dir.path().to_path_buf()));
+    let api = MurrHttpService::new(service);
     let router = api.router();
     (dir, router)
 }
