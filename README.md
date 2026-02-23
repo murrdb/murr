@@ -34,6 +34,23 @@ Simple, fast, cheap — you can choose only two.
 
 Murr is designed around the batch read pattern from the start. Data lives in a custom columnar segment format, so "give me columns X, Y, Z for keys 1-200" is a single scatter-gather operation, not thousands of lookups. Workers pull Parquet files from S3 on startup — no ingestion pipelines, no coordination. Responses support Arrow IPC, which maps directly to NumPy arrays without re-encoding.
 
+### Benchmarks
+
+Batch feature lookup: 10M rows, 10 Float32 columns, fetching 1000 random keys per request.
+
+- **Murr**: full HTTP round-trip returning Arrow IPC streaming response
+- **Redis MGET**: all columns packed into a single binary blob per key, fetched with pipelined MGET
+- **Redis Feast**: one HSET per key with a field per column (standard Feast layout), fetched with pipelined HGETALL
+
+| Approach | Latency (p50) | Throughput |
+|----------|---------------|------------|
+| Murr (HTTP + Arrow IPC) | 140 µs | 7.15 Mkeys/s |
+| Redis MGET (feature blobs) | 263 µs | 3.80 Mkeys/s |
+| Redis Feast (HSET per row) | 3.80 ms | 263 Kkeys/s |
+
+Murr is ~1.9x faster than the best Redis layout (MGET with packed blobs) and ~27x faster than Feast-style hash-per-row storage.
+
+
 ## Status
 
 **Pre-alpha. Here be dragons.**
