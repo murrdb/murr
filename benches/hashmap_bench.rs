@@ -34,8 +34,7 @@ impl Column for Float32Column {
         let mut validity_bytes = vec![0u8; (len + 7) / 8];
         for (out_idx, &src_idx) in offsets.iter().enumerate() {
             unsafe {
-                let src_bit =
-                    (*self.validity.get_unchecked(src_idx >> 3) >> (src_idx & 7)) & 1;
+                let src_bit = (*self.validity.get_unchecked(src_idx >> 3) >> (src_idx & 7)) & 1;
                 *validity_bytes.get_unchecked_mut(out_idx >> 3) |= src_bit << (out_idx & 7);
             }
         }

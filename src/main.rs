@@ -1,154 +1,20 @@
 mod api;
 mod conf;
 mod core;
-mod discovery;
-mod manager;
-mod parquet;
-mod table;
+mod io;
+mod service;
 
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use clap::Parser;
-use log::{error, info};
-use tokio::net::TcpListener;
-use tokio::time::interval;
-
-use crate::api::{AppState, create_router};
-use crate::conf::{Config, ServerConfig, TableConfig};
-use crate::core::{CliArgs, MurrError, setup_logging};
-use crate::manager::{TableLoader, TableManager};
+use crate::api::MurrApi;
+use crate::core::setup_logging;
+use crate::service::MurrService;
+use log::info;
 
 #[tokio::main]
-async fn main() -> Result<(), MurrError> {
+async fn main() {
     setup_logging();
-    info!("Murr started.");
-
-    let args = CliArgs::parse();
-    info!("Cli args: {args:?}");
-    let config = Config::from_args(&args)?;
-
-    // Ensure data_dir exists
-    let data_dir: PathBuf = config.server.data_dir.clone().into();
-    std::fs::create_dir_all(&data_dir)?;
-
-    let manager = Arc::new(TableManager::new(data_dir.clone()));
-
-    // Spawn discovery loop for each table
-    let mut handles = Vec::new();
-    for (name, table_config) in config.tables {
-        let manager = Arc::clone(&manager);
-        let data_dir = data_dir.clone();
-        handles.push(tokio::spawn(run_discovery_loop(
-            name,
-            table_config,
-            manager,
-            data_dir,
-        )));
-    }
-
-    // Start HTTP server
-    let server_config = config.server.clone();
-    let server_manager = Arc::clone(&manager);
-    let server_handle = tokio::spawn(async move {
-        if let Err(e) = run_http_server(server_config, server_manager).await {
-            error!("HTTP server error: {}", e);
-        }
-    });
-    handles.push(server_handle);
-
-    // Wait for all (they run forever)
-    for handle in handles {
-        let _ = handle.await;
-    }
-
-    Ok(())
-}
-
-async fn run_discovery_loop(
-    name: String,
-    config: TableConfig,
-    manager: Arc<TableManager>,
-    data_dir: PathBuf,
-) {
-    let poll_interval = config.poll_interval;
-
-    let loader = match TableLoader::new(name.clone(), config) {
-        Ok(l) => l,
-        Err(e) => {
-            error!("Failed to create loader for '{}': {}", name, e);
-            return;
-        }
-    };
-
-    // Immediate first run
-    match try_load(&loader, &manager, &name, &data_dir).await {
-        Ok(true) => info!("Table '{}': initial load complete", name),
-        Ok(false) => info!("Table '{}': no valid partition found", name),
-        Err(e) => error!("Initial load failed for '{}': {}", name, e),
-    }
-
-    // Periodic polling
-    let mut ticker = interval(poll_interval);
-    ticker.tick().await; // Skip first tick (we already did initial load)
-
-    loop {
-        ticker.tick().await;
-        match try_load(&loader, &manager, &name, &data_dir).await {
-            Ok(true) => info!("Table '{}': reload complete", name),
-            Ok(false) => info!("Table '{}': no new partition", name),
-            Err(e) => error!("Discovery failed for '{}': {}", name, e),
-        }
-    }
-}
-
-async fn run_http_server(
-    config: ServerConfig,
-    manager: Arc<TableManager>,
-) -> Result<(), MurrError> {
-    let state = AppState { manager };
-    let app = create_router(state);
-
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .map_err(|e| MurrError::ConfigParsingError(format!("Invalid address: {}", e)))?;
-
-    info!("HTTP server listening on {}", addr);
-
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| MurrError::IoError(e.to_string()))?;
-
-    Ok(())
-}
-
-/// Try to discover and load the table. Returns Ok(true) if loaded, Ok(false) if unchanged.
-async fn try_load(
-    loader: &TableLoader,
-    manager: &TableManager,
-    name: &str,
-    data_dir: &PathBuf,
-) -> Result<bool, MurrError> {
-    // 1. Discover the latest partition
-    let discovery_result = loader.discover().await?;
-
-    // 2. Check if partition has changed
-    let current_partition = manager.current_partition(name).await;
-    if current_partition.as_ref() == Some(&discovery_result.partition_date) {
-        return Ok(false);
-    }
-
-    // 3. Load the new partition
-    let state = loader.load(discovery_result, data_dir).await?;
-    info!(
-        "Table '{}': loaded partition {}",
-        name, state.partition_date
-    );
-
-    // 4. Insert into manager
-    manager.insert(name.to_string(), state).await;
-
-    Ok(true)
+    let data_dir = std::env::current_dir().unwrap().join("data");
+    let service = MurrService::new(data_dir);
+    let api = MurrApi::new(service);
+    info!("Murr listening on 0.0.0.0:8080");
+    api.serve("0.0.0.0:8080").await.unwrap();
 }

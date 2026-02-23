@@ -1,0 +1,247 @@
+openapi: "3.1.0"
+info:
+  title: Murr API
+  description: Columnar in-memory cache for AI/ML inference workloads
+  version: 0.1.0
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /openapi.json:
+    get:
+      summary: OpenAPI schema
+      operationId: openapi
+      responses:
+        "200":
+          description: OpenAPI spec as JSON
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/table:
+    get:
+      summary: List all tables
+      operationId: listTables
+      responses:
+        "200":
+          description: Map of table name to schema
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/TableSchema"
+
+  /api/v1/table/{name}:
+    put:
+      summary: Create a table
+      operationId: createTable
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TableSchema"
+      responses:
+        "201":
+          description: Table created
+        "409":
+          description: Table already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/table/{name}/schema:
+    get:
+      summary: Get table schema
+      operationId: getSchema
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      responses:
+        "200":
+          description: Table schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableSchema"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/table/{name}/fetch:
+    post:
+      summary: Fetch data from a table
+      operationId: fetch
+      description: |
+        Retrieves specific columns for a batch of keys.
+        Request is always JSON. Response format depends on the Accept header.
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FetchRequest"
+      responses:
+        "200":
+          description: Fetched data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FetchResponse"
+            application/vnd.apache.arrow.stream:
+              schema:
+                type: string
+                format: binary
+                description: Arrow IPC stream containing a RecordBatch
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/table/{name}/write:
+    put:
+      summary: Write data to a table
+      operationId: writeTable
+      description: |
+        Writes columnar data as a new segment. Request format depends on
+        the Content-Type header. Supports JSON columnar format or Arrow IPC.
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteRequest"
+          application/vnd.apache.arrow.stream:
+            schema:
+              type: string
+              format: binary
+              description: Arrow IPC stream containing a RecordBatch
+      responses:
+        "200":
+          description: Data written
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    TableName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    DType:
+      type: string
+      enum:
+        - utf8
+        - int16
+        - int32
+        - int64
+        - uint16
+        - uint32
+        - uint64
+        - float32
+        - float64
+        - bool
+
+    ColumnConfig:
+      type: object
+      required: [dtype]
+      additionalProperties: false
+      properties:
+        dtype:
+          $ref: "#/components/schemas/DType"
+        nullable:
+          type: boolean
+          default: true
+
+    TableSchema:
+      type: object
+      required: [key, columns]
+      properties:
+        name:
+          type: string
+          default: ""
+        key:
+          type: string
+        columns:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ColumnConfig"
+
+    FetchRequest:
+      type: object
+      required: [keys, columns]
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+        columns:
+          type: array
+          items:
+            type: string
+
+    FetchResponse:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: object
+          additionalProperties:
+            type: array
+            items: {}
+
+    WriteRequest:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: object
+          additionalProperties:
+            type: array
+            items: {}
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
