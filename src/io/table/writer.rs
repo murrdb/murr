@@ -27,7 +27,7 @@ impl<'a> TableWriter<'a> {
     ) -> Result<TableWriter<'a>, MurrError> {
         let index = dir.index().await?;
         if index.is_some() {
-            return Err(MurrError::TableError(
+            return Err(MurrError::TableAlreadyExists(
                 "table already exists in directory".to_string(),
             ));
         }

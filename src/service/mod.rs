@@ -29,10 +29,7 @@ impl MurrService {
         let mut tables = self.tables.write().await;
 
         if tables.contains_key(table_name) {
-            return Err(MurrError::TableError(format!(
-                "table '{}' already exists",
-                table_name
-            )));
+            return Err(MurrError::TableAlreadyExists(table_name.to_string()));
         }
 
         let table_dir = self.data_dir.join(table_name);
@@ -64,7 +61,7 @@ impl MurrService {
         let mut tables = self.tables.write().await;
 
         let state = tables.get_mut(table_name).ok_or_else(|| {
-            MurrError::TableError(format!("table '{}' not found", table_name))
+            MurrError::TableNotFound(table_name.to_string())
         })?;
 
         let mut writer = TableWriter::open(&mut state.dir).await?;
@@ -95,7 +92,7 @@ impl MurrService {
     pub async fn get_schema(&self, table_name: &str) -> Result<TableSchema, MurrError> {
         let tables = self.tables.read().await;
         let state = tables.get(table_name).ok_or_else(|| {
-            MurrError::TableError(format!("table '{}' not found", table_name))
+            MurrError::TableNotFound(table_name.to_string())
         })?;
         Ok(state.schema.clone())
     }
@@ -109,7 +106,7 @@ impl MurrService {
         let tables = self.tables.read().await;
 
         let state = tables.get(table_name).ok_or_else(|| {
-            MurrError::TableError(format!("table '{}' not found", table_name))
+            MurrError::TableNotFound(table_name.to_string())
         })?;
 
         let cached = state.cached.as_ref().ok_or_else(|| {

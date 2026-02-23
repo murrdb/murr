@@ -9,6 +9,10 @@ The project uses .memory directory as an append-only log of architectural decisi
 * when a plan has an architectural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
 * update .memory only for important bits of information.
 
+### Build notes
+
+* when you change dependencies, do a `cargo clean` to purge old cache to save on disk space.
+
 ## Project Overview
 
 Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rust (edition 2024). It serves as a Redis replacement optimized for batch feature retrieval — fetching specific columns for batches of document keys in a single request.
@@ -19,7 +23,7 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. An Axum HTTP API (`src/api/`) is wired up in `main.rs`, serving on `0.0.0.0:8080`. Only `Float32` and `Utf8` column types are implemented so far.
+**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP on `0.0.0.0:8080` and Arrow Flight gRPC on `0.0.0.0:8081` (via `tokio::try_join!` in `main.rs`). Only `Float32` and `Utf8` column types are implemented so far.
 
 ## Common Commands
 
@@ -30,7 +34,7 @@ cargo test <name>            # Run specific test by name
 cargo check                  # Fast syntax/type check without codegen
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a specific benchmark (table_bench, api_bench, hashmap_bench, hashmap_row_bench)
+cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
 ```
 
 ## Architecture
@@ -65,12 +69,19 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, api_bench,
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
 - `state.rs` — `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
 
-**`api/`** — Axum HTTP API layer
-- `mod.rs` — `MurrApi` struct: `new()`, `router()`, `serve()`
+**`api/http/`** — Axum HTTP API layer
+- `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()`
 - `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors
 - `convert.rs` — `FetchResponse` (batch→JSON) and `WriteRequest` (JSON→batch) conversions
 - `error.rs` — `ApiError` newtype mapping `MurrError` → HTTP status codes
 - Content negotiation: fetch supports JSON or Arrow IPC response (`Accept` header); write supports JSON or Arrow IPC request (`Content-Type` header)
+
+**`api/flight/`** — Arrow Flight gRPC layer (read-only)
+- `mod.rs` — `MurrFlightService` implementing `FlightService` trait via tonic
+- `ticket.rs` — `FetchTicket { table, keys, columns }` JSON-encoded ticket format
+- `error.rs` — `MurrError` → `tonic::Status` conversion
+- Implemented RPCs: `do_get` (fetch by keys+columns), `get_flight_info`, `get_schema`, `list_flights`
+- All write RPCs (`do_put`, `do_exchange`, `do_action`) return `Unimplemented`
 
 **`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnConfig`, `TableSchema`)
 
