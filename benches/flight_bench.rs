@@ -1,12 +1,16 @@
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use arrow::record_batch::RecordBatch;
+use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::FlightServiceServer;
-use arrow_flight::Ticket;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use futures::{StreamExt, TryStreamExt};
 use tonic::transport::{Channel, Server};
 
@@ -32,12 +36,11 @@ fn bench_flight_fetch(c: &mut Criterion) {
         let addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
-            let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
-                .map(|result| {
-                    let conn = result?;
-                    conn.set_nodelay(true)?;
-                    Ok::<_, std::io::Error>(conn)
-                });
+            let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).map(|result| {
+                let conn = result?;
+                conn.set_nodelay(true)?;
+                Ok::<_, std::io::Error>(conn)
+            });
             Server::builder()
                 .add_service(FlightServiceServer::new(flight_svc))
                 .serve_with_incoming(incoming)

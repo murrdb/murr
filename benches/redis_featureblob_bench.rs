@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use redis::AsyncCommands;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::{Redis, REDIS_PORT};
@@ -22,8 +23,8 @@ fn bench_redis_featureblob(c: &mut Criterion) {
         let host = container.get_host().await.unwrap();
         let port = container.get_host_port_ipv4(REDIS_PORT).await.unwrap();
         let client = redis::Client::open(format!("redis://{host}:{port}")).unwrap();
-        let con = client
-            .get_multiplexed_tokio_connection()
+        let con: redis::aio::MultiplexedConnection = client
+            .get_multiplexed_async_connection()
             .await
             .unwrap();
         (con, container)
