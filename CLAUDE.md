@@ -5,14 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Note to agents like Claude Code
 
 The project uses .memory directory as an append-only log of architectural decisions made while developing:
-* before doing planning, read the .memorydirectory for relevant topics discussed/implemented in the past
-* when a plan has an architecural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
+* before doing planning, read the .memory directory for relevant topics discussed/implemented in the past
+* when a plan has an architectural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
 * update .memory only for important bits of information.
-
 
 ## Project Overview
 
-Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rust (edition 2024). It serves as a Redis replacement optimized for batch feature retrieval - fetching specific columns for batches of document keys in a single request.
+Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rust (edition 2024). It serves as a Redis replacement optimized for batch feature retrieval — fetching specific columns for batches of document keys in a single request.
 
 **Key design goals:**
 - Pull-based data sync: Workers poll S3/Iceberg for new Parquet partitions and reload automatically
@@ -20,7 +19,9 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The codebase is migrating from an Arrow IPC-based storage layer (in `src/old/`) to a custom binary segment format (in `src/io/`). The new `MurrService` in `src/service/` wraps the new storage, but `main.rs` still runs the old stack.
+**Status:** Pre-alpha. The old Arrow IPC storage layer has been removed. The codebase now uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the new storage. `main.rs` declares the modules but does not yet instantiate a service or HTTP server — there is no API layer wired up yet. Only `Float32` and `Utf8` column types are implemented so far.
+
+A legacy `Table` type in `src/io/table/table.rs` still reads Arrow IPC files directly (used by some benchmarks) but is not part of the main data path.
 
 ## Common Commands
 
@@ -36,21 +37,6 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, api_bench,
 
 ## Architecture
 
-### Two Stacks: Old (Arrow IPC) vs New (Custom Segments)
-
-The codebase has two parallel storage implementations:
-
-**Old stack (`src/old/`)** — Currently wired into `main.rs`:
-- `discovery/` — Finds latest date-partitioned directory with `_SUCCESS` marker in S3/local
-- `parquet/` — Converts Parquet files to Arrow IPC via streaming
-- `manager/` — `TableLoader` (discover → convert → load), `TableManager` (RwLock registry)
-- `api/` — Axum REST API: `POST /v1/{table}/_fetch` (JSON + Arrow IPC responses), `GET /health`
-
-**New stack (`src/io/` + `src/service/`)** — The replacement, not yet in `main.rs`:
-- Custom `.seg` binary format replaces Arrow IPC
-- Only `Float32` and `Utf8` column types implemented so far (old stack supports all 10 dtypes)
-- `MurrService` provides `create()`, `write()`, `read()` API
-
 ### Module Structure
 
 **`io/segment/`** — Custom binary `.seg` format
@@ -59,16 +45,15 @@ The codebase has two parallel storage implementations:
 - `read.rs` — `Segment::open(path)` memory-maps file, validates magic+version, parses footer, provides `column(name) -> Option<&[u8]>` zero-copy access
 
 **`io/directory/`** — Storage directory abstraction
-- `Directory` trait with `index()` and `write()` methods
+- `Directory` trait with `index()` (returns `IndexInfo`: schema + segment list) and `write()` methods
 - `LocalDirectory` reads `table.json` (schema) + scans `*.seg` files
-- `TableSchema` and `SegmentInfo` types describe directory contents
 
 **`io/table/`** — Table layer built on segments
 - `writer.rs` — `TableWriter` creates `table.json` and writes `{id:08}.seg` files from `RecordBatch`
 - `reader.rs` — `TableReader` builds key index (`AHashMap<String, KeyOffset>`) across segments; last segment wins for duplicate keys
 - `view.rs` — `TableView` opens all segment files, holds `Vec<Segment>`
 - `cached.rs` — `CachedTable` uses `ouroboros` self-referential struct to own `TableView` + borrow `TableReader`
-- `table.rs` — **Old-style** Arrow IPC `Table` (retained for old stack)
+- `table.rs` — Legacy Arrow IPC `Table` type (still used by benchmarks, not part of new storage path)
 
 **`io/table/column/`** — Per-dtype column implementations
 - `Column` trait: `get_indexes(&[KeyOffset]) -> Arc<dyn Array>`, `get_all()`, `size()`
@@ -82,7 +67,7 @@ The codebase has two parallel storage implementations:
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
 - Each `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
 
-**`core/`** — Error types (`MurrError` with `thiserror`), CLI args (`clap`), logging (`env_logger`)
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`)
 
 **`conf/`** — YAML configuration: `Config`, `ServerConfig`, `TableConfig`, `SourceConfig`, `DType` enum. Uses `#[serde(deny_unknown_fields)]` for strict validation.
 
@@ -93,7 +78,7 @@ The codebase has two parallel storage implementations:
 - **Self-referential structs**: `CachedTable` uses `ouroboros` to own a `TableView` while borrowing from it in `TableReader`
 - **`AHashMap`** used in `TableReader` for faster hashing than std `HashMap`
 - **`bytemuck`** for zero-copy casting of segment headers
-- **`memmap2`** for memory-mapped segment reads — both old (Arrow IPC) and new (.seg) paths
+- **`memmap2`** for memory-mapped segment reads
 - **Feature-gated test utilities**: `testutil` feature enables `tempfile` + `rand` deps for test/bench helpers
 
 ### Configuration Format
@@ -125,12 +110,11 @@ tables:
 ```
 
 Supported dtypes: `utf8`, `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float32`, `float64`, `bool`
-(New stack currently only implements `utf8` and `float32`)
+(Currently only `utf8` and `float32` are implemented in the segment column layer)
 
 ### Testing
 
-- Unit tests in most modules via `#[cfg(test)]`
-- Integration tests in `tests/loading.rs` (old stack pipeline) and `tests/api.rs` (HTTP endpoints)
+- Unit tests in most modules via `#[cfg(test)]` (including inline tests in `service/mod.rs`)
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
 - Benchmarks: `table_bench` (10M rows), `api_bench` (Murr vs Redis comparison via `testcontainers`), `hashmap_bench`, `hashmap_row_bench`
