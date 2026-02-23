@@ -20,7 +20,7 @@ jobs:
             artifact: murr-linux-x64
           - os: macos-14
             artifact: murr-macos-arm64
-          - os: windows-2019
+          - os: windows-2022
             artifact: murr-windows-x64.exe
     runs-on: ${{ matrix.os }}
     env:
