@@ -117,4 +117,4 @@ Supported dtypes: `utf8`, `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64
 - E2E API tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
-- Benchmarks: `table_bench` (10M rows), `api_bench` (Murr vs Redis comparison via `testcontainers`), `hashmap_bench`, `hashmap_row_bench`
+- Benchmarks: `table_bench` (10M rows), `http_bench` and `flight_bench` (Murr HTTP/Flight vs Redis comparison via `testcontainers`), `hashmap_bench`, `hashmap_row_bench`, `redis_feast_bench`, `redis_featureblob_bench`
