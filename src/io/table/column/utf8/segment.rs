@@ -1,51 +1,41 @@
 use arrow::array::{Array, StringArray};
-use bytemuck::{Pod, Zeroable, cast_slice};
+use bincode::{Decode, Encode};
+use bytemuck::cast_slice;
 
 use crate::core::ColumnConfig;
 use crate::core::MurrError;
+use crate::io::segment::format::{align8_padding, decode_footer, encode_footer};
 use crate::io::table::column::ColumnSegment;
-use crate::io::table::column::bitmap::{NullBitmap, align8_padding};
+use crate::io::table::column::bitmap::NullBitmap;
 
-/// Fixed-size header at the start of a dense string column segment.
+/// Footer at the end of a dense string column segment.
 ///
 /// All byte offsets are relative to the start of the column data.
-/// Value offsets (`[i32; num_values]`) immediately follow the header.
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-pub(super) struct Utf8Header {
-    pub(super) num_values: u32,
-    pub(super) payload_offset: u32,
-    pub(super) payload_size: u32,
-    pub(super) null_bitmap_offset: u32,
-    pub(super) null_bitmap_size: u32,
-}
-
-pub(super) const HEADER_SIZE: usize = std::mem::size_of::<Utf8Header>();
-
-impl Utf8Header {
-    /// Parse the header from the beginning of a column data slice.
-    pub(super) fn parse(data: &[u8]) -> Result<&Utf8Header, MurrError> {
-        if data.len() < HEADER_SIZE {
-            return Err(MurrError::TableError(
-                "dense string segment too small for header".into(),
-            ));
-        }
-        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
-    }
+#[derive(Clone, Debug, Encode, Decode)]
+pub(crate) struct Utf8Footer {
+    pub(crate) num_values: u32,
+    pub(crate) offsets_offset: u32,
+    pub(crate) payload_offset: u32,
+    pub(crate) payload_size: u32,
+    pub(crate) null_bitmap_offset: u32,
+    pub(crate) null_bitmap_size: u32,
 }
 
 /// Parsed zero-copy view over a single segment's dense string column data.
 ///
 /// Wire format:
 /// ```text
-/// [header: Utf8Header]                   // 20 bytes
-/// [value_offsets: [i32; num_values]]     // immediately after header (4-byte aligned)
-/// [payload: [u8; payload_size]]          // at payload_offset
-/// [padding: 0..3 bytes]                  // align to 4 bytes
-/// [null_bitmap: [u32; bitmap_size]]      // at null_bitmap_offset (4-byte aligned)
+/// [value_offsets: [i32; num_values]]   // at offsets_offset
+/// [padding to 8-byte align]
+/// [payload: [u8; payload_size]]        // at payload_offset
+/// [padding to 8-byte align]
+/// [null_bitmap: [u64; bitmap_words]]   // at null_bitmap_offset
+/// [padding to 8-byte align]
+/// [bincode footer: Utf8Footer]
+/// [footer_len: u32 LE]                // last 4 bytes
 /// ```
 pub(crate) struct Utf8Segment<'a> {
-    pub(super) header: &'a Utf8Header,
+    pub(super) footer: Utf8Footer,
     pub(super) value_offsets: &'a [i32],
     pub(super) payload: &'a [u8],
     pub(super) nulls: Option<NullBitmap<'a>>,
@@ -55,10 +45,10 @@ impl<'a> Utf8Segment<'a> {
     /// Get the string byte range for value at `idx`.
     pub(super) fn string_range(&self, idx: u32) -> (usize, usize) {
         let start = self.value_offsets[idx as usize] as usize;
-        let end = if idx + 1 < self.header.num_values {
+        let end = if idx + 1 < self.footer.num_values {
             self.value_offsets[(idx + 1) as usize] as usize
         } else {
-            self.header.payload_size as usize
+            self.footer.payload_size as usize
         };
         (start, end)
     }
@@ -68,36 +58,39 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
     type ArrayType = StringArray;
 
     fn parse(_name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError> {
-        let header = Utf8Header::parse(data)?;
+        let footer: Utf8Footer = decode_footer(data, "utf8 segment")?;
 
-        let offsets_start = HEADER_SIZE;
-        let offsets_byte_len = header.num_values as usize * 4;
-        let offsets_end = offsets_start + offsets_byte_len;
+        // Value offsets
+        let offsets_byte_len = footer.num_values as usize * 4;
+        let offsets_end = footer.offsets_offset as usize + offsets_byte_len;
         if offsets_end > data.len() {
             return Err(MurrError::TableError(
-                "dense string segment truncated at value_offsets".into(),
+                "utf8 segment truncated at value_offsets".into(),
             ));
         }
-        let value_offsets: &[i32] = cast_slice(&data[offsets_start..offsets_end]);
+        let value_offsets: &[i32] =
+            cast_slice(&data[footer.offsets_offset as usize..offsets_end]);
 
-        let payload_end = header.payload_offset as usize + header.payload_size as usize;
+        // Payload
+        let payload_end = footer.payload_offset as usize + footer.payload_size as usize;
         if payload_end > data.len() {
             return Err(MurrError::TableError(
-                "dense string segment truncated at payload".into(),
+                "utf8 segment truncated at payload".into(),
             ));
         }
-        let payload = &data[header.payload_offset as usize..payload_end];
+        let payload = &data[footer.payload_offset as usize..payload_end];
 
+        // Null bitmap
         let nulls = NullBitmap::parse(
             data,
-            header.null_bitmap_offset as usize,
-            header.null_bitmap_size,
+            footer.null_bitmap_offset as usize,
+            footer.null_bitmap_size,
             config.nullable,
-            "dense string",
+            "utf8",
         )?;
 
         Ok(Self {
-            header,
+            footer,
             value_offsets,
             payload,
             nulls,
@@ -108,17 +101,17 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
         let num_values = values.len() as u32;
 
         // Compute payload: concatenated string bytes and their offsets.
-        let mut payload = Vec::new();
+        let mut string_payload = Vec::new();
         let mut offsets: Vec<i32> = Vec::with_capacity(values.len());
 
         for i in 0..values.len() {
-            offsets.push(payload.len() as i32);
+            offsets.push(string_payload.len() as i32);
             if !values.is_null(i) {
-                payload.extend_from_slice(values.value(i).as_bytes());
+                string_payload.extend_from_slice(values.value(i).as_bytes());
             }
         }
 
-        let payload_size = payload.len() as u32;
+        let payload_size = string_payload.len() as u32;
 
         let bitmap_bytes: Vec<u8> = if config.nullable {
             NullBitmap::write(values)
@@ -126,33 +119,33 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
             Vec::new()
         };
 
-        // Compute offsets for header.
-        let offsets_byte_len = num_values as usize * 4;
-        let payload_offset = (HEADER_SIZE + offsets_byte_len) as u32;
-        let bitmap_unpadded = HEADER_SIZE + offsets_byte_len + payload_size as usize;
-        let payload_padding = align8_padding(bitmap_unpadded);
-        let null_bitmap_offset = (bitmap_unpadded + payload_padding) as u32;
+        // Layout: offsets, pad, string payload, pad, bitmap, pad, footer, footer_len
+        let offsets_bytes: &[u8] = cast_slice(&offsets);
+        let offsets_offset = 0u32;
+        let offsets_padding = align8_padding(offsets_bytes.len());
+        let payload_offset = (offsets_bytes.len() + offsets_padding) as u32;
+        let payload_padding = align8_padding(string_payload.len());
+        let null_bitmap_offset =
+            (payload_offset as usize + string_payload.len() + payload_padding) as u32;
+        let bitmap_padding = align8_padding(bitmap_bytes.len());
 
-        let total_size = HEADER_SIZE
-            + offsets_byte_len
-            + payload_size as usize
-            + payload_padding
-            + bitmap_bytes.len();
-
-        let mut buf = Vec::with_capacity(total_size);
-
-        let header = Utf8Header {
+        let footer = Utf8Footer {
             num_values,
+            offsets_offset,
             payload_offset,
             payload_size,
             null_bitmap_offset,
             null_bitmap_size: bitmap_bytes.len() as u32,
         };
-        buf.extend_from_slice(bytemuck::bytes_of(&header));
-        buf.extend_from_slice(cast_slice(&offsets));
-        buf.extend_from_slice(&payload);
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(offsets_bytes);
+        buf.extend_from_slice(&[0u8; 7][..offsets_padding]);
+        buf.extend_from_slice(&string_payload);
         buf.extend_from_slice(&[0u8; 7][..payload_padding]);
         buf.extend_from_slice(&bitmap_bytes);
+        buf.extend_from_slice(&[0u8; 7][..bitmap_padding]);
+        encode_footer(&mut buf, &footer)?;
 
         Ok(buf)
     }
@@ -188,7 +181,7 @@ mod tests {
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 3);
+        assert_eq!(seg.footer.num_values, 3);
 
         let (s0, e0) = seg.string_range(0);
         assert_eq!(std::str::from_utf8(&seg.payload[s0..e0]).unwrap(), "hello");
@@ -205,7 +198,7 @@ mod tests {
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 2);
+        assert_eq!(seg.footer.num_values, 2);
         assert!(seg.nulls.is_none());
     }
 
@@ -216,7 +209,7 @@ mod tests {
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 4);
+        assert_eq!(seg.footer.num_values, 4);
         let nulls = seg.nulls.as_ref().unwrap();
         assert!(nulls.is_valid(0));
         assert!(!nulls.is_valid(1));
@@ -231,7 +224,7 @@ mod tests {
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 0);
+        assert_eq!(seg.footer.num_values, 0);
     }
 
     #[test]
@@ -244,7 +237,7 @@ mod tests {
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
         let seg = Utf8Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 64);
+        assert_eq!(seg.footer.num_values, 64);
 
         let nulls = seg.nulls.as_ref().unwrap();
         for i in 0..64u64 {

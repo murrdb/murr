@@ -7,7 +7,9 @@ use memmap2::Mmap;
 
 use crate::core::MurrError;
 
-use super::format::{FOOTER_LEN_SIZE, HEADER_SIZE, MAGIC, VERSION, read_u16_le, read_u32_le};
+use super::format::{
+    FOOTER_LEN_SIZE, HEADER_SIZE, MAGIC, SegmentFooter, VERSION, decode_footer,
+};
 
 /// Memory-mapped read handle for a `.seg` file. Provides zero-copy access
 /// to named column payloads.
@@ -56,54 +58,31 @@ impl Segment {
             )));
         }
 
-        let version = read_u32_le(&mmap, 4);
+        let version = u32::from_le_bytes(
+            mmap[4..8]
+                .try_into()
+                .map_err(|_| MurrError::SegmentError("version read failed".into()))?,
+        );
         if version != VERSION {
             return Err(MurrError::SegmentError(format!(
                 "unsupported version: {version}, expected {VERSION}"
             )));
         }
 
-        let footer_size = read_u32_le(&mmap, len - FOOTER_LEN_SIZE) as usize;
-        let footer_end = len - FOOTER_LEN_SIZE;
-        if footer_size > footer_end - HEADER_SIZE {
-            return Err(MurrError::SegmentError(format!(
-                "footer size {footer_size} exceeds available data"
-            )));
-        }
-        let footer_start = footer_end - footer_size;
+        let footer: SegmentFooter =
+            decode_footer(&mmap[HEADER_SIZE..], "segment")?;
 
+        let data_end = len - FOOTER_LEN_SIZE;
         let mut columns = HashMap::new();
-        let mut pos = footer_start;
-        while pos < footer_end {
-            if pos + 2 > footer_end {
-                return Err(MurrError::SegmentError(
-                    "truncated footer entry: missing name length".into(),
-                ));
-            }
-            let name_len = read_u16_le(&mmap, pos) as usize;
-            pos += 2;
-
-            if pos + name_len + 8 > footer_end {
-                return Err(MurrError::SegmentError("truncated footer entry".into()));
-            }
-            let name = std::str::from_utf8(&mmap[pos..pos + name_len])
-                .map_err(|e| MurrError::SegmentError(format!("invalid column name: {e}")))?
-                .to_string();
-            pos += name_len;
-
-            let offset = read_u32_le(&mmap, pos);
-            pos += 4;
-            let size = read_u32_le(&mmap, pos);
-            pos += 4;
-
-            let end = offset + size;
-            if end as usize > footer_start {
+        for entry in footer.columns {
+            let end = entry.offset + entry.size;
+            if end as usize > data_end {
                 return Err(MurrError::SegmentError(format!(
-                    "column '{name}' payload range {offset}..{end} exceeds data region"
+                    "column '{}' payload range {}..{} exceeds data region",
+                    entry.name, entry.offset, end
                 )));
             }
-
-            columns.insert(name, offset..end);
+            columns.insert(entry.name, entry.offset..end);
         }
 
         Ok(Self { id, mmap, columns })

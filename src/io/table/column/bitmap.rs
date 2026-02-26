@@ -68,15 +68,6 @@ impl<'a> NullBitmap<'a> {
     }
 }
 
-/// Read a native-endian u32 from `data` at byte `offset`.
-pub(crate) fn read_u32(data: &[u8], offset: usize) -> u32 {
-    bytemuck::pod_read_unaligned::<u32>(&data[offset..offset + 4])
-}
-
-/// Number of padding bytes needed to align `len` up to 8 bytes.
-pub(super) fn align8_padding(len: usize) -> usize {
-    (8 - (len % 8)) % 8
-}
 
 #[cfg(test)]
 mod tests {

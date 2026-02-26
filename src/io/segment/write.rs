@@ -2,7 +2,9 @@ use std::io::Write;
 
 use crate::core::MurrError;
 
-use super::format::{HEADER_SIZE, MAGIC, VERSION};
+use super::format::{
+    FooterEntry, HEADER_SIZE, MAGIC, SegmentFooter, VERSION, align8_padding, encode_footer,
+};
 
 /// Builder for a `.seg` file. Collects named column payloads and serializes
 /// them into the segment binary format.
@@ -25,49 +27,38 @@ impl WriteSegment {
 
     /// Serialize the segment to any `Write` destination.
     ///
-    /// Format: `[MURR magic][version u32 LE][payload...][footer entries...][footer_size u32 LE]`
+    /// Format: `[MURR magic][version u32 LE][payload...][bincode footer][footer_size u32 LE]`
     pub fn write(&self, w: &mut impl Write) -> Result<(), MurrError> {
         // Header
         w.write_all(MAGIC)?;
         w.write_all(&VERSION.to_le_bytes())?;
 
         // Column payloads — track offsets for footer.
-        // Each column is padded to 4-byte alignment so typed data
-        // (f32, i32, u32 via bytemuck::cast_slice) can be read zero-copy.
+        // Each column is padded to 8-byte alignment so typed data
+        // (f32, i32, u64 via bytemuck::cast_slice) can be read zero-copy.
         let mut offset = HEADER_SIZE as u32;
-        let mut entries: Vec<(u32, u32)> = Vec::with_capacity(self.columns.len());
-        for (_name, data) in &self.columns {
+        let mut entries: Vec<FooterEntry> = Vec::with_capacity(self.columns.len());
+        for (name, data) in &self.columns {
             w.write_all(data)?;
             let size = data.len() as u32;
-            entries.push((offset, size));
+            entries.push(FooterEntry {
+                name: name.clone(),
+                offset,
+                size,
+            });
             offset += size;
-            let padding = (4 - (size % 4)) % 4;
+            let padding = align8_padding(data.len()) as u32;
             if padding > 0 {
-                w.write_all(&[0u8; 3][..padding as usize])?;
+                w.write_all(&[0u8; 7][..padding as usize])?;
                 offset += padding;
             }
         }
 
-        // Footer entries
-        let footer_start = offset;
-        for (i, (name, _data)) in self.columns.iter().enumerate() {
-            let name_bytes = name.as_bytes();
-            w.write_all(&(name_bytes.len() as u16).to_le_bytes())?;
-            w.write_all(name_bytes)?;
-            let (payload_offset, payload_size) = entries[i];
-            w.write_all(&payload_offset.to_le_bytes())?;
-            w.write_all(&payload_size.to_le_bytes())?;
-        }
-
-        // Footer size (excludes itself)
-        let footer_size = offset
-            + self
-                .columns
-                .iter()
-                .map(|(name, _)| 2 + name.len() as u32 + 4 + 4)
-                .sum::<u32>()
-            - footer_start;
-        w.write_all(&footer_size.to_le_bytes())?;
+        // Footer: bincode-encoded, then footer byte count as u32 LE
+        let footer = SegmentFooter { columns: entries };
+        let mut footer_buf = Vec::new();
+        encode_footer(&mut footer_buf, &footer)?;
+        w.write_all(&footer_buf)?;
 
         Ok(())
     }
@@ -76,7 +67,7 @@ impl WriteSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::segment::format::{FOOTER_LEN_SIZE, HEADER_SIZE};
+    use crate::io::segment::format::{FOOTER_LEN_SIZE, HEADER_SIZE, decode_footer};
 
     #[test]
     fn test_empty_segment() {
@@ -84,11 +75,12 @@ mod tests {
         let mut buf = Vec::new();
         seg.write(&mut buf).unwrap();
 
-        // MURR + version + footer_size(0)
-        assert_eq!(buf.len(), HEADER_SIZE + FOOTER_LEN_SIZE);
+        // MURR + version + bincode footer (empty vec) + footer_size
         assert_eq!(&buf[0..4], b"MURR");
-        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 1);
-        assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 2);
+
+        let footer: SegmentFooter = decode_footer(&buf[HEADER_SIZE..], "test").unwrap();
+        assert!(footer.columns.is_empty());
     }
 
     #[test]
@@ -100,32 +92,22 @@ mod tests {
 
         // Header
         assert_eq!(&buf[0..4], b"MURR");
-        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 2);
 
-        // Payload at offset 8 (3 bytes + 1 byte padding to align to 4)
+        // Payload at offset 8 (3 bytes + 5 bytes padding to align to 8)
         assert_eq!(&buf[8..11], &[0xAA, 0xBB, 0xCC]);
-        assert_eq!(buf[11], 0x00); // padding byte
+        // 5 padding bytes to reach 8-byte alignment
+        assert_eq!(&buf[11..16], &[0, 0, 0, 0, 0]);
 
-        // Footer entry: name_len(2) + "col1"(4) + offset(4) + size(4) = 14 bytes
-        let footer_size_offset = buf.len() - 4;
-        let footer_size =
-            u32::from_le_bytes(buf[footer_size_offset..].try_into().unwrap()) as usize;
-        assert_eq!(footer_size, 2 + 4 + 4 + 4); // 14
-
-        let footer_start = footer_size_offset - footer_size;
-        let name_len =
-            u16::from_le_bytes(buf[footer_start..footer_start + 2].try_into().unwrap()) as usize;
-        assert_eq!(name_len, 4);
-        assert_eq!(&buf[footer_start + 2..footer_start + 6], b"col1");
-
-        let payload_offset =
-            u32::from_le_bytes(buf[footer_start + 6..footer_start + 10].try_into().unwrap());
-        let payload_size = u32::from_le_bytes(
-            buf[footer_start + 10..footer_start + 14]
-                .try_into()
-                .unwrap(),
-        );
-        assert_eq!(payload_offset, HEADER_SIZE as u32);
-        assert_eq!(payload_size, 3); // size in footer is original, without padding
+        // Footer
+        let footer_size = u32::from_le_bytes(
+            buf[buf.len() - FOOTER_LEN_SIZE..].try_into().unwrap(),
+        ) as usize;
+        let footer_start = buf.len() - FOOTER_LEN_SIZE - footer_size;
+        let footer: SegmentFooter = decode_footer(&buf[footer_start..], "test").unwrap();
+        assert_eq!(footer.columns.len(), 1);
+        assert_eq!(footer.columns[0].name, "col1");
+        assert_eq!(footer.columns[0].offset, HEADER_SIZE as u32);
+        assert_eq!(footer.columns[0].size, 3);
     }
 }
