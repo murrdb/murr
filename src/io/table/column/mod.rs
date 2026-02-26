@@ -2,8 +2,6 @@ mod bitmap;
 pub mod float32;
 pub mod utf8;
 
-pub(crate) use bitmap::read_u32;
-
 use std::sync::Arc;
 
 use arrow::array::Array;
@@ -45,4 +43,7 @@ pub trait Column: Send + Sync {
 
     /// Total number of values across all segments.
     fn size(&self) -> u32;
+
+    /// Number of values in each segment, in order.
+    fn segment_sizes(&self) -> Vec<u32>;
 }

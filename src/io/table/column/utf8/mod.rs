@@ -63,10 +63,10 @@ impl<'a> Column for Utf8Column<'a> {
                                 ))
                             })?;
 
-                        if *segment_offset >= seg.header.num_values {
+                        if *segment_offset >= seg.footer.num_values {
                             return Err(MurrError::TableError(format!(
                                 "segment_offset {} out of range (segment has {} values)",
-                                segment_offset, seg.header.num_values
+                                segment_offset, seg.footer.num_values
                             )));
                         }
 
@@ -103,10 +103,10 @@ impl<'a> Column for Utf8Column<'a> {
                                 ))
                             })?;
 
-                        if *segment_offset >= seg.header.num_values {
+                        if *segment_offset >= seg.footer.num_values {
                             return Err(MurrError::TableError(format!(
                                 "segment_offset {} out of range (segment has {} values)",
-                                segment_offset, seg.header.num_values
+                                segment_offset, seg.footer.num_values
                             )));
                         }
 
@@ -130,7 +130,7 @@ impl<'a> Column for Utf8Column<'a> {
         if self.nullable {
             for seg in &self.segments {
                 if let Some(ref nulls) = seg.nulls {
-                    for i in 0..seg.header.num_values {
+                    for i in 0..seg.footer.num_values {
                         if !nulls.is_valid(i as u64) {
                             builder.append_null();
                         } else {
@@ -145,7 +145,7 @@ impl<'a> Column for Utf8Column<'a> {
                         }
                     }
                 } else {
-                    for i in 0..seg.header.num_values {
+                    for i in 0..seg.footer.num_values {
                         let (start, end) = seg.string_range(i);
                         let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
                             MurrError::TableError(format!("invalid utf8 in string column: {e}"))
@@ -156,7 +156,7 @@ impl<'a> Column for Utf8Column<'a> {
             }
         } else {
             for seg in &self.segments {
-                for i in 0..seg.header.num_values {
+                for i in 0..seg.footer.num_values {
                     let (start, end) = seg.string_range(i);
                     let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
                         MurrError::TableError(format!("invalid utf8 in string column: {e}"))
@@ -170,7 +170,11 @@ impl<'a> Column for Utf8Column<'a> {
     }
 
     fn size(&self) -> u32 {
-        self.segments.iter().map(|s| s.header.num_values).sum()
+        self.segments.iter().map(|s| s.footer.num_values).sum()
+    }
+
+    fn segment_sizes(&self) -> Vec<u32> {
+        self.segments.iter().map(|s| s.footer.num_values).collect()
     }
 }
 
