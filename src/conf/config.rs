@@ -1,5 +1,5 @@
 use crate::{
-    conf::ServerConfig,
+    conf::{ServerConfig, StorageConfig},
     core::{
         CliArgs,
         MurrError::{self, ConfigParsingError},
@@ -13,30 +13,30 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 impl Config {
-    pub fn from_file(file_path: &str) -> Result<Config, MurrError> {
-        let content = std::fs::read_to_string(file_path)?;
-        Config::from_str(&content)
-    }
-    pub fn from_str(yaml_str: &str) -> Result<Config, MurrError> {
-        let config = CConfig::builder()
-            .add_source(config::File::from_str(yaml_str, config::FileFormat::Yaml))
+    pub fn from_args(args: &CliArgs) -> Result<Config, MurrError> {
+        let mut builder = CConfig::builder();
+
+        if let Some(config_path) = &args.config {
+            builder = builder.add_source(config::File::with_name(config_path));
+        }
+
+        builder = builder.add_source(
+            config::Environment::with_prefix("MURR")
+                .separator("_")
+                .try_parsing(true),
+        );
+
+        builder
             .build()
             .map_err(|e| ConfigParsingError(e.to_string()))?
             .try_deserialize::<Config>()
-            .map_err(|e| ConfigParsingError(e.to_string()))?;
-        Ok(config)
+            .map_err(|e| ConfigParsingError(e.to_string()))
     }
-
-    pub fn from_args(args: &CliArgs) -> Result<Config, MurrError> {
-        match &args.config {
-            Some(config_path) => Config::from_file(config_path),
-            None => Ok(Config::default()),
-        }
-    }
-
 }
 
 #[cfg(test)]
@@ -46,7 +46,26 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.server.host, "localhost");
-        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.http.host, "0.0.0.0");
+        assert_eq!(config.server.http.port, 8080);
+        assert_eq!(config.server.grpc.host, "0.0.0.0");
+        assert_eq!(config.server.grpc.port, 8081);
+    }
+
+    #[test]
+    fn test_config_from_args_no_file() {
+        let args = CliArgs { config: None };
+        let config = Config::from_args(&args).unwrap();
+        assert_eq!(config.server.http.port, 8080);
+        assert_eq!(config.server.grpc.port, 8081);
+    }
+
+    #[test]
+    fn test_config_unknown_field_rejected() {
+        let args = CliArgs {
+            config: Some("nonexistent.yaml".to_string()),
+        };
+        let result = Config::from_args(&args);
+        assert!(result.is_err());
     }
 }
