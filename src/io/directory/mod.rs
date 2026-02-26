@@ -24,7 +24,7 @@ pub struct IndexInfo {
 
 #[async_trait]
 pub trait Directory: Sized {
-    fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError>;
+    async fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError>;
     async fn index(&self) -> Result<Option<IndexInfo>, MurrError>;
     async fn write(&mut self, name: &str, data: &[u8]) -> Result<(), MurrError>;
 }

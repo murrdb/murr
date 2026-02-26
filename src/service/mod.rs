@@ -25,7 +25,7 @@ impl MurrService {
         let data_dir = config.storage.cache_dir.clone();
         let mut tables = HashMap::new();
 
-        for dir in LocalDirectory::from_storage(&data_dir)? {
+        for dir in LocalDirectory::from_storage(&data_dir).await? {
             let index = match dir.index().await? {
                 Some(index) => index,
                 None => continue,

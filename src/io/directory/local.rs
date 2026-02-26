@@ -118,7 +118,7 @@ impl LocalDirectory {
 
 #[async_trait]
 impl Directory for LocalDirectory {
-    fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError> {
+    async fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError> {
         Self::scan_subdirs(path)?
             .into_iter()
             .map(|p| Ok(Self::new(p)))
