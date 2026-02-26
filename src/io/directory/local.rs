@@ -189,7 +189,7 @@ mod tests {
                 nullable: true,
             },
         );
-        TableSchema { name: "test".to_string(), key: "key".to_string(), columns }
+        TableSchema { key: "key".to_string(), columns }
     }
 
     fn write_table_json(dir: &std::path::Path, schema: &TableSchema) {

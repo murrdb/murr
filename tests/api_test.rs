@@ -48,7 +48,6 @@ async fn body_json(router: Router, req: Request<Body>) -> (StatusCode, Value) {
 
 fn table_schema_json() -> Value {
     json!({
-        "name": "features",
         "key": "id",
         "columns": {
             "id": {"dtype": "utf8", "nullable": false},

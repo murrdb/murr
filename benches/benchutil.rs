@@ -37,7 +37,6 @@ pub fn make_schema(col_names: &[String]) -> (TableSchema, Arc<Schema>) {
     }
 
     let table_schema = TableSchema {
-        name: "bench".to_string(),
         key: "key".to_string(),
         columns,
     };
@@ -61,7 +60,7 @@ pub fn setup_service(rt: &Runtime) -> (TempDir, MurrService) {
     };
     let svc = rt.block_on(async {
         let svc = MurrService::new(config).await.unwrap();
-        svc.create(table_schema).await.unwrap();
+        svc.create("bench", table_schema).await.unwrap();
         let batch = generate_batch(&arrow_schema, NUM_ROWS);
         svc.write("bench", &batch).await.unwrap();
         svc
