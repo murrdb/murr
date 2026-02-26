@@ -96,6 +96,9 @@ jobs:
   publish-pypi:
     needs: build-wheels
     runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
     steps:
       - name: Download all wheel artifacts
         uses: actions/download-artifact@v4
@@ -104,10 +107,10 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
+        run: uv publish dist/*.whl
         env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_KEY }}
-        with:
-          command: upload
-          args: --skip-existing dist/*.whl
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_KEY }}
