@@ -220,7 +220,7 @@ mod tests {
                 nullable: true,
             },
         );
-        let schema = TableSchema { name: "test".to_string(), key: "key".to_string(), columns };
+        let schema = TableSchema { key: "key".to_string(), columns };
         let data = serde_json::to_vec_pretty(&schema).unwrap();
         std::fs::write(dir.join("table.json"), data).unwrap();
     }
@@ -357,7 +357,7 @@ mod tests {
                     nullable: true,
                 },
             );
-            let schema = TableSchema { name: "test".to_string(), key: "key".to_string(), columns };
+            let schema = TableSchema { key: "key".to_string(), columns };
             let data = serde_json::to_vec_pretty(&schema).unwrap();
             std::fs::write(dir.path().join("table.json"), data).unwrap();
         }

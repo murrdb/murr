@@ -26,8 +26,6 @@ impl ColumnSchema {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
-    #[serde(default)]
-    pub name: String,
     pub key: String,
     pub columns: HashMap<String, ColumnSchema>,
 }

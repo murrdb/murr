@@ -143,7 +143,6 @@ mod tests {
             },
         );
         TableSchema {
-            name: "test".to_string(),
             key: "name".to_string(),
             columns,
         }
