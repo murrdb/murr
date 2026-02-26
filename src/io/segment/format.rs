@@ -22,16 +22,11 @@ pub(crate) fn align8_padding(len: usize) -> usize {
     (8 - (len % 8)) % 8
 }
 
-/// Marker trait for types that follow the "bincode footer + u32 LE length
-/// suffix" wire convention. All footers (segment-level and column-level) are
-/// serialized at the end of their data region, followed by a 4-byte LE length.
-pub(crate) trait Footer: Encode + Decode<()> {}
-
 /// Decode a footer from the tail of a byte slice.
 ///
 /// Expects the last 4 bytes to be a LE u32 footer length, with the
 /// bincode-encoded footer immediately before it.
-pub(crate) fn decode_footer<T: Footer>(data: &[u8], label: &str) -> Result<T, MurrError> {
+pub(crate) fn decode_footer<T: Decode<()>>(data: &[u8], label: &str) -> Result<T, MurrError> {
     if data.len() < FOOTER_LEN_SIZE {
         return Err(MurrError::SegmentError(format!(
             "{label} too small for footer length"
@@ -56,7 +51,7 @@ pub(crate) fn decode_footer<T: Footer>(data: &[u8], label: &str) -> Result<T, Mu
 }
 
 /// Encode a footer and append it plus its LE u32 length to a buffer.
-pub(crate) fn encode_footer(buf: &mut Vec<u8>, footer: &impl Footer) -> Result<(), MurrError> {
+pub(crate) fn encode_footer<T: Encode>(buf: &mut Vec<u8>, footer: &T) -> Result<(), MurrError> {
     let footer_bytes = bincode::encode_to_vec(footer, BINCODE_CONFIG)
         .map_err(|e| MurrError::SegmentError(format!("encoding footer: {e}")))?;
     buf.extend_from_slice(&footer_bytes);
@@ -77,5 +72,3 @@ pub(crate) struct FooterEntry {
 pub(crate) struct SegmentFooter {
     pub columns: Vec<FooterEntry>,
 }
-
-impl Footer for SegmentFooter {}
