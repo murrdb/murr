@@ -1,47 +1,37 @@
 use arrow::array::{Array, Float32Array};
-use bytemuck::{Pod, Zeroable, cast_slice};
+use bincode::{Decode, Encode};
+use bytemuck::cast_slice;
 
 use crate::core::ColumnConfig;
 use crate::core::MurrError;
+use crate::io::segment::format::{align8_padding, decode_footer, encode_footer};
 use crate::io::table::column::ColumnSegment;
-use crate::io::table::column::bitmap::{NullBitmap, align8_padding};
+use crate::io::table::column::bitmap::NullBitmap;
 
-/// Fixed-size header at the start of a dense float32 column segment.
+/// Footer at the end of a dense float32 column segment.
 ///
 /// All byte offsets are relative to the start of the column data.
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-pub(super) struct Float32Header {
-    pub(super) num_values: u32,
-    pub(super) payload_offset: u32,
-    pub(super) null_bitmap_offset: u32,
-    pub(super) null_bitmap_size: u32,
-}
-
-pub(super) const HEADER_SIZE: usize = std::mem::size_of::<Float32Header>();
-
-impl Float32Header {
-    /// Parse the header from the beginning of a column data slice.
-    pub(super) fn parse(data: &[u8]) -> Result<&Float32Header, MurrError> {
-        if data.len() < HEADER_SIZE {
-            return Err(MurrError::TableError(
-                "dense float32 segment too small for header".into(),
-            ));
-        }
-        Ok(bytemuck::from_bytes(&data[..HEADER_SIZE]))
-    }
+#[derive(Clone, Debug, Encode, Decode)]
+pub(crate) struct Float32Footer {
+    pub(crate) num_values: u32,
+    pub(crate) payload_offset: u32,
+    pub(crate) null_bitmap_offset: u32,
+    pub(crate) null_bitmap_size: u32,
 }
 
 /// Parsed zero-copy view over a single segment's dense float32 column data.
 ///
 /// Wire format:
 /// ```text
-/// [header: Float32Header]             // 16 bytes
 /// [payload: [f32; num_values]]        // at payload_offset
-/// [null_bitmap: [u32; bitmap_size]]   // at null_bitmap_offset
+/// [padding to 8-byte align]
+/// [null_bitmap: [u64; bitmap_words]]   // at null_bitmap_offset
+/// [padding to 8-byte align]
+/// [bincode footer: Float32Footer]
+/// [footer_len: u32 LE]                // last 4 bytes
 /// ```
 pub(crate) struct Float32Segment<'a> {
-    pub(super) header: &'a Float32Header,
+    pub(super) footer: Float32Footer,
     pub(super) payload: &'a [f32],
     pub(super) nulls: Option<NullBitmap<'a>>,
 }
@@ -50,27 +40,27 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
     type ArrayType = Float32Array;
 
     fn parse(_name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError> {
-        let header = Float32Header::parse(data)?;
+        let footer: Float32Footer = decode_footer(data, "float32 segment")?;
 
-        let payload_byte_len = header.num_values as usize * 4;
-        let payload_end = header.payload_offset as usize + payload_byte_len;
+        let payload_byte_len = footer.num_values as usize * 4;
+        let payload_end = footer.payload_offset as usize + payload_byte_len;
         if payload_end > data.len() {
             return Err(MurrError::TableError(
-                "dense float32 segment truncated at payload".into(),
+                "float32 segment truncated at payload".into(),
             ));
         }
-        let payload: &[f32] = cast_slice(&data[header.payload_offset as usize..payload_end]);
+        let payload: &[f32] = cast_slice(&data[footer.payload_offset as usize..payload_end]);
 
         let nulls = NullBitmap::parse(
             data,
-            header.null_bitmap_offset as usize,
-            header.null_bitmap_size,
+            footer.null_bitmap_offset as usize,
+            footer.null_bitmap_size,
             config.nullable,
-            "dense float32",
+            "float32",
         )?;
 
         Ok(Self {
-            header,
+            footer,
             payload,
             nulls,
         })
@@ -79,28 +69,7 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
     fn write(config: &ColumnConfig, values: &Float32Array) -> Result<Vec<u8>, MurrError> {
         let num_values = values.len() as u32;
 
-        let bitmap_bytes: Vec<u8> = if config.nullable {
-            NullBitmap::write(values)
-        } else {
-            Vec::new()
-        };
-
-        let payload_offset = HEADER_SIZE as u32;
-        let payload_byte_len = num_values as usize * 4;
-        let payload_padding = align8_padding(HEADER_SIZE + payload_byte_len);
-        let null_bitmap_offset = (HEADER_SIZE + payload_byte_len + payload_padding) as u32;
-
-        let total_size = HEADER_SIZE + payload_byte_len + payload_padding + bitmap_bytes.len();
-        let mut buf = Vec::with_capacity(total_size);
-
-        let header = Float32Header {
-            num_values,
-            payload_offset,
-            null_bitmap_offset,
-            null_bitmap_size: bitmap_bytes.len() as u32,
-        };
-        buf.extend_from_slice(bytemuck::bytes_of(&header));
-
+        // Build payload
         let payload: Vec<f32> = (0..values.len())
             .map(|i| {
                 if values.is_null(i) {
@@ -110,9 +79,34 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
                 }
             })
             .collect();
-        buf.extend_from_slice(cast_slice(&payload));
+        let payload_bytes: &[u8] = cast_slice(&payload);
+
+        // Build bitmap
+        let bitmap_bytes: Vec<u8> = if config.nullable {
+            NullBitmap::write(values)
+        } else {
+            Vec::new()
+        };
+
+        // Layout: payload, pad, bitmap, pad, footer, footer_len
+        let payload_offset = 0u32;
+        let payload_padding = align8_padding(payload_bytes.len());
+        let null_bitmap_offset = (payload_bytes.len() + payload_padding) as u32;
+        let bitmap_padding = align8_padding(bitmap_bytes.len());
+
+        let footer = Float32Footer {
+            num_values,
+            payload_offset,
+            null_bitmap_offset,
+            null_bitmap_size: bitmap_bytes.len() as u32,
+        };
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(payload_bytes);
         buf.extend_from_slice(&[0u8; 7][..payload_padding]);
         buf.extend_from_slice(&bitmap_bytes);
+        buf.extend_from_slice(&[0u8; 7][..bitmap_padding]);
+        encode_footer(&mut buf, &footer)?;
 
         Ok(buf)
     }
@@ -148,7 +142,7 @@ mod tests {
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 3);
+        assert_eq!(seg.footer.num_values, 3);
         assert_eq!(seg.payload[0], 1.0);
         assert_eq!(seg.payload[1], 2.5);
         assert_eq!(seg.payload[2], 0.0);
@@ -161,7 +155,7 @@ mod tests {
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 2);
+        assert_eq!(seg.footer.num_values, 2);
         assert_eq!(seg.payload[0], 1.0);
         assert_eq!(seg.payload[1], 2.0);
         assert!(seg.nulls.is_none());
@@ -174,7 +168,7 @@ mod tests {
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 4);
+        assert_eq!(seg.footer.num_values, 4);
         assert_eq!(seg.payload[0], 1.5);
         let nulls = seg.nulls.as_ref().unwrap();
         assert!(nulls.is_valid(0));
@@ -191,7 +185,7 @@ mod tests {
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 0);
+        assert_eq!(seg.footer.num_values, 0);
     }
 
     #[test]
@@ -204,7 +198,7 @@ mod tests {
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
         let seg = Float32Segment::parse("test", &config, &bytes).unwrap();
-        assert_eq!(seg.header.num_values, 64);
+        assert_eq!(seg.footer.num_values, 64);
 
         let nulls = seg.nulls.as_ref().unwrap();
         for i in 0..64u64 {
