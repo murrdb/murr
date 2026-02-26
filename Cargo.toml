@@ -1,3 +1,6 @@
+[workspace]
+members = ["python"]
+
 [package]
 name = "murr"
 version = "0.1.0"

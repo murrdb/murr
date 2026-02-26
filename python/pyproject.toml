@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.12,<2"]
+build-backend = "maturin"
+
+[project]
+name = "murr"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pyarrow>=15.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "python"
+module-name = "murr.libmurr"
+features = ["pyo3/extension-module"]

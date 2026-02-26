@@ -60,3 +60,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.artifact }}
+
+  python-wheel:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build manylinux wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release -m python/Cargo.toml -i python3.11 python3.12 python3.13 python3.14
+
+      - name: Upload wheels to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/wheels/*.whl
