@@ -30,8 +30,13 @@ impl MurrFlightService {
         Self { service }
     }
 
-    pub async fn serve(self, addr: &str) -> Result<(), MurrError> {
-        let addr = addr
+    pub async fn serve(self) -> Result<(), MurrError> {
+        let addr = self
+            .service
+            .config()
+            .server
+            .grpc
+            .addr()
             .parse()
             .map_err(|e| MurrError::ConfigParsingError(format!("invalid address: {e}")))?;
 

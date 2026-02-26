@@ -31,8 +31,9 @@ impl MurrHttpService {
             .with_state(self.service.clone())
     }
 
-    pub async fn serve(self, addr: &str) -> Result<(), MurrError> {
-        let listener = tokio::net::TcpListener::bind(addr)
+    pub async fn serve(self) -> Result<(), MurrError> {
+        let addr = self.service.config().server.http.addr();
+        let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?;
         axum::serve(listener, self.router())

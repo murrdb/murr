@@ -5,6 +5,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
+use murr::conf::{Config, StorageConfig};
 use murr::core::{ColumnConfig, DType, TableSchema};
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
@@ -52,7 +53,13 @@ pub fn setup_service(rt: &Runtime) -> (TempDir, MurrService) {
     let (table_schema, arrow_schema) = make_schema(&col_names);
 
     let dir = TempDir::new().unwrap();
-    let svc = MurrService::new(dir.path().to_path_buf());
+    let config = Config {
+        storage: StorageConfig {
+            cache_dir: dir.path().to_path_buf(),
+        },
+        ..Config::default()
+    };
+    let svc = MurrService::new(config);
 
     rt.block_on(async {
         svc.create("bench", table_schema).await.unwrap();

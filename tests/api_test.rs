@@ -16,11 +16,18 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
+use murr::conf::{Config, StorageConfig};
 use murr::service::MurrService;
 
 fn setup() -> (TempDir, Router) {
     let dir = TempDir::new().unwrap();
-    let service = Arc::new(MurrService::new(dir.path().to_path_buf()));
+    let config = Config {
+        storage: StorageConfig {
+            cache_dir: dir.path().to_path_buf(),
+        },
+        ..Config::default()
+    };
+    let service = Arc::new(MurrService::new(config));
     let api = MurrHttpService::new(service);
     let router = api.router();
     (dir, router)
