@@ -49,9 +49,10 @@ pub async fn get_schema(
 pub async fn create_table(
     State(service): State<Arc<MurrService>>,
     Path(name): Path<String>,
-    Json(schema): Json<TableSchema>,
+    Json(mut schema): Json<TableSchema>,
 ) -> Result<StatusCode, ApiError> {
-    service.create(&name, schema).await?;
+    schema.name = name;
+    service.create(schema).await?;
     Ok(StatusCode::CREATED)
 }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrow::array::{Array, StringBuilder};
 use arrow::datatypes::{DataType, Field};
 
-use crate::core::ColumnConfig;
+use crate::core::ColumnSchema;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::{Column, KeyOffset};
@@ -21,7 +21,7 @@ pub struct Utf8Column<'a> {
 impl<'a> Utf8Column<'a> {
     pub fn new(
         name: &str,
-        config: &ColumnConfig,
+        config: &ColumnSchema,
         segments: &[&'a [u8]],
     ) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
@@ -187,15 +187,15 @@ mod tests {
         values.iter().collect::<StringArray>()
     }
 
-    fn non_nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: false,
         }
     }
 
-    fn nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: true,
         }

@@ -33,8 +33,9 @@ impl MurrService {
         &self.config
     }
 
-    pub async fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
+    pub async fn create(&self, schema: TableSchema) -> Result<(), MurrError> {
         let mut tables = self.tables.write().await;
+        let table_name = &schema.name;
 
         if tables.contains_key(table_name) {
             return Err(MurrError::TableAlreadyExists(table_name.to_string()));
@@ -129,7 +130,7 @@ impl MurrService {
 mod tests {
     use super::*;
     use crate::conf::StorageConfig;
-    use crate::core::{ColumnConfig, DType};
+    use crate::core::{ColumnSchema, DType};
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
@@ -144,24 +145,24 @@ mod tests {
         }
     }
 
-    fn test_schema() -> TableSchema {
+    fn test_schema(name: &str) -> TableSchema {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
         );
         TableSchema {
-            name: "test".to_string(),
+            name: name.to_string(),
             key: "key".to_string(),
             columns,
         }
@@ -186,7 +187,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir));
 
-        svc.create("users", test_schema()).await.unwrap();
+        svc.create(test_schema("users")).await.unwrap();
 
         let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
         svc.write("users", &batch).await.unwrap();
@@ -208,8 +209,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir));
 
-        svc.create("t", test_schema()).await.unwrap();
-        let err = svc.create("t", test_schema()).await;
+        svc.create(test_schema("t")).await.unwrap();
+        let err = svc.create(test_schema("t")).await;
         assert!(err.is_err());
     }
 
@@ -227,7 +228,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir));
 
-        svc.create("empty", test_schema()).await.unwrap();
+        svc.create(test_schema("empty")).await.unwrap();
         let err = svc.read("empty", &["a"], &["score"]).await;
         assert!(err.is_err());
     }
@@ -237,7 +238,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir));
 
-        svc.create("t", test_schema()).await.unwrap();
+        svc.create(test_schema("t")).await.unwrap();
 
         let batch1 = test_batch(&["a", "b"], &[1.0, 2.0]);
         svc.write("t", &batch1).await.unwrap();

@@ -7,26 +7,18 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum DType {
     Utf8,
-    Int16,
-    Int32,
-    Int64,
-    Uint16,
-    UInt32,
-    UInt64,
     Float32,
-    Float64,
-    Bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct ColumnConfig {
+pub struct ColumnSchema {
     pub dtype: DType,
-    #[serde(default = "ColumnConfig::default_nullable")]
+    #[serde(default = "ColumnSchema::default_nullable")]
     pub nullable: bool,
 }
 
-impl ColumnConfig {
+impl ColumnSchema {
     pub fn default_nullable() -> bool {
         true
     }
@@ -37,22 +29,14 @@ pub struct TableSchema {
     #[serde(default)]
     pub name: String,
     pub key: String,
-    pub columns: HashMap<String, ColumnConfig>,
+    pub columns: HashMap<String, ColumnSchema>,
 }
 
 impl From<&DType> for DataType {
     fn from(dtype: &DType) -> Self {
         match dtype {
             DType::Utf8 => DataType::Utf8,
-            DType::Int16 => DataType::Int16,
-            DType::Int32 => DataType::Int32,
-            DType::Int64 => DataType::Int64,
-            DType::Uint16 => DataType::UInt16,
-            DType::UInt32 => DataType::UInt32,
-            DType::UInt64 => DataType::UInt64,
             DType::Float32 => DataType::Float32,
-            DType::Float64 => DataType::Float64,
-            DType::Bool => DataType::Boolean,
         }
     }
 }
