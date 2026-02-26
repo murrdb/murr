@@ -31,6 +31,9 @@ jobs:
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
+      
+      - name: Run cargo check
+        run: cargo check --all-targets
 
       - name: Run tests
         run: cargo test
