@@ -2,7 +2,7 @@ use arrow::array::{Array, Float32Array};
 use bincode::{Decode, Encode};
 use bytemuck::cast_slice;
 
-use crate::core::ColumnConfig;
+use crate::core::ColumnSchema;
 use crate::core::MurrError;
 use crate::io::segment::format::{align8_padding, decode_footer, encode_footer};
 use crate::io::table::column::ColumnSegment;
@@ -39,7 +39,7 @@ pub(crate) struct Float32Segment<'a> {
 impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
     type ArrayType = Float32Array;
 
-    fn parse(_name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError> {
+    fn parse(_name: &str, config: &ColumnSchema, data: &'a [u8]) -> Result<Self, MurrError> {
         let footer: Float32Footer = decode_footer(data, "float32 segment")?;
 
         let payload_byte_len = footer.num_values as usize * 4;
@@ -66,7 +66,7 @@ impl<'a> ColumnSegment<'a> for Float32Segment<'a> {
         })
     }
 
-    fn write(config: &ColumnConfig, values: &Float32Array) -> Result<Vec<u8>, MurrError> {
+    fn write(config: &ColumnSchema, values: &Float32Array) -> Result<Vec<u8>, MurrError> {
         let num_values = values.len() as u32;
 
         // Build payload
@@ -121,15 +121,15 @@ mod tests {
         values.iter().copied().collect::<Float32Array>()
     }
 
-    fn non_nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Float32,
             nullable: false,
         }
     }
 
-    fn nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Float32,
             nullable: true,
         }

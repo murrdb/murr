@@ -84,7 +84,7 @@ Uses u64-word bit array (bit set = valid). Design choices from benchmarking (see
 - **u64 words** instead of u8 or bitvec: bitvec has 6–7 abstraction layers per bit access. Manual u64 bit ops are much faster.
 - **Lazy write allocation**: `NullBitmap::write()` only allocates u64 words when the first null is encountered. Returns empty vec if all values are valid — common case for non-nullable columns.
 - **Branch-once null checking**: The column checks nullability at the segment level, not per element:
-  1. If `ColumnConfig.nullable == false` → skip all null checks
+  1. If `ColumnSchema.nullable == false` → skip all null checks
   2. If nullable but segment has no bitmap → skip null checks for this segment
   3. If nullable AND bitmap exists → dereference bitmap once, check per element
 

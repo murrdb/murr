@@ -6,7 +6,7 @@ use arrow::array::{Array, StringArray, new_null_array};
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 
-use crate::core::{ColumnConfig, DType};
+use crate::core::{ColumnSchema, DType};
 use crate::core::MurrError;
 
 use super::column::{Column, Float32Column, KeyOffset, Utf8Column};
@@ -29,7 +29,7 @@ impl<'a> TableReader<'a> {
     pub fn from_table(
         table: &'a TableView,
         key_column: &str,
-        schema: &HashMap<String, ColumnConfig>,
+        schema: &HashMap<String, ColumnSchema>,
     ) -> Result<Self, MurrError> {
         let segments = table.segments();
 
@@ -52,12 +52,6 @@ impl<'a> TableReader<'a> {
             let column: Box<dyn Column + 'a> = match col_config.dtype {
                 DType::Float32 => Box::new(Float32Column::new(col_name, col_config, &col_slices)?),
                 DType::Utf8 => Box::new(Utf8Column::new(col_name, col_config, &col_slices)?),
-                ref other => {
-                    return Err(MurrError::TableError(format!(
-                        "unsupported dtype {:?} for column '{}'",
-                        other, col_name
-                    )));
-                }
             };
 
             columns.insert(col_name.to_string(), column);
@@ -77,7 +71,7 @@ impl<'a> TableReader<'a> {
             })
             .collect::<Result<_, _>>()?;
 
-        let key_config = ColumnConfig {
+        let key_config = ColumnSchema {
             dtype: DType::Utf8,
             nullable: false,
         };
@@ -168,15 +162,15 @@ mod tests {
     use std::fs::File;
     use tempfile::TempDir;
 
-    fn non_nullable_utf8_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_utf8_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: false,
         }
     }
 
-    fn non_nullable_float32_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_float32_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Float32,
             nullable: false,
         }
@@ -198,11 +192,11 @@ mod tests {
         ws.write(&mut file).unwrap();
     }
 
-    fn make_schema() -> HashMap<String, ColumnConfig> {
+    fn make_schema() -> HashMap<String, ColumnSchema> {
         let mut schema = HashMap::new();
         schema.insert(
             "value".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
@@ -214,14 +208,14 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "value".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
@@ -344,21 +338,21 @@ mod tests {
             let mut columns = HashMap::new();
             columns.insert(
                 "key".to_string(),
-                ColumnConfig {
+                ColumnSchema {
                     dtype: DType::Utf8,
                     nullable: false,
                 },
             );
             columns.insert(
                 "score".to_string(),
-                ColumnConfig {
+                ColumnSchema {
                     dtype: DType::Float32,
                     nullable: true,
                 },
             );
             columns.insert(
                 "name".to_string(),
-                ColumnConfig {
+                ColumnSchema {
                     dtype: DType::Utf8,
                     nullable: true,
                 },
@@ -388,14 +382,14 @@ mod tests {
         let mut schema = HashMap::new();
         schema.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
         );
         schema.insert(
             "name".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: true,
             },

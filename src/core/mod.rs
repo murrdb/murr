@@ -6,4 +6,4 @@ mod schema;
 pub use args::CliArgs;
 pub use error::MurrError;
 pub use logger::setup_logging;
-pub use schema::{ColumnConfig, DType, TableSchema};
+pub use schema::{ColumnSchema, DType, TableSchema};

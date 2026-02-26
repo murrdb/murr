@@ -156,17 +156,9 @@ components:
       type: string
       enum:
         - utf8
-        - int16
-        - int32
-        - int64
-        - uint16
-        - uint32
-        - uint64
         - float32
-        - float64
-        - bool
 
-    ColumnConfig:
+    ColumnSchema:
       type: object
       required: [dtype]
       additionalProperties: false
@@ -189,7 +181,7 @@ components:
         columns:
           type: object
           additionalProperties:
-            $ref: "#/components/schemas/ColumnConfig"
+            $ref: "#/components/schemas/ColumnSchema"
 
     FetchRequest:
       type: object

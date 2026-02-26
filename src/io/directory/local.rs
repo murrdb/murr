@@ -21,6 +21,28 @@ impl LocalDirectory {
         &self.path
     }
 
+    fn scan_subdirs(path: &std::path::Path) -> Result<Vec<PathBuf>, MurrError> {
+        if !path.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(path).map_err(|e| {
+            MurrError::IoError(format!("reading storage dir {}: {}", path.display(), e))
+        })?;
+
+        let mut dirs = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                MurrError::IoError(format!("reading dir entry: {}", e))
+            })?;
+            if entry.path().is_dir() {
+                dirs.push(entry.path());
+            }
+        }
+
+        Ok(dirs)
+    }
+
     fn scan_segments(&self) -> Result<Vec<SegmentInfo>, MurrError> {
         let mut entries: Vec<_> = std::fs::read_dir(&self.path)
             .map_err(|e| {
@@ -96,6 +118,13 @@ impl LocalDirectory {
 
 #[async_trait]
 impl Directory for LocalDirectory {
+    async fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError> {
+        Self::scan_subdirs(path)?
+            .into_iter()
+            .map(|p| Ok(Self::new(p)))
+            .collect()
+    }
+
     async fn index(&self) -> Result<Option<IndexInfo>, MurrError> {
         let table_json_path = self.path.join(TABLE_JSON);
         if !table_json_path.exists() {
@@ -138,7 +167,7 @@ impl Directory for LocalDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnConfig, DType};
+    use crate::core::{ColumnSchema, DType};
     use crate::io::segment::WriteSegment;
     use std::collections::HashMap;
     use std::fs::File;
@@ -148,14 +177,14 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },

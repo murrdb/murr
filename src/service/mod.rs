@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use arrow::record_batch::RecordBatch;
+use log::info;
 use tokio::sync::RwLock;
 
 use crate::conf::Config;
@@ -20,21 +21,53 @@ pub struct MurrService {
 }
 
 impl MurrService {
-    pub fn new(config: Config) -> Self {
+    pub async fn new(config: Config) -> Result<Self, MurrError> {
         let data_dir = config.storage.cache_dir.clone();
-        Self {
-            tables: RwLock::new(HashMap::new()),
+        let mut tables = HashMap::new();
+
+        for dir in LocalDirectory::from_storage(&data_dir).await? {
+            let index = match dir.index().await? {
+                Some(index) => index,
+                None => continue,
+            };
+
+            let schema = index.schema;
+            let cached = if index.segments.is_empty() {
+                None
+            } else {
+                Some(CachedTable::open(dir.path(), &schema, &index.segments)?)
+            };
+
+            info!(
+                "loaded table '{}' with {} segments",
+                schema.name,
+                index.segments.len()
+            );
+
+            tables.insert(
+                schema.name.clone(),
+                TableState {
+                    dir,
+                    schema,
+                    cached,
+                },
+            );
+        }
+
+        Ok(Self {
+            tables: RwLock::new(tables),
             data_dir,
             config,
-        }
+        })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    pub async fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
+    pub async fn create(&self, schema: TableSchema) -> Result<(), MurrError> {
         let mut tables = self.tables.write().await;
+        let table_name = &schema.name;
 
         if tables.contains_key(table_name) {
             return Err(MurrError::TableAlreadyExists(table_name.to_string()));
@@ -129,7 +162,7 @@ impl MurrService {
 mod tests {
     use super::*;
     use crate::conf::StorageConfig;
-    use crate::core::{ColumnConfig, DType};
+    use crate::core::{ColumnSchema, DType};
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
@@ -144,24 +177,24 @@ mod tests {
         }
     }
 
-    fn test_schema() -> TableSchema {
+    fn test_schema(name: &str) -> TableSchema {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
         );
         TableSchema {
-            name: "test".to_string(),
+            name: name.to_string(),
             key: "key".to_string(),
             columns,
         }
@@ -184,9 +217,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_write_read_round_trip() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir));
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create("users", test_schema()).await.unwrap();
+        svc.create(test_schema("users")).await.unwrap();
 
         let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
         svc.write("users", &batch).await.unwrap();
@@ -206,17 +239,17 @@ mod tests {
     #[tokio::test]
     async fn test_create_duplicate_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir));
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create("t", test_schema()).await.unwrap();
-        let err = svc.create("t", test_schema()).await;
+        svc.create(test_schema("t")).await.unwrap();
+        let err = svc.create(test_schema("t")).await;
         assert!(err.is_err());
     }
 
     #[tokio::test]
     async fn test_read_nonexistent_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir));
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
         let err = svc.read("nope", &["a"], &["score"]).await;
         assert!(err.is_err());
@@ -225,9 +258,9 @@ mod tests {
     #[tokio::test]
     async fn test_read_empty_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir));
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create("empty", test_schema()).await.unwrap();
+        svc.create(test_schema("empty")).await.unwrap();
         let err = svc.read("empty", &["a"], &["score"]).await;
         assert!(err.is_err());
     }
@@ -235,9 +268,9 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_writes_accumulate() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir));
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create("t", test_schema()).await.unwrap();
+        svc.create(test_schema("t")).await.unwrap();
 
         let batch1 = test_batch(&["a", "b"], &[1.0, 2.0]);
         svc.write("t", &batch1).await.unwrap();
@@ -256,5 +289,52 @@ mod tests {
         assert_eq!(vals.value(0), 1.0);
         assert_eq!(vals.value(1), 2.0);
         assert_eq!(vals.value(2), 3.0);
+    }
+
+    #[tokio::test]
+    async fn test_loads_existing_tables_on_startup() {
+        let dir = TempDir::new().unwrap();
+
+        // Create and populate a table, then drop the service
+        {
+            let svc = MurrService::new(test_config(&dir)).await.unwrap();
+            svc.create(test_schema("users")).await.unwrap();
+            let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
+            svc.write("users", &batch).await.unwrap();
+        }
+
+        // New service should discover the existing table
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let tables = svc.list_tables().await;
+        assert!(tables.contains_key("users"));
+
+        let result = svc.read("users", &["c", "a"], &["score"]).await.unwrap();
+        assert_eq!(result.num_rows(), 2);
+
+        let vals = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert_eq!(vals.value(0), 3.0);
+        assert_eq!(vals.value(1), 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_loads_empty_table_on_startup() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let svc = MurrService::new(test_config(&dir)).await.unwrap();
+            svc.create(test_schema("empty")).await.unwrap();
+        }
+
+        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let tables = svc.list_tables().await;
+        assert!(tables.contains_key("empty"));
+
+        // Table exists but has no data
+        let err = svc.read("empty", &["a"], &["score"]).await;
+        assert!(err.is_err());
     }
 }

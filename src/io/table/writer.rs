@@ -94,12 +94,6 @@ impl<'a> TableWriter<'a> {
                     })?;
                     Utf8Segment::write(col_config, typed)?
                 }
-                ref other => {
-                    return Err(MurrError::TableError(format!(
-                        "unsupported dtype {:?} for column '{}'",
-                        other, col_name
-                    )));
-                }
             };
 
             ws.add_column(col_name, bytes);
@@ -134,7 +128,7 @@ impl<'a> TableWriter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::ColumnConfig;
+    use crate::core::ColumnSchema;
     use crate::io::directory::{Directory, LocalDirectory};
     use crate::io::table::reader::TableReader;
     use crate::io::table::view::TableView;
@@ -148,14 +142,14 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
@@ -243,7 +237,7 @@ mod tests {
         let mut read_schema = HashMap::new();
         read_schema.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
@@ -270,7 +264,7 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
