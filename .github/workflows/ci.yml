@@ -51,6 +51,8 @@ jobs:
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
+        with:
+          key: python-${{ matrix.python-version }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
