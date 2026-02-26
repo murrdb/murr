@@ -24,7 +24,8 @@ async fn main() {
     let config = Config::from_args(&args).expect("failed to load config");
     info!("Starting murr with config: {config:?}");
 
-    let service = Arc::new(MurrService::new(config));
+    let service = MurrService::new(config).await.expect("failed to load tables");
+    let service = Arc::new(service);
 
     let http = MurrHttpService::new(service.clone());
     let flight = MurrFlightService::new(service.clone());

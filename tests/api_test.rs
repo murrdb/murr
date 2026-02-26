@@ -19,7 +19,7 @@ use murr::api::MurrHttpService;
 use murr::conf::{Config, StorageConfig};
 use murr::service::MurrService;
 
-fn setup() -> (TempDir, Router) {
+async fn setup() -> (TempDir, Router) {
     let dir = TempDir::new().unwrap();
     let config = Config {
         storage: StorageConfig {
@@ -27,7 +27,7 @@ fn setup() -> (TempDir, Router) {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config));
+    let service = Arc::new(MurrService::new(config).await.unwrap());
     let api = MurrHttpService::new(service);
     let router = api.router();
     (dir, router)
@@ -77,7 +77,7 @@ fn arrow_ipc_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
 
 #[tokio::test]
 async fn test_openapi() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
     let req = Request::get("/openapi.json")
         .body(Body::empty())
         .unwrap();
@@ -91,7 +91,7 @@ async fn test_openapi() {
 
 #[tokio::test]
 async fn test_health() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
     let req = Request::get("/health").body(Body::empty()).unwrap();
     let (status, bytes) = body_bytes(router, req).await;
     assert_eq!(status, StatusCode::OK);
@@ -100,7 +100,7 @@ async fn test_health() {
 
 #[tokio::test]
 async fn test_get_nonexistent_table() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
     let req = Request::get("/api/v1/table/nope/schema")
         .body(Body::empty())
         .unwrap();
@@ -110,7 +110,7 @@ async fn test_get_nonexistent_table() {
 
 #[tokio::test]
 async fn test_create_duplicate_table() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
     let schema = serde_json::to_vec(&table_schema_json()).unwrap();
 
     let req = Request::put("/api/v1/table/features")
@@ -130,7 +130,7 @@ async fn test_create_duplicate_table() {
 
 #[tokio::test]
 async fn test_list_and_get_table() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
     let schema = serde_json::to_vec(&table_schema_json()).unwrap();
 
     // Create table
@@ -163,7 +163,7 @@ async fn test_list_and_get_table() {
 
 #[tokio::test]
 async fn test_full_round_trip() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
 
     // 1. Create table
     let schema = serde_json::to_vec(&table_schema_json()).unwrap();
@@ -257,7 +257,7 @@ fn parquet_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
 
 #[tokio::test]
 async fn test_write_parquet() {
-    let (_dir, router) = setup();
+    let (_dir, router) = setup().await;
 
     // 1. Create table
     let schema = serde_json::to_vec(&table_schema_json()).unwrap();
