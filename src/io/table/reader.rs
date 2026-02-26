@@ -9,7 +9,6 @@ use arrow::record_batch::RecordBatch;
 use crate::core::{ColumnConfig, DType};
 use crate::core::MurrError;
 
-use super::column::read_u32;
 use super::column::{Column, Float32Column, KeyOffset, Utf8Column};
 use super::view::TableView;
 
@@ -64,7 +63,7 @@ impl<'a> TableReader<'a> {
             columns.insert(col_name.to_string(), column);
         }
 
-        // Collect key column slices and per-segment sizes.
+        // Build key column and extract per-segment sizes.
         let key_slices: Vec<&'a [u8]> = segments
             .iter()
             .map(|seg| {
@@ -78,24 +77,12 @@ impl<'a> TableReader<'a> {
             })
             .collect::<Result<_, _>>()?;
 
-        // Read per-segment sizes from wire format headers (first u32 = num_values).
-        let seg_sizes: Vec<u32> = key_slices
-            .iter()
-            .map(|data| {
-                if data.len() < 4 {
-                    return Err(MurrError::TableError(
-                        "key column segment too small for num_values".into(),
-                    ));
-                }
-                Ok(read_u32(data, 0))
-            })
-            .collect::<Result<_, _>>()?;
-
         let key_config = ColumnConfig {
             dtype: DType::Utf8,
             nullable: false,
         };
         let key_col = Utf8Column::new(key_column, &key_config, &key_slices)?;
+        let seg_sizes = key_col.segment_sizes();
         let key_array = key_col.get_all()?;
         let key_strings = key_array
             .as_any()

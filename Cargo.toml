@@ -35,7 +35,8 @@ serde_yaml_ng = "0.10"
 ahash = "0.8"
 ouroboros = "0.18"
 mimalloc = { version = "0.1", default-features = false }
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = "1"
+bincode = { version = "2", features = ["derive"] }
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 

@@ -16,20 +16,22 @@ The migration was incremental: segments first, then columns, then table reader/w
 
 **Files:** `src/io/segment/{format,read,write}.rs`
 
-A segment is the atomic unit of write — one RecordBatch becomes one `.seg` file. Segments are immutable once written, never modified in place. This mirrors Lucene's immutable segment model. The wire format:
+A segment is the atomic unit of write — one RecordBatch becomes one `.seg` file. Segments are immutable once written, never modified in place. This mirrors Lucene's immutable segment model. The wire format (v2):
 
 ```
-[MURR magic (4B)][version u32 LE (4B)]
-[column payloads, 4-byte aligned]
-[footer entries: name_len(u16)|name|offset(u32)|size(u32) per column]
-[footer_size u32 LE (4B)]
+[MURR magic (4B)][version u32 NE (4B)]
+[column payloads, 8-byte aligned]
+[bincode-encoded SegmentFooter]
+[footer_size u32 NE (4B)]
 ```
+
+The segment footer is a `SegmentFooter { columns: Vec<FooterEntry> }` encoded with `bincode::config::standard()`. Each `FooterEntry` contains `{ name: String, offset: u32, size: u32 }`.
 
 The footer-at-the-end layout (with footer size as the last 4 bytes) follows the same pattern as Lucene's compound file format — the reader seeks to the end first to find metadata, then uses it to locate column data.
 
-**Write path** (`WriteSegment`): accumulates `(name, Vec<u8>)` column payloads, then serializes header + padded payloads + footer in one pass.
+**Write path** (`WriteSegment`): accumulates `(name, Vec<u8>)` column payloads, then serializes header + 8-byte-padded payloads + bincode footer in one pass.
 
-**Read path** (`Segment`): memory-maps the file via `memmap2`, validates magic/version, parses footer from the end, builds `HashMap<name, Range<u32>>` for O(1) column lookup. `column(name)` returns `Option<&[u8]>` — zero-copy slice into the mmap.
+**Read path** (`Segment`): memory-maps the file via `memmap2`, validates magic/version, decodes bincode footer from the end, builds `HashMap<name, Range<u32>>` for O(1) column lookup. `column(name)` returns `Option<&[u8]>` — zero-copy slice into the mmap.
 
 Segment identity is derived from filename: `00000000.seg` → id 0. Padded naming ensures lexicographic sort matches insertion order.
 
@@ -45,21 +47,23 @@ Two traits define the column abstraction:
 - `parse(name, config, data: &[u8])` → deserialize from raw bytes
 - `write(config, array: &ArrayType)` → serialize to `Vec<u8>`
 
-Implementations: `Float32Segment`, `Utf8Segment`. Each has a fixed-size header (`bytemuck::Pod`) followed by typed payload and optional null bitmap.
+Implementations: `Float32Segment`, `Utf8Segment`. Each uses a footer-based layout: data blocks first (8-byte aligned), then a bincode-encoded footer with offsets/sizes, then a u32 footer_len suffix. This makes writing single-pass (dump data, then encode footer with known offsets). `bytemuck::cast_slice` is still used for zero-copy payload data access (f32, i32, u64 arrays).
 
-**Float32 wire format** (16-byte header):
+**Float32 wire format** (footer-based):
 ```
-[num_values: u32][payload_offset: u32][null_bitmap_offset: u32][null_bitmap_size: u32]
-[f32 values, 8-byte aligned]
-[null bitmap: u64 words]
+[f32 values][pad to 8]
+[null bitmap: u64 words][pad to 8]
+[bincode Float32Footer: num_values, payload_offset, null_bitmap_offset, null_bitmap_size]
+[footer_len: u32 NE]
 ```
 
-**Utf8 wire format** (20-byte header):
+**Utf8 wire format** (footer-based):
 ```
-[num_values: u32][payload_offset: u32][payload_size: u32][bitmap_offset: u32][bitmap_size: u32]
-[i32 value offsets]
-[concatenated string bytes]
-[null bitmap: u64 words]
+[i32 value offsets][pad to 8]
+[concatenated string bytes][pad to 8]
+[null bitmap: u64 words][pad to 8]
+[bincode Utf8Footer: num_values, offsets_offset, payload_offset, payload_size, null_bitmap_offset, null_bitmap_size]
+[footer_len: u32 NE]
 ```
 
 ### Column (multi-segment abstraction)
@@ -181,6 +185,13 @@ When building the key index, later segments overwrite earlier ones. This enables
 
 ### AHashMap for key index
 Benchmark-driven: AHash (AES-NI based) reduced hashing from 26% to ~2% of query time. See `hash_benchmarks.md` Experiment 8.
+
+### bincode for headers/footers, bytemuck for payloads
+Segment and column metadata (footers) use `bincode` 2.x with `config::standard()` for serialization. This removes the `bytemuck::Pod`/`Zeroable` constraint (fixed-size `#[repr(C)]` structs only), allowing future headers to include variable-length fields (metadata, statistics, compression flags). Payload data (f32 arrays, i32 offset arrays, u64 null bitmaps) still uses `bytemuck::cast_slice` for zero-copy access from mmap'd memory — this is pure data casting, not structured serialization.
+
+Column metadata was also moved from header-at-start to footer-at-end, matching the segment-level pattern. This makes writing single-pass: dump all data blocks first, then encode the footer with final offsets/sizes.
+
+All alignment was standardized to 8-byte (from mixed 4/8-byte) since we target 64-bit systems only.
 
 ### ouroboros for self-referential ownership
 `CachedTable` must own segment data (mmaps) while `TableReader` borrows from it. Rust's borrow checker can't express this directly. `ouroboros` generates safe self-referential code.
