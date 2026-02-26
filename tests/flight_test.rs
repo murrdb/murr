@@ -12,6 +12,7 @@ use futures::TryStreamExt;
 use tempfile::TempDir;
 use tonic::transport::{Channel, Server};
 
+use murr::conf::{Config, StorageConfig};
 use murr::core::{ColumnConfig, DType, TableSchema};
 use murr::service::MurrService;
 
@@ -28,7 +29,13 @@ struct TestHarness {
 
 async fn setup() -> TestHarness {
     let dir = TempDir::new().unwrap();
-    let service = Arc::new(MurrService::new(dir.path().to_path_buf()));
+    let config = Config {
+        storage: StorageConfig {
+            cache_dir: dir.path().to_path_buf(),
+        },
+        ..Config::default()
+    };
+    let service = Arc::new(MurrService::new(config));
 
     // Create and populate a table
     let schema = TableSchema {

@@ -2,43 +2,75 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct ServerConfig {
-    #[serde(default = "ServerConfig::default_host")]
+pub struct HttpConfig {
+    #[serde(default = "HttpConfig::default_host")]
     pub host: String,
-    #[serde(default = "ServerConfig::default_port")]
+    #[serde(default = "HttpConfig::default_port")]
     pub port: u16,
-    #[serde(default = "ServerConfig::default_flight_port")]
-    pub flight_port: u16,
-    #[serde(default = "ServerConfig::default_dir")]
-    pub data_dir: String,
 }
-impl ServerConfig {
+
+impl HttpConfig {
+    fn default_host() -> String {
+        String::from("0.0.0.0")
+    }
+
     fn default_port() -> u16 {
         8080
     }
 
-    fn default_flight_port() -> u16 {
-        8081
-    }
-
-    fn default_host() -> String {
-        String::from("localhost")
-    }
-
-    fn default_dir() -> String {
-        String::from("/var/lib/murr")
+    pub fn addr(&self) -> String {
+        format!("{}:{}", self.host, self.port)
     }
 }
 
-impl Default for ServerConfig {
+impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             host: Self::default_host(),
             port: Self::default_port(),
-            flight_port: Self::default_flight_port(),
-            data_dir: Self::default_dir(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GrpcConfig {
+    #[serde(default = "GrpcConfig::default_host")]
+    pub host: String,
+    #[serde(default = "GrpcConfig::default_port")]
+    pub port: u16,
+}
+
+impl GrpcConfig {
+    fn default_host() -> String {
+        String::from("0.0.0.0")
+    }
+
+    fn default_port() -> u16 {
+        8081
+    }
+
+    pub fn addr(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+impl Default for GrpcConfig {
+    fn default() -> Self {
+        Self {
+            host: Self::default_host(),
+            port: Self::default_port(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ServerConfig {
+    #[serde(default)]
+    pub http: HttpConfig,
+    #[serde(default)]
+    pub grpc: GrpcConfig,
 }
 
 #[cfg(test)]
@@ -46,10 +78,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_server_default() {
+    fn test_http_defaults() {
+        let http = HttpConfig::default();
+        assert_eq!(http.host, "0.0.0.0");
+        assert_eq!(http.port, 8080);
+        assert_eq!(http.addr(), "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn test_grpc_defaults() {
+        let grpc = GrpcConfig::default();
+        assert_eq!(grpc.host, "0.0.0.0");
+        assert_eq!(grpc.port, 8081);
+        assert_eq!(grpc.addr(), "0.0.0.0:8081");
+    }
+
+    #[test]
+    fn test_server_defaults() {
         let server = ServerConfig::default();
-        assert_eq!(server.host, "localhost");
-        assert_eq!(server.port, 8080);
-        assert_eq!(server.flight_port, 8081);
+        assert_eq!(server.http.port, 8080);
+        assert_eq!(server.grpc.port, 8081);
     }
 }

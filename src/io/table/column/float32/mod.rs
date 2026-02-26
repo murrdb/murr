@@ -47,7 +47,7 @@ impl<'a> Column for Float32Column<'a> {
         let mut values = vec![0.0f32; len];
         // Pre-fill validity bitmap as all-valid (0xFF). Missing keys are rare,
         // so we only clear bits in the uncommon path.
-        let mut validity_bytes = vec![0xFFu8; (len + 7) / 8];
+        let mut validity_bytes = vec![0xFFu8; len.div_ceil(8)];
         // Mask off trailing bits beyond `len` so Arrow doesn't see phantom valid entries.
         let trailing = len % 8;
         if trailing != 0 {
@@ -79,13 +79,12 @@ impl<'a> Column for Float32Column<'a> {
                         )));
                     }
 
-                    if self.nullable {
-                        if let Some(ref nulls) = seg.nulls {
-                            if !nulls.is_valid(*segment_offset as u64) {
-                                validity_bytes[i >> 3] &= !(1 << (i & 7));
-                                continue;
-                            }
-                        }
+                    if self.nullable
+                        && let Some(ref nulls) = seg.nulls
+                        && !nulls.is_valid(*segment_offset as u64)
+                    {
+                        validity_bytes[i >> 3] &= !(1 << (i & 7));
+                        continue;
                     }
 
                     values[i] = seg.payload[*segment_offset as usize];
