@@ -62,11 +62,12 @@ jobs:
 
       - name: Build and install murr
         run: |
-          uv pip install --system maturin
+          uv venv .venv --python ${{ matrix.python-version }}
+          source .venv/bin/activate
+          uv pip install maturin pytest pyarrow pydantic
           maturin develop -m python/Cargo.toml
 
-      - name: Install test dependencies
-        run: uv pip install --system pytest pyarrow pydantic
-
       - name: Run Python tests
-        run: pytest python/tests/ -v
+        run: |
+          source .venv/bin/activate
+          pytest python/tests/ -v
