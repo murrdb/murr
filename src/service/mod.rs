@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use arrow::record_batch::RecordBatch;
 use tokio::sync::RwLock;
 
+use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
 use crate::io::directory::{Directory, LocalDirectory};
 use crate::io::table::{CachedTable, TableWriter};
@@ -15,14 +16,21 @@ use state::TableState;
 pub struct MurrService {
     tables: RwLock<HashMap<String, TableState>>,
     data_dir: PathBuf,
+    config: Config,
 }
 
 impl MurrService {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(config: Config) -> Self {
+        let data_dir = config.storage.cache_dir.clone();
         Self {
             tables: RwLock::new(HashMap::new()),
             data_dir,
+            config,
         }
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     pub async fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
@@ -120,11 +128,21 @@ impl MurrService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conf::StorageConfig;
     use crate::core::{ColumnConfig, DType};
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    fn test_config(dir: &TempDir) -> Config {
+        Config {
+            storage: StorageConfig {
+                cache_dir: dir.path().to_path_buf(),
+            },
+            ..Config::default()
+        }
+    }
 
     fn test_schema() -> TableSchema {
         let mut columns = HashMap::new();
@@ -166,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_write_read_round_trip() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(dir.path().to_path_buf());
+        let svc = MurrService::new(test_config(&dir));
 
         svc.create("users", test_schema()).await.unwrap();
 
@@ -188,7 +206,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_duplicate_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(dir.path().to_path_buf());
+        let svc = MurrService::new(test_config(&dir));
 
         svc.create("t", test_schema()).await.unwrap();
         let err = svc.create("t", test_schema()).await;
@@ -198,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_nonexistent_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(dir.path().to_path_buf());
+        let svc = MurrService::new(test_config(&dir));
 
         let err = svc.read("nope", &["a"], &["score"]).await;
         assert!(err.is_err());
@@ -207,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_empty_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(dir.path().to_path_buf());
+        let svc = MurrService::new(test_config(&dir));
 
         svc.create("empty", test_schema()).await.unwrap();
         let err = svc.read("empty", &["a"], &["score"]).await;
@@ -217,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_writes_accumulate() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(dir.path().to_path_buf());
+        let svc = MurrService::new(test_config(&dir));
 
         svc.create("t", test_schema()).await.unwrap();
 

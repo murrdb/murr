@@ -23,7 +23,7 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP on `0.0.0.0:8080` and Arrow Flight gRPC on `0.0.0.0:8081` (via `tokio::try_join!` in `main.rs`). Only `Float32` and `Utf8` column types are implemented so far.
+**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP and Arrow Flight gRPC (via `tokio::try_join!` in `main.rs`), with listen addresses driven by config. Only `Float32` and `Utf8` column types are implemented so far.
 
 ## Common Commands
 
@@ -65,12 +65,13 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench
 - `bitmap.rs` — `NullBitmap` using u64-word bit array (bit set = valid)
 
 **`service/`** — High-level service wrapping the storage layer
-- `MurrService` — `RwLock<HashMap<String, TableState>>` table registry
+- `MurrService` — Owns `Config`, holds `RwLock<HashMap<String, TableState>>` table registry; constructor takes `Config` (not a path)
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
+- `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
 - `state.rs` — `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
 
 **`api/http/`** — Axum HTTP API layer
-- `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()`
+- `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
 - `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors
 - `convert.rs` — `FetchResponse` (batch→JSON) and `WriteRequest` (JSON→batch) conversions
 - `error.rs` — `ApiError` newtype mapping `MurrError` → HTTP status codes
@@ -85,7 +86,11 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench
 
 **`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnConfig`, `TableSchema`)
 
-**`conf/`** — YAML configuration: `Config`, `ServerConfig`. Uses `#[serde(deny_unknown_fields)]` for strict validation.
+**`conf/`** — Hierarchical configuration loaded via `Config::from_args(&CliArgs)`:
+- `config.rs` — `Config` struct with `server` + `storage` fields; loads from optional YAML file (`--config`) then env vars (`MURR_` prefix, `_` separator)
+- `server.rs` — `ServerConfig` containing `HttpConfig` (default `0.0.0.0:8080`) and `GrpcConfig` (default `0.0.0.0:8081`), each with `addr()` method
+- `storage.rs` — `StorageConfig` with `cache_dir` auto-resolution: tries `<cwd>/murr` → `/var/lib/murr/murr` → `/data/murr` → `<tmpdir>/murr`, picking first writable location
+- All config structs use `#[serde(deny_unknown_fields)]` for strict validation
 
 **`testutil.rs`** — Feature-gated (`testutil`) test helpers: `generate_parquet_file()`, `setup_test_table()`, `setup_benchmark_table()`, `bench_generate_keys()`
 
@@ -99,11 +104,18 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench
 
 ### Configuration Format
 
+Config is loaded from an optional YAML file (`--config path.yaml`) overlaid with environment variables (`MURR_` prefix, `_` separator, e.g. `MURR_SERVER_HTTP_PORT=9090`).
+
 ```yaml
 server:
-  host: localhost    # default: localhost
-  port: 8080        # default: 8080
-  data_dir: /var/lib/murr  # default: /var/lib/murr
+  http:
+    host: "0.0.0.0"    # default: 0.0.0.0
+    port: 8080          # default: 8080
+  grpc:
+    host: "0.0.0.0"    # default: 0.0.0.0
+    port: 8081          # default: 8081
+storage:
+  cache_dir: /custom/path  # default: auto-resolved (see conf/storage.rs)
 ```
 
 Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `key`, and `columns` (each with `dtype` and optional `nullable`).
