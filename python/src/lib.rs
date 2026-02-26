@@ -14,7 +14,7 @@ use murr::conf::Config;
 use murr::conf::StorageConfig;
 use murr::service::MurrService;
 
-use error::into_py_err;
+use error::{into_py_err, MurrSegmentError, MurrTableError};
 use schema::PyTableSchema;
 
 #[pyclass(name = "LocalMurr")]
@@ -47,40 +47,44 @@ impl PyLocalMurr {
         })
     }
 
-    fn create_table(&self, name: &str, schema: PyTableSchema) -> PyResult<()> {
-        self.runtime
-            .block_on(self.service.create(name, schema.0))
+    fn create_table(&self, py: Python<'_>, name: String, schema: PyTableSchema) -> PyResult<()> {
+        let service = self.service.clone();
+        let schema = schema.0;
+        py.detach(|| self.runtime.block_on(service.create(&name, schema)))
             .map_err(into_py_err)
     }
 
-    fn write(&self, table_name: &str, batch: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn write(&self, py: Python<'_>, table_name: String, batch: &Bound<'_, PyAny>) -> PyResult<()> {
         let batch = RecordBatch::from_pyarrow_bound(batch)?;
-
-        self.runtime
-            .block_on(self.service.write(table_name, &batch))
+        let service = self.service.clone();
+        py.detach(|| self.runtime.block_on(service.write(&table_name, &batch)))
             .map_err(into_py_err)
     }
 
     fn read<'py>(
         &self,
         py: Python<'py>,
-        table_name: &str,
+        table_name: String,
         keys: Vec<String>,
         columns: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
         let col_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
 
-        let batch = self
-            .runtime
-            .block_on(self.service.read(table_name, &key_refs, &col_refs))
+        let service = self.service.clone();
+        let batch = py
+            .detach(|| {
+                self.runtime
+                    .block_on(service.read(&table_name, &key_refs, &col_refs))
+            })
             .map_err(into_py_err)?;
 
         batch.to_pyarrow(py)
     }
 
-    fn list_tables(&self) -> PyResult<HashMap<String, PyTableSchema>> {
-        let tables = self.runtime.block_on(self.service.list_tables());
+    fn list_tables(&self, py: Python<'_>) -> PyResult<HashMap<String, PyTableSchema>> {
+        let service = self.service.clone();
+        let tables = py.detach(|| self.runtime.block_on(service.list_tables()));
 
         Ok(tables
             .into_iter()
@@ -88,10 +92,10 @@ impl PyLocalMurr {
             .collect())
     }
 
-    fn get_schema(&self, table_name: &str) -> PyResult<PyTableSchema> {
-        let schema = self
-            .runtime
-            .block_on(self.service.get_schema(table_name))
+    fn get_schema(&self, py: Python<'_>, table_name: String) -> PyResult<PyTableSchema> {
+        let service = self.service.clone();
+        let schema = py
+            .detach(|| self.runtime.block_on(service.get_schema(&table_name)))
             .map_err(into_py_err)?;
 
         Ok(PyTableSchema(schema))
@@ -101,5 +105,10 @@ impl PyLocalMurr {
 #[pymodule]
 fn libmurr(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLocalMurr>()?;
+    m.add("MurrTableError", m.py().get_type::<MurrTableError>())?;
+    m.add(
+        "MurrSegmentError",
+        m.py().get_type::<MurrSegmentError>(),
+    )?;
     Ok(())
 }
