@@ -5,11 +5,32 @@ build-backend = "maturin"
 [project]
 name = "murr"
 version = "0.1.0"
+description = "Columnar in-memory cache for AI/ML inference workloads"
+license = "Apache-2.0"
 requires-python = ">=3.11"
+authors = [{ name = "Roman Grebennikov", email = "grv@dfdx.me" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "pyarrow>=15.0",
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/shuttie/murr"
+Repository = "https://github.com/shuttie/murr"
+Issues = "https://github.com/shuttie/murr/issues"
 
 [project.optional-dependencies]
 dev = [
