@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tonic::transport::{Channel, Server};
 
 use murr::conf::{Config, StorageConfig};
-use murr::core::{ColumnConfig, DType, TableSchema};
+use murr::core::{ColumnSchema, DType, TableSchema};
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.
@@ -35,7 +35,7 @@ async fn setup() -> TestHarness {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config));
+    let service = Arc::new(MurrService::new(config).await.unwrap());
 
     // Create and populate a table
     let schema = TableSchema {
@@ -44,21 +44,21 @@ async fn setup() -> TestHarness {
         columns: HashMap::from([
             (
                 "id".to_string(),
-                ColumnConfig {
+                ColumnSchema {
                     dtype: DType::Utf8,
                     nullable: false,
                 },
             ),
             (
                 "score".to_string(),
-                ColumnConfig {
+                ColumnSchema {
                     dtype: DType::Float32,
                     nullable: true,
                 },
             ),
         ]),
     };
-    service.create("features", schema).await.unwrap();
+    service.create(schema).await.unwrap();
 
     let arrow_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),

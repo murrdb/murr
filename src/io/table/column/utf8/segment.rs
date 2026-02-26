@@ -2,7 +2,7 @@ use arrow::array::{Array, StringArray};
 use bincode::{Decode, Encode};
 use bytemuck::cast_slice;
 
-use crate::core::ColumnConfig;
+use crate::core::ColumnSchema;
 use crate::core::MurrError;
 use crate::io::segment::format::{align8_padding, decode_footer, encode_footer};
 use crate::io::table::column::ColumnSegment;
@@ -57,7 +57,7 @@ impl<'a> Utf8Segment<'a> {
 impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
     type ArrayType = StringArray;
 
-    fn parse(_name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError> {
+    fn parse(_name: &str, config: &ColumnSchema, data: &'a [u8]) -> Result<Self, MurrError> {
         let footer: Utf8Footer = decode_footer(data, "utf8 segment")?;
 
         // Value offsets
@@ -97,7 +97,7 @@ impl<'a> ColumnSegment<'a> for Utf8Segment<'a> {
         })
     }
 
-    fn write(config: &ColumnConfig, values: &StringArray) -> Result<Vec<u8>, MurrError> {
+    fn write(config: &ColumnSchema, values: &StringArray) -> Result<Vec<u8>, MurrError> {
         let num_values = values.len() as u32;
 
         // Compute payload: concatenated string bytes and their offsets.
@@ -160,15 +160,15 @@ mod tests {
         values.iter().collect::<StringArray>()
     }
 
-    fn non_nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: false,
         }
     }
 
-    fn nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: true,
         }

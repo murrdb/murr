@@ -6,7 +6,7 @@ use arrow::array::{Array, Float32Array, Float32Builder};
 use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::{DataType, Field};
 
-use crate::core::ColumnConfig;
+use crate::core::ColumnSchema;
 use crate::core::MurrError;
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::{Column, KeyOffset};
@@ -22,7 +22,7 @@ pub struct Float32Column<'a> {
 impl<'a> Float32Column<'a> {
     pub fn new(
         name: &str,
-        config: &ColumnConfig,
+        config: &ColumnSchema,
         segments: &[&'a [u8]],
     ) -> Result<Self, MurrError> {
         let parsed: Result<Vec<_>, _> = segments
@@ -147,15 +147,15 @@ mod tests {
         values.iter().copied().collect::<Float32Array>()
     }
 
-    fn non_nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn non_nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Float32,
             nullable: false,
         }
     }
 
-    fn nullable_config() -> ColumnConfig {
-        ColumnConfig {
+    fn nullable_config() -> ColumnSchema {
+        ColumnSchema {
             dtype: DType::Float32,
             nullable: true,
         }
