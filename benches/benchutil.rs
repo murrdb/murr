@@ -59,12 +59,12 @@ pub fn setup_service(rt: &Runtime) -> (TempDir, MurrService) {
         },
         ..Config::default()
     };
-    let svc = MurrService::new(config);
-
-    rt.block_on(async {
+    let svc = rt.block_on(async {
+        let svc = MurrService::new(config).await.unwrap();
         svc.create(table_schema).await.unwrap();
         let batch = generate_batch(&arrow_schema, NUM_ROWS);
         svc.write("bench", &batch).await.unwrap();
+        svc
     });
 
     (dir, svc)

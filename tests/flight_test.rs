@@ -35,7 +35,7 @@ async fn setup() -> TestHarness {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config));
+    let service = Arc::new(MurrService::new(config).await.unwrap());
 
     // Create and populate a table
     let schema = TableSchema {
