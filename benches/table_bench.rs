@@ -39,7 +39,6 @@ fn bench_table_get(c: &mut Criterion) {
             }
         })
     });
-
     group.finish();
 }
 

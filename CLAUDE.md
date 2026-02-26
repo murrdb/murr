@@ -12,6 +12,7 @@ The project uses .memory directory as an append-only log of architectural decisi
 ### Build notes
 
 * when you change dependencies, do a `cargo clean` to purge old cache to save on disk space.
+* we have also benches which are excluded from `cargo check`, so always do `cargo check --all-targets` to validate that the codebase is clean
 
 ## Project Overview
 
