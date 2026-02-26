@@ -1,0 +1,14 @@
+[package]
+name = "murr-python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "libmurr"
+crate-type = ["cdylib"]
+
+[dependencies]
+murr = { path = ".." }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+arrow = { version = "58", features = ["pyarrow"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }

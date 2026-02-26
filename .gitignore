@@ -1,2 +1,6 @@
 /target
 stackcollapse-perf.pl
+.venv/
+__pycache__/
+*.so
+*.egg-info/
