@@ -61,13 +61,14 @@ jobs:
         with:
           files: ${{ matrix.artifact }}
 
-  python-wheel:
+  build-wheels:
     needs: create-release
     strategy:
       matrix:
         include:
           - os: ubuntu-22.04
           - os: macos-14
+          - os: windows-2022
     runs-on: ${{ matrix.os }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -86,7 +87,27 @@ jobs:
           command: build
           args: --release -m python/Cargo.toml -i python3.11 python3.12 python3.13 python3.14
 
-      - name: Upload wheels to release
-        uses: softprops/action-gh-release@v2
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: target/wheels/*.whl
+          name: wheels-${{ matrix.os }}
+          path: target/wheels/*.whl
+
+  publish-pypi:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_KEY }}
+        with:
+          command: upload
+          args: --skip-existing dist/*.whl
