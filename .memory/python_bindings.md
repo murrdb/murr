@@ -13,4 +13,4 @@ Added `python/` as a workspace member (`murr-python` Rust crate, `murr` PyPI pac
 - **Error mapping via `into_py_err` function**: Can't use `From<MurrError> for PyErr` due to orphan rule (neither type is local). Used a conversion function instead.
 - **Pydantic v2 for validation**: `DType(str, Enum)`, `ColumnSchema(BaseModel)`, `TableSchema(BaseModel)`. No `name` field on `TableSchema` — matches Rust design (PR #27).
 - **PyO3 0.28**: Required by `arrow 58`'s `pyarrow` feature (arrow-pyarrow depends on pyo3 0.28).
-- **Target Python 3.14**: Will add matrix build for N supported versions later.
+- **Target Python 3.14**: CI matrix build added for Python 3.13 and 3.14 (`python-test` job in `ci.yml`).
