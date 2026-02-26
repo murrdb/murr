@@ -4,7 +4,7 @@ use bytemuck::cast_slice;
 
 use crate::core::ColumnConfig;
 use crate::core::MurrError;
-use crate::io::segment::format::{Footer, align8_padding, decode_footer, encode_footer};
+use crate::io::segment::format::{align8_padding, decode_footer, encode_footer};
 use crate::io::table::column::ColumnSegment;
 use crate::io::table::column::bitmap::NullBitmap;
 
@@ -20,8 +20,6 @@ pub(crate) struct Utf8Footer {
     pub(crate) null_bitmap_offset: u32,
     pub(crate) null_bitmap_size: u32,
 }
-
-impl Footer for Utf8Footer {}
 
 /// Parsed zero-copy view over a single segment's dense string column data.
 ///

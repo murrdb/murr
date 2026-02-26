@@ -3,7 +3,7 @@ use std::io::Write;
 use crate::core::MurrError;
 
 use super::format::{
-    BINCODE_CONFIG, FooterEntry, HEADER_SIZE, MAGIC, SegmentFooter, VERSION, align8_padding,
+    FooterEntry, HEADER_SIZE, MAGIC, SegmentFooter, VERSION, align8_padding, encode_footer,
 };
 
 /// Builder for a `.seg` file. Collects named column payloads and serializes
@@ -56,10 +56,9 @@ impl WriteSegment {
 
         // Footer: bincode-encoded, then footer byte count as u32 LE
         let footer = SegmentFooter { columns: entries };
-        let footer_bytes = bincode::encode_to_vec(&footer, BINCODE_CONFIG)
-            .map_err(|e| MurrError::SegmentError(format!("encoding footer: {e}")))?;
-        w.write_all(&footer_bytes)?;
-        w.write_all(&(footer_bytes.len() as u32).to_le_bytes())?;
+        let mut footer_buf = Vec::new();
+        encode_footer(&mut footer_buf, &footer)?;
+        w.write_all(&footer_buf)?;
 
         Ok(())
     }
