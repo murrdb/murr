@@ -84,7 +84,7 @@ cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench
 - Implemented RPCs: `do_get` (fetch by keys+columns), `get_flight_info`, `get_schema`, `list_flights`
 - All write RPCs (`do_put`, `do_exchange`, `do_action`) return `Unimplemented`
 
-**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnConfig`, `TableSchema`)
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
 
 **`conf/`** — Hierarchical configuration loaded via `Config::from_args(&CliArgs)`:
 - `config.rs` — `Config` struct with `server` + `storage` fields; loads from optional YAML file (`--config`) then env vars (`MURR_` prefix, `_` separator)
@@ -120,8 +120,7 @@ storage:
 
 Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `key`, and `columns` (each with `dtype` and optional `nullable`).
 
-Supported dtypes: `utf8`, `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float32`, `float64`, `bool`
-(Currently only `utf8` and `float32` are implemented in the segment column layer)
+Supported dtypes: `utf8`, `float32`
 
 ### Testing
 

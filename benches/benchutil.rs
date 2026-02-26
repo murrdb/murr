@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 use murr::conf::{Config, StorageConfig};
-use murr::core::{ColumnConfig, DType, TableSchema};
+use murr::core::{ColumnSchema, DType, TableSchema};
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 
@@ -18,7 +18,7 @@ pub fn make_schema(col_names: &[String]) -> (TableSchema, Arc<Schema>) {
     let mut columns = HashMap::new();
     columns.insert(
         "key".to_string(),
-        ColumnConfig {
+        ColumnSchema {
             dtype: DType::Utf8,
             nullable: false,
         },
@@ -28,7 +28,7 @@ pub fn make_schema(col_names: &[String]) -> (TableSchema, Arc<Schema>) {
     for name in col_names {
         columns.insert(
             name.clone(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: false,
             },
@@ -62,7 +62,7 @@ pub fn setup_service(rt: &Runtime) -> (TempDir, MurrService) {
     let svc = MurrService::new(config);
 
     rt.block_on(async {
-        svc.create("bench", table_schema).await.unwrap();
+        svc.create(table_schema).await.unwrap();
         let batch = generate_batch(&arrow_schema, NUM_ROWS);
         svc.write("bench", &batch).await.unwrap();
     });

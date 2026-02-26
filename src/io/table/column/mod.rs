@@ -7,7 +7,7 @@ use std::sync::Arc;
 use arrow::array::Array;
 use arrow::datatypes::Field;
 
-use crate::core::ColumnConfig;
+use crate::core::ColumnSchema;
 use crate::core::MurrError;
 
 pub use float32::Float32Column;
@@ -25,9 +25,9 @@ pub enum KeyOffset {
 pub trait ColumnSegment<'a>: Sized {
     type ArrayType: Array;
 
-    fn parse(name: &str, config: &ColumnConfig, data: &'a [u8]) -> Result<Self, MurrError>;
+    fn parse(name: &str, config: &ColumnSchema, data: &'a [u8]) -> Result<Self, MurrError>;
 
-    fn write(config: &ColumnConfig, array: &Self::ArrayType) -> Result<Vec<u8>, MurrError>;
+    fn write(config: &ColumnSchema, array: &Self::ArrayType) -> Result<Vec<u8>, MurrError>;
 }
 
 pub trait Column: Send + Sync {

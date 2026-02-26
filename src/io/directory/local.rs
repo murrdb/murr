@@ -138,7 +138,7 @@ impl Directory for LocalDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnConfig, DType};
+    use crate::core::{ColumnSchema, DType};
     use crate::io::segment::WriteSegment;
     use std::collections::HashMap;
     use std::fs::File;
@@ -148,14 +148,14 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },

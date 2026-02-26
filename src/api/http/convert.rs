@@ -113,12 +113,6 @@ impl WriteRequest {
                         .collect::<Result<_, _>>()?;
                     arrays.push(Arc::new(arr));
                 }
-                ref other => {
-                    return Err(MurrError::ArrowError(format!(
-                        "unsupported dtype: {:?}",
-                        other
-                    )));
-                }
             }
         }
 
@@ -130,20 +124,20 @@ impl WriteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnConfig, DType};
+    use crate::core::{ColumnSchema, DType};
 
     fn test_table_schema() -> TableSchema {
         let mut columns = HashMap::new();
         columns.insert(
             "name".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
-            ColumnConfig {
+            ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
             },
