@@ -31,6 +31,18 @@ impl MurrService {
                 None => continue,
             };
 
+            let table_name = dir
+                .path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| {
+                    MurrError::IoError(format!(
+                        "invalid directory name: {}",
+                        dir.path().display()
+                    ))
+                })?
+                .to_string();
+
             let schema = index.schema;
             let cached = if index.segments.is_empty() {
                 None
@@ -40,12 +52,12 @@ impl MurrService {
 
             info!(
                 "loaded table '{}' with {} segments",
-                schema.name,
+                table_name,
                 index.segments.len()
             );
 
             tables.insert(
-                schema.name.clone(),
+                table_name,
                 TableState {
                     dir,
                     schema,
@@ -65,9 +77,8 @@ impl MurrService {
         &self.config
     }
 
-    pub async fn create(&self, schema: TableSchema) -> Result<(), MurrError> {
+    pub async fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
         let mut tables = self.tables.write().await;
-        let table_name = &schema.name;
 
         if tables.contains_key(table_name) {
             return Err(MurrError::TableAlreadyExists(table_name.to_string()));
@@ -177,7 +188,7 @@ mod tests {
         }
     }
 
-    fn test_schema(name: &str) -> TableSchema {
+    fn test_schema() -> TableSchema {
         let mut columns = HashMap::new();
         columns.insert(
             "key".to_string(),
@@ -194,7 +205,6 @@ mod tests {
             },
         );
         TableSchema {
-            name: name.to_string(),
             key: "key".to_string(),
             columns,
         }
@@ -219,7 +229,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create(test_schema("users")).await.unwrap();
+        svc.create("users", test_schema()).await.unwrap();
 
         let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
         svc.write("users", &batch).await.unwrap();
@@ -241,8 +251,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create(test_schema("t")).await.unwrap();
-        let err = svc.create(test_schema("t")).await;
+        svc.create("t", test_schema()).await.unwrap();
+        let err = svc.create("t", test_schema()).await;
         assert!(err.is_err());
     }
 
@@ -260,7 +270,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create(test_schema("empty")).await.unwrap();
+        svc.create("empty", test_schema()).await.unwrap();
         let err = svc.read("empty", &["a"], &["score"]).await;
         assert!(err.is_err());
     }
@@ -270,7 +280,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = MurrService::new(test_config(&dir)).await.unwrap();
 
-        svc.create(test_schema("t")).await.unwrap();
+        svc.create("t", test_schema()).await.unwrap();
 
         let batch1 = test_batch(&["a", "b"], &[1.0, 2.0]);
         svc.write("t", &batch1).await.unwrap();
@@ -298,7 +308,7 @@ mod tests {
         // Create and populate a table, then drop the service
         {
             let svc = MurrService::new(test_config(&dir)).await.unwrap();
-            svc.create(test_schema("users")).await.unwrap();
+            svc.create("users", test_schema()).await.unwrap();
             let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
             svc.write("users", &batch).await.unwrap();
         }
@@ -326,7 +336,7 @@ mod tests {
 
         {
             let svc = MurrService::new(test_config(&dir)).await.unwrap();
-            svc.create(test_schema("empty")).await.unwrap();
+            svc.create("empty", test_schema()).await.unwrap();
         }
 
         let svc = MurrService::new(test_config(&dir)).await.unwrap();

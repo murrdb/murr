@@ -154,7 +154,7 @@ mod tests {
                 nullable: true,
             },
         );
-        TableSchema { name: "test".to_string(), key: "key".to_string(), columns }
+        TableSchema { key: "key".to_string(), columns }
     }
 
     #[tokio::test]
@@ -269,7 +269,7 @@ mod tests {
                 nullable: false,
             },
         );
-        let schema = TableSchema { name: "test".to_string(), key: "key".to_string(), columns };
+        let schema = TableSchema { key: "key".to_string(), columns };
 
         let mut writer = TableWriter::create(&schema, &mut local).await.unwrap();
 

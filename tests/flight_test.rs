@@ -39,7 +39,6 @@ async fn setup() -> TestHarness {
 
     // Create and populate a table
     let schema = TableSchema {
-        name: "features".to_string(),
         key: "id".to_string(),
         columns: HashMap::from([
             (
@@ -58,7 +57,7 @@ async fn setup() -> TestHarness {
             ),
         ]),
     };
-    service.create(schema).await.unwrap();
+    service.create("features", schema).await.unwrap();
 
     let arrow_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),

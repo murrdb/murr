@@ -173,9 +173,6 @@ components:
       type: object
       required: [key, columns]
       properties:
-        name:
-          type: string
-          default: ""
         key:
           type: string
         columns:
