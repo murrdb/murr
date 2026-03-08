@@ -5,44 +5,128 @@
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
 
-Columnar in-memory cache for AI inference workloads. A Redis replacement optimized for batch low-latency zero-copy feature retrieval.
+Columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement optimized for batch low-latency zero-copy reads and writes.
+
+> This `README.md` is 100% human written.
 
 ## What is Murr?
 
 ![system diagram](doc/img/overview.png)
 
-Murr is a caching layer for ML feature serving that sits between your batch data pipelines and inference services:
+Murr is a caching layer for ML/AI data serving that sits between your batch data pipelines and inference apps:
 
-- **Columnar storage**: Custom binary `.seg` format optimized for "give me columns X, Y, Z for keys 1-200" access patterns
-- **Zero-copy reads**: Memory-mapped segments with direct byte-level access — no deserialization overhead
-- **Pull-based sync**: Workers poll S3 for new Parquet partitions and reload automatically
-- **Stateless**: No primary/replica coordination, just point at S3 and scale horizontally
-- **Dual API**: REST with content negotiation (JSON/Arrow IPC) and Arrow Flight gRPC for native integration with Arrow-based data tools
-- **Content-negotiated HTTP**: JSON for debugging, Arrow IPC for production — maps directly to `np.ndarray` and `torch.Tensor`
-- **Single-binary**: Written in Rust, deploys as one binary with a YAML config
+- **Tiered storage**: hot data in memory, cold data on disk with S3-based replication. It's 2026, RAM is expensive, keep only hot data there.
+- **Batch-in and batch-out**: native batch reads and writes from columnar storage, no per-row overhead. Dumping 1GB Parquet/Arrow files to an ingestion API is a valid usage scenario.
+```shell
+# yes this works for batch writes
+curl -XPUT -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" http://localhost:8080/api/v1/table/yolo/write
+```
+- **Zero-copy wire protocol**: zero conversion when building `np.ndarray`, `pd.DataFrame` and `pt.Tensor` from API replies. Yes, Redis is fast, but parsing its responses is not (especially in Python!).
+```python
+result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
+print(result.to_pandas()) # look mom, zero copy!
+```
+- **Stateless**: Murr is not a database, all state is persisted on S3. When a Redis node gets restarted, you're cooked -- but Murr always self-bootstraps from block store.
+
+Murr shines when:
+* **your data is heavy and tabular**: giant parquet dump on S3 your AI inference/ML prep offline job produces is a perfect fit.
+* **reads are batched**: pull 100 columns per 1000 documents your agent wants to analyze? Great!
+* **you care about costs**: yes Redis with 1TB RAM will work well, but disk/S3 offload makes things operationally easier and cheaper.
+
+Short quickstart:
+```shell
+uv pip install murrdb
+```
+and then
+```python
+from murr import MurrClient
+
+db = MurrClient("http://localhost:8080") # connect to a running murr instance
+
+# fetch columns for a batch of document keys
+result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
+print(result.to_pandas())
+
+# Output:
+#    score category
+# 0   0.95       ml
+# 1   0.72    infra
+# 2   0.68      ops
+```
 
 ## Why Murr?
 
-ML inference often requires fetching features for hundreds of documents per request. A ranking model scoring 200 candidates with 40 features each needs 8000 values in milliseconds. Existing solutions weren't built for this:
+TLDR: You have latency, simplicity, costs -- choose only two. Murrdb tries to nail all three: the fastest, cheapest, and easiest to operate at once. A bold claim, I know.
 
-* **Redis** uses row-oriented storage. With Feast-style HSET layouts, each feature is a separate hash field, so fetching 40 features x 200 docs = 8000 hash lookups. Even with pipelining, this adds 50-100ms latency. Packing features into blobs helps reads but makes atomic updates complex.
+![comparison with competitors](doc/img/compare.png)
 
-* **DynamoDB** charges per request. High-throughput inference becomes expensive quickly.
+For a use case of `read N datapoints over M documents` (agent reading document attributes, ML ranker fetching feature values), apart from being the fastest, Murrdb:
+- vs **Redis**: is persistent (S3 is the new FS) and can offload cold data to local NVMe disk.
+- vs embedded **RocksDB**: no need to build data sync between the producer job and inference nodes in-house. Murrdb was built to be distributed from the start.
+- vs **DynamoDB**: just 10x cheaper, as you only pay per CPU/RAM and not per query. 
 
-* **Local RocksDB** is fast but operationally heavy. You need pipelines to build DB files, distribute them to pods, and coordinate reloads. Storage costs multiply with replica count.
+Not being a general-purpose database, it tries to be friendly to the PITAs of ML/AI engineers:
+* **First-class Python support**: `pip install murrdb`, map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
+* **Sparse columns**: when column has no data, it consumes zero bytes. Unlike packed feature blob approach, where null columns are not-actually-null.
 
-Simple, fast, cheap — you can choose only two.
+## Why NOT Murr?
 
-Murr is designed around the batch read pattern from the start. Data lives in a custom columnar segment format, so "give me columns X, Y, Z for keys 1-200" is a single scatter-gather operation, not thousands of lookups. Workers pull Parquet files from S3 on startup — no ingestion pipelines, no coordination. Responses support Arrow IPC, which maps directly to NumPy arrays without re-encoding.
+Murr is not a general-purpose database: 
+* **OLTP workload**: When you have relations, transactions, and do per-row reads and writes, choose [Postgres](https://www.postgresql.org/)
+* **Analytics**: You aggregate over a whole table to produce a report? Choose [Clickhouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), or [Snowflake](https://www.snowflake.com/).
+* **General-purpose caching**: You need to cache user session data for a web app? Use [Redis](https://redis.io/).
 
-### Benchmarks
+When making a choice, also note that Murr is in its early days and might not be stable enough for you. But it's quickly improving.
 
-Batch feature lookup: 10M rows, 10 Float32 columns, fetching 1000 random keys per request.
+## Quickstart
 
-- **Murr HTTP**: full HTTP round-trip returning Arrow IPC streaming response
-- **Murr Flight**: Arrow Flight gRPC round-trip
-- **Redis MGET**: all columns packed into a single binary blob per key, fetched with pipelined MGET
-- **Redis Feast**: one HSET per key with a field per column (standard Feast layout), fetched with pipelined HGETALL
+```python
+import pandas as pd
+import pyarrow as pa
+from murr import LocalMurr, TableSchema, ColumnSchema, DType
+
+db = LocalMurr(cache_dir="/tmp/murr")
+
+# define table schema
+schema = TableSchema(
+    key="doc_id", # the key
+    columns={
+        "doc_id": ColumnSchema(dtype=DType.UTF8, nullable=False),
+        "score": ColumnSchema(dtype=DType.FLOAT32),
+        "category": ColumnSchema(dtype=DType.UTF8),
+    },
+)
+db.create_table("docs", schema)
+
+# write a batch of documents
+df = pd.DataFrame.from_dict({
+    "doc_id":   ["doc_1", "doc_2", "doc_3", "doc_4", "doc_5"],
+    "score":    [0.95, 0.87, 0.72, 0.91, 0.68],
+    "category": ["ml", "search", "infra", "ml", "ops"],
+})
+db.write("docs", pa.Table.from_pandas(df))
+
+# fetch specific columns for a few keys
+result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
+print(result.to_pandas())
+
+# Output:
+#   score category
+# 0   0.95       ml
+# 1   0.72    infra
+# 2   0.68      ops
+
+```
+
+## Benchmarks
+
+We benchmark a typical `ML Ranking` use case, where you have an ML scoring model running across `N=1000` documents each having `M=10` `float32` feature values. Key distribution is random, we have a tiny 10M row dataset.
+
+* for **murrdb** we model it as a simple table with a `utf8` key and 10 `float32` non-nullable columns. We measure Flight gRPC and HTTP protocols.
+* for **Redis** with feature-blob approach, we pack all 10 per-document features into a 40-byte blob. So it's basically a key-value lookup using `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
+* for **Redis** with Feast-style approach, each document is a HSET, where the key is the feature name and the value is its value. Each feature can be read/written separately, but requires pipelining to get close to MGET performance.
+
+We measure last-byte latency and don't include protocol parsing overhead yet.
 
 | Approach | Latency (mean) | 95% CI | Throughput |
 |----------|----------------|--------|------------|
@@ -53,12 +137,26 @@ Batch feature lookup: 10M rows, 10 Float32 columns, fetching 1000 random keys pe
 
 Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36x faster than Feast-style hash-per-row storage.
 
+## Roadmap
 
-## Status
+No ETAs here, but at least you can see how far we are right now:
+- [x] HTTP API
+- [x] Arrow Flight gRPC API
+- [x] API for data ingestion
+- [x] Storage Directory interface (which is heavily inspired by [Apache Lucene](https://lucene.apache.org/))
+- [x] Segment read/writes (again, inspired by [Apache Lucene](https://lucene.apache.org/))
+- [x] Python embedded murrdb, so we can make a cool demo
+- [x] Benchmarking harness: Redis support, Feast and feature-blob styles
+- [x] Win at your own benchmark (this was surprisingly hard btw)
+- [x] Support for `utf8` and `float32` datatypes
+- [ ] Python remote API client
+- [ ] Docker image
+- [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16/64, date-time)
+- [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
+- [ ] Sparse columns
+- [ ] Add RocksDB and Postgres to the benchmark harness
+- [ ] Apache Iceberg and the very popular `parquet dump on S3` data catalog support
 
-**Pre-alpha. Here be dragons.**
-
-The storage engine, service layer, REST API, and Arrow Flight gRPC API are implemented and working. Data loading from S3 and the Python client are not yet built.
 
 ## Architecture
 
@@ -79,19 +177,19 @@ Segment wire format:
 [footer_size u32 LE]
 ```
 
-The footer-at-the-end layout (reader seeks to end first to find metadata) follows the same pattern as Lucene's compound file format.
+The footer-at-the-end layout follows the same pattern as our favourite: Lucene's compound file format.
 
 ### Column Types
 
-Each column type has its own binary encoding optimized for scatter-gather reads:
+Each column type has its own binary encoding for scatter-gather reads. BTW we tried to use Arrow for in-memory representation in the past and it was surprisingly slow compared to a hand-rolled implementation:
 
 | Type | Status | Description |
 |------|--------|-------------|
 | `float32` | Implemented | 16-byte header, 8-byte aligned f32 payload, optional null bitmap |
 | `utf8` | Implemented | 20-byte header, i32 value offsets, concatenated strings, optional null bitmap |
-| `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned | Declared in config schema |
+| `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned |   |
 
-Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely — benchmarks showed this returns performance to the no-nulls baseline.
+Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
 
 ### REST API (port 8080)
 
@@ -103,13 +201,13 @@ Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns ski
 | GET | `/api/v1/table/{name}/schema` | Get table schema |
 | PUT | `/api/v1/table/{name}` | Create a table |
 | POST | `/api/v1/table/{name}/fetch` | Read data (JSON or Arrow IPC response) |
-| PUT | `/api/v1/table/{name}/write` | Write data (JSON or Arrow IPC request) |
+| PUT | `/api/v1/table/{name}/write` | Write data (JSON, Parquet or Arrow IPC request) |
 
 **Content negotiation**: Fetch responses use `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` header for the same formats.
 
 ### Arrow Flight gRPC API (port 8081)
 
-A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native integration with Arrow-based data tools. Both APIs run concurrently via `tokio::try_join!`.
+A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native integration with Arrow-based data tools. 
 
 | RPC | Description |
 |-----|-------------|
@@ -123,67 +221,6 @@ Ticket format for `do_get`:
 {"table": "user_features", "keys": ["user_1", "user_2"], "columns": ["click_rate_7d"]}
 ```
 
-### Performance
-
-At 10M rows, 10 Float32 columns, 1000 random key lookups:
-
-- Key index lookup: ~2-3us (AHash + string comparison in AHashMap)
-- Value gather per column: ~3-4us (random memory access into mmapped segments)
-- Null bitmap overhead: near-zero for non-nullable columns
-- Total scatter-gather: ~30-40us
-
-Key optimizations discovered through systematic benchmarking:
-- **AHashMap** (AES-NI based) reduced hashing overhead from 26% to ~2% of query time
-- **Two-loop gather** (values then bitmap separately) preserves `.collect()`/`extend_trusted` compiler optimization — fusing into one loop forces `push()` which is significantly slower
-- **Branch-once null checking**: check nullability at segment level, not per element
-- **`bytemuck`** for zero-copy casting of segment headers
-
-## Quick Start
-
-Query features:
-
-```bash
-# JSON format (for debugging)
-curl -X POST http://localhost:8080/api/v1/table/user_features/fetch \
-  -H "Content-Type: application/json" \
-  -d '{"keys": ["user_1", "user_2", "user_3"], "columns": ["click_rate_7d", "purchase_count_30d"]}'
-
-# Arrow IPC format (for production)
-curl -X POST http://localhost:8080/api/v1/table/user_features/fetch \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/vnd.apache.arrow.stream" \
-  -d '{"keys": ["user_1", "user_2", "user_3"], "columns": ["click_rate_7d", "purchase_count_30d"]}' \
-  --output response.arrow
-```
-
-Arrow Flight gRPC (for Arrow-native clients):
-
-```python
-import pyarrow.flight as flight
-import json
-
-client = flight.FlightClient("grpc://localhost:8081")
-ticket = json.dumps({"table": "user_features", "keys": ["user_1", "user_2", "user_3"], "columns": ["click_rate_7d", "purchase_count_30d"]})
-reader = client.do_get(flight.Ticket(ticket.encode()))
-table = reader.read_all()
-```
-
-Python client (planned):
-
-```python
-from murr import Client
-
-client = Client("http://localhost:8080")
-batch = client.get("user_features",
-    keys=["user_1", "user_2", "user_3"],
-    columns=["click_rate_7d", "purchase_count_30d"]
-)
-
-# Direct conversion to numpy/torch
-features = batch.to_numpy()  # dict[str, np.ndarray]
-tensor = batch.to_torch()    # dict[str, torch.Tensor]
-```
-
 ## Development
 
 ```bash
@@ -194,15 +231,6 @@ cargo clippy                 # Linting
 cargo fmt                    # Format code
 cargo bench --bench <name>   # Run a benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
 ```
-
-## Roadmap
-
-- Data loading from S3/local Parquet files
-- Additional column types (int32, int64, float64, bool, etc.)
-- Memory-mapped storage backend for larger-than-RAM datasets
-- Python client library
-- Prometheus metrics
-- Iceberg catalog support (BigQuery, Snowflake, AWS Glue)
 
 ## License
 
