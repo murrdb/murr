@@ -19,7 +19,8 @@ Murr is a caching layer for ML/AI data serving that sits between your batch data
 - **Batch-in and batch-out**: native batch reads and writes from columnar storage, no per-row overhead. Dumping 1GB Parquet/Arrow files to an ingestion API is a valid usage scenario.
 ```shell
 # yes this works for batch writes
-curl -XPUT -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" http://localhost:8080/api/v1/table/yolo/write
+curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
+  -XPUT http://localhost:8080/api/v1/table/yolo/write
 ```
 - **Zero-copy wire protocol**: zero conversion when building `np.ndarray`, `pd.DataFrame` and `pt.Tensor` from API replies. Yes, Redis is fast, but parsing its responses is not (especially in Python!).
 ```python
