@@ -5,35 +5,60 @@
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
 
-Columnar in-memory cache for AI inference workloads. A Redis replacement optimized for batch low-latency zero-copy feature retrieval.
+Columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement optimized for batch low-latency zero-copy reads and writes.
+
+> This `README.md` is 100% human written.
 
 ## What is Murr?
 
 ![system diagram](doc/img/overview.png)
 
-Murr is a caching layer for ML feature serving that sits between your batch data pipelines and inference services:
+Murr is a caching layer for ML/AI data serving that sits between your batch data pipelines and inference apps:
 
-- **Columnar storage**: Custom binary `.seg` format optimized for "give me columns X, Y, Z for keys 1-200" access patterns
-- **Zero-copy reads**: Memory-mapped segments with direct byte-level access — no deserialization overhead
-- **Pull-based sync**: Workers poll S3 for new Parquet partitions and reload automatically
-- **Stateless**: No primary/replica coordination, just point at S3 and scale horizontally
-- **Dual API**: REST with content negotiation (JSON/Arrow IPC) and Arrow Flight gRPC for native integration with Arrow-based data tools
-- **Content-negotiated HTTP**: JSON for debugging, Arrow IPC for production — maps directly to `np.ndarray` and `torch.Tensor`
-- **Single-binary**: Written in Rust, deploys as one binary with a YAML config
+- **Tiered storage**: hot data in memory, cold data on disk with S3-based replication. It's 2026, RAM is expensive, keep only hot data there.
+- **Batch-in and batch-out**: native batch reads and writes from columnar storage, no per-row overhead. Dumping 1GB Parquet/Arrow files to an ingestion API is a valid usage scenario.
+- **Zero-copy wire protocol**: zero conversion when building `np.ndarray`, `pd.DataFrame` and `pt.Tensor` from API replies. Yes, Redis is fast, but parsing its responses is not (especially in Python!).
+- **Stateless**: Murr is not a database, all state is persisted on S3. When Redis node gets down, you're cooked - but Murr always bootstraps from S3.
+
+Murr shines when:
+* **your data is heavy and tabular**: giant parquet dump on S3 your AI inference/ML prep offline job produces is a perfect fit.
+* **reads are batched**: pull 100 columns per 1000 documents your agent wants to analyze? Great!
+* **you care about costs**: yes Redis with 1TB RAM will work well, but disk/D3 offload makes things operationally easier and cheaper.
+
+Three-line quickstart:
+```shell
+uv pip install murrdb
+```
+
+```python
+TODO
+```
 
 ## Why Murr?
 
-ML inference often requires fetching features for hundreds of documents per request. A ranking model scoring 200 candidates with 40 features each needs 8000 values in milliseconds. Existing solutions weren't built for this:
+TLDR: You have latency, simplicity, costs -- choose only two. Murrdb tries to do all three: it's the fastest, cheapest and easiest to operate at once. A bold claim, I know.
 
-* **Redis** uses row-oriented storage. With Feast-style HSET layouts, each feature is a separate hash field, so fetching 40 features x 200 docs = 8000 hash lookups. Even with pipelining, this adds 50-100ms latency. Packing features into blobs helps reads but makes atomic updates complex.
+![comparison with competitors](doc/img/compare.png)
 
-* **DynamoDB** charges per request. High-throughput inference becomes expensive quickly.
+For a use case of `read N datapoints over M documents` (agent reading document attributes, ML ranker fetching feature values), apart from being the fastest, Murrdb:
+- vs **Redis**: is persistent (S3 is the new FS) and can offload cold data to local NVMe disk.
+- vs embedded **RocksDB**: no need to build data sync between producer job and inference nodes in-house. Murrdb was built being distributed from start.
+- vs **DynamoDB**: just 10x cheaper, as you only pay per CPU/RAM and not per query. 
 
-* **Local RocksDB** is fast but operationally heavy. You need pipelines to build DB files, distribute them to pods, and coordinate reloads. Storage costs multiply with replica count.
+Being designed not as a general-purpose database, it tries to be friendly to the PITAs of ML/AI engineers:
+* **First-class Python support**: `pip install murrdb`, map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
+* **Sparse columns**: when column has no data, it consumes zero bytes. Unlike packed feature blob approach, where null columns are not-actually-null.
 
-Simple, fast, cheap — you can choose only two.
+## Why NOT Murr?
 
-Murr is designed around the batch read pattern from the start. Data lives in a custom columnar segment format, so "give me columns X, Y, Z for keys 1-200" is a single scatter-gather operation, not thousands of lookups. Workers pull Parquet files from S3 on startup — no ingestion pipelines, no coordination. Responses support Arrow IPC, which maps directly to NumPy arrays without re-encoding.
+Murr is not a general-purpose database: 
+* **OLTP workload**: When you have relations, transactions and do per-row reads and writes, choose [Postgres](todo)
+* **Analytics**: You aggregate over whole table to produce a report? Choose [Clickhouse](todo), [Bigquery](todo) or [Snowflake](todo).
+* **General-purpose caching**: You need to cache user session data for a web app? Use (Redis)[todo].
+
+## Quickstart
+
+TODO
 
 ### Benchmarks
 
@@ -58,7 +83,7 @@ Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36
 
 **Pre-alpha. Here be dragons.**
 
-The storage engine, service layer, REST API, and Arrow Flight gRPC API are implemented and working. Data loading from S3 and the Python client are not yet built.
+The storage engine, service layer, REST API, and Arrow Flight gRPC API are implemented and working. But only god knows how well.
 
 ## Architecture
 
