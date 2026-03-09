@@ -4,7 +4,7 @@
 [![License: Apache 2](https://img.shields.io/badge/License-Apache2-green.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
-![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-%23000000.svg?e&logo=rust&logoColor=white)
 
 <p align="center">
 <a href="#what-is-murr">What is Murr?</a> &middot; <a href="#why-murr">Why Murr?</a> &middot; <a href="#why-not-murr">Why NOT Murr?</a> &middot; <a href="#quickstart">Quickstart</a> &middot; <a href="#benchmarks">Benchmarks</a> &middot; <a href="#roadmap">Roadmap</a>
