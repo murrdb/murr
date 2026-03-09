@@ -4,10 +4,20 @@
 [![License: Apache 2](https://img.shields.io/badge/License-Apache2-green.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
+![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white
 
 **Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
 
+> [!NOTE]
 > This `README.md` is 100% human written.
+
+## Contents
+- [What is Murr?](#what-is-murr)
+- [Why Murr?](#why-murr)
+- [Why NOT Murr?](#why-not-murr)
+- [Quickstart](#quickstart)
+- [Benchmarks](#benchmarks)
+- [Roadmap](#roadmap)
 
 ## What is Murr?
 
@@ -34,7 +44,7 @@ Murr shines when:
 * **reads are batched**: pulling 100 columns across 1000 documents your agent wants to analyze? Great!
 * **you care about costs**: sure, Redis with 1TB of RAM will work fine, but disk/S3 offloading is operationally simpler and way cheaper.
 
-Short quickstart:
+Short quickstart (see [full example](#quickstart)):
 ```shell
 uv pip install murrdb
 ```
@@ -77,7 +87,8 @@ Murr is not a general-purpose database:
 * **Analytics**: aggregating over entire tables to produce reports? Pick [Clickhouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), or [Snowflake](https://www.snowflake.com/).
 * **General-purpose caching**: need to cache user session data for a web app? Use [Redis](https://redis.io/).
 
-Also worth noting: Murr is still in its early days and may not be stable enough for your use case yet. But it's improving quickly.
+> [!WARNING]
+> Murr is still in its early days and may not be stable enough for your use case yet. But it's improving quickly.
 
 ## Quickstart
 
@@ -127,9 +138,7 @@ We benchmark a typical `ML Ranking` use case: an ML scoring model running across
 * **Redis** with feature-blob approach: all 10 per-document features packed into a 40-byte blob. Essentially a key-value lookup via `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
 * **Redis** with [Feast](https://feast.dev/)-style approach: each document is an HSET where the key is the feature name and the value is its value. Each feature can be read/written separately, but you need pipelining to get anywhere near MGET performance.
 
-We measure last-byte latency and don't include protocol parsing overhead yet.
-
-| Approach | Latency (mean) | 95% CI | Throughput |
+| Approach | Latency (mean)[^1] | 95% CI | Throughput |
 |----------|----------------|--------|------------|
 | Murr (HTTP + Arrow IPC) | 104 µs | [103—104 µs] | 9.63 Mkeys/s |
 | Murr (Flight gRPC) | 105 µs | [104—105 µs] | 9.53 Mkeys/s |
@@ -137,6 +146,8 @@ We measure last-byte latency and don't include protocol parsing overhead yet.
 | Redis Feast (HSET per row) | 3.80 ms | [3.76—3.89 ms] | 263 Kkeys/s |
 
 Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36x faster than Feast-style hash-per-row storage.
+
+[^1]: We measure last-byte latency and don't include protocol parsing overhead yet.
 
 ## Roadmap
 
@@ -165,12 +176,14 @@ No ETAs, but at least you can see where things stand:
 
 The storage subsystem is a custom columnar format heavily inspired by [Apache Lucene](https://lucene.apache.org/)'s immutable segment model:
 
-- **Segments** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
-- **Directory abstraction** keeps logical data organization separate from physical storage (local filesystem for now, S3 later).
+- **[Segments](src/io/segment/)** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
+- **[Directory abstraction](src/io/directory/)** keeps logical data organization separate from physical storage (local filesystem for now, S3 later).
 - **Memory-mapped reads** via [`memmap2`](https://crates.io/crates/memmap2) -- the OS takes care of page caching, segment data is accessed as zero-copy byte slices.
 - **Last-write-wins** key resolution: newer segments shadow older ones for the same key, so you get incremental updates without rewriting old data.
 
-Segment wire format:
+<details>
+<summary>Segment wire format</summary>
+
 ```
 [MURR magic (4B)][version u32 LE]
 [column payloads, 4-byte aligned]
@@ -179,8 +192,10 @@ Segment wire format:
 ```
 
 The footer-at-the-end layout follows the same pattern as Lucene's compound file format.
+</details>
 
-### Column Types
+<details>
+<summary><h3>Column Types</h3></summary>
 
 Each column type has its own binary encoding tuned for scatter-gather reads. We tried using Arrow for the in-memory representation early on, and it turned out surprisingly slow compared to a hand-rolled implementation:
 
@@ -191,8 +206,12 @@ Each column type has its own binary encoding tuned for scatter-gather reads. We 
 | `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned |   |
 
 Null bitmaps are u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
+</details>
 
-### REST API (port 8080)
+<details>
+<summary><h3>REST API (port 8080)</h3></summary>
+
+Served by the [Axum HTTP layer](src/api/http/).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -205,10 +224,12 @@ Null bitmaps are u64-word bit arrays (bit set = valid). Non-nullable columns ski
 | PUT | `/api/v1/table/{name}/write` | Write data (JSON, Parquet or Arrow IPC request) |
 
 Fetch responses respect the `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` for the same formats.
+</details>
 
-### Arrow Flight gRPC API (port 8081)
+<details>
+<summary><h3>Arrow Flight gRPC API (port 8081)</h3></summary>
 
-A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native Arrow integration without the HTTP overhead.
+A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native Arrow integration without the HTTP overhead. Source: [`src/api/flight/`](src/api/flight/).
 
 | RPC | Description |
 |-----|-------------|
@@ -221,6 +242,7 @@ Ticket format for `do_get`:
 ```json
 {"table": "user_features", "keys": ["user_1", "user_2"], "columns": ["click_rate_7d"]}
 ```
+</details>
 
 ## Development
 
