@@ -4,8 +4,6 @@ pub use local::LocalDirectory;
 
 use std::time::SystemTime;
 
-use async_trait::async_trait;
-
 pub use crate::core::TableSchema;
 use crate::core::MurrError;
 
@@ -22,7 +20,7 @@ pub struct IndexInfo {
     pub segments: Vec<SegmentInfo>,
 }
 
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait Directory: Sized {
     async fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError>;
     async fn index(&self) -> Result<Option<IndexInfo>, MurrError>;
