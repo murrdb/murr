@@ -5,7 +5,7 @@
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
 
-**Murrdb**: Columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement optimized for batch low-latency zero-copy reads and writes.
+**Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
 
 > This `README.md` is 100% human written.
 
@@ -15,24 +15,24 @@
 
 Murr is a caching layer for ML/AI data serving that sits between your batch data pipelines and inference apps:
 
-- **Tiered storage**: hot data in memory, cold data on disk with S3-based replication. It's 2026, RAM is expensive, keep only hot data there.
-- **Batch-in and batch-out**: native batch reads and writes from columnar storage, no per-row overhead. Dumping 1GB Parquet/Arrow files to an ingestion API is a valid usage scenario.
+- **Tiered storage**: hot data lives in memory, cold data stays on disk with S3-based replication. It's 2026, RAM is expensive -- keep only the hot stuff there.
+- **Batch-in, batch-out**: native batch reads and writes over columnar storage, with no per-row overhead. Dumping 1GB Parquet/Arrow files into the ingestion API is a perfectly valid use case.
 ```shell
 # yes this works for batch writes
 curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
   -XPUT http://localhost:8080/api/v1/table/yolo/write
 ```
-- **Zero-copy wire protocol**: zero conversion when building `np.ndarray`, `pd.DataFrame` and `pt.Tensor` from API replies. Yes, Redis is fast, but parsing its responses is not (especially in Python!).
+- **Zero-copy wire protocol**: no conversion needed when building `np.ndarray`, `pd.DataFrame` or `pt.Tensor` from API responses. Sure, Redis is fast, but parsing its replies is not (especially in Python!).
 ```python
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
 print(result.to_pandas()) # look mom, zero copy!
 ```
-- **Stateless**: Murr is not a database, all state is persisted on S3. When a Redis node gets restarted, you're cooked -- but Murr always self-bootstraps from block store.
+- **Stateless**: Murr is not a database -- all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
 
 Murr shines when:
-* **your data is heavy and tabular**: giant parquet dump on S3 your AI inference/ML prep offline job produces is a perfect fit.
-* **reads are batched**: pull 100 columns per 1000 documents your agent wants to analyze? Great!
-* **you care about costs**: yes Redis with 1TB RAM will work well, but disk/S3 offload makes things operationally easier and cheaper.
+* **your data is heavy and tabular**: that giant Parquet dump on S3 your AI inference or ML prep job produces? Perfect fit.
+* **reads are batched**: pulling 100 columns across 1000 documents your agent wants to analyze? Great!
+* **you care about costs**: sure, Redis with 1TB of RAM will work fine, but disk/S3 offloading is operationally simpler and way cheaper.
 
 Short quickstart:
 ```shell
@@ -57,27 +57,27 @@ print(result.to_pandas())
 
 ## Why Murr?
 
-TLDR: You have latency, simplicity, costs -- choose only two. Murrdb tries to nail all three: the fastest, cheapest, and easiest to operate at once. A bold claim, I know.
+TLDR: latency, simplicity, cost -- pick two. Murrdb tries to nail all three: fastest, cheapest, and easiest to operate. A bold claim, I know.
 
 ![comparison with competitors](doc/img/compare.png)
 
-For a use case of `read N datapoints over M documents` (agent reading document attributes, ML ranker fetching feature values), apart from being the fastest, Murrdb:
-- vs **Redis**: is persistent (S3 is the new FS) and can offload cold data to local NVMe disk.
-- vs embedded **RocksDB**: no need to build data sync between the producer job and inference nodes in-house. Murrdb was built to be distributed from the start.
-- vs **DynamoDB**: just 10x cheaper, as you only pay per CPU/RAM and not per query. 
+For the typical use case of `read N datapoints across M documents` (an agent reading document attributes, an ML ranker fetching feature values), on top of being the fastest, Murrdb:
+- vs **Redis**: is persistent (S3 is the new filesystem) and can offload cold data to local NVMe.
+- vs embedded **[RocksDB](https://rocksdb.org/)**: no need to build data sync between producer jobs and inference nodes yourself. Murrdb was designed to be distributed from the start.
+- vs **[DynamoDB](https://aws.amazon.com/dynamodb/)**: roughly 10x cheaper, since you only pay for CPU/RAM, not per query.
 
-Not being a general-purpose database, it tries to be friendly to the PITAs of ML/AI engineers:
-* **First-class Python support**: `pip install murrdb`, map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
-* **Sparse columns**: when column has no data, it consumes zero bytes. Unlike packed feature blob approach, where null columns are not-actually-null.
+Not being a general-purpose database, it tries to be friendly to the everyday pain points of ML/AI engineers:
+* **First-class Python support**: `pip install murrdb`, then map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
+* **Sparse columns**: when a column has no data, it takes up zero bytes. Unlike the packed feature blob approach, where null columns aren't actually null.
 
 ## Why NOT Murr?
 
-Murr is not a general-purpose database: 
-* **OLTP workload**: When you have relations, transactions, and do per-row reads and writes, choose [Postgres](https://www.postgresql.org/)
-* **Analytics**: You aggregate over a whole table to produce a report? Choose [Clickhouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), or [Snowflake](https://www.snowflake.com/).
-* **General-purpose caching**: You need to cache user session data for a web app? Use [Redis](https://redis.io/).
+Murr is not a general-purpose database:
+* **OLTP workloads**: if you have relations, transactions, and per-row reads/writes, go with [Postgres](https://www.postgresql.org/).
+* **Analytics**: aggregating over entire tables to produce reports? Pick [Clickhouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), or [Snowflake](https://www.snowflake.com/).
+* **General-purpose caching**: need to cache user session data for a web app? Use [Redis](https://redis.io/).
 
-When making a choice, also note that Murr is in its early days and might not be stable enough for you. But it's quickly improving.
+Also worth noting: Murr is still in its early days and may not be stable enough for your use case yet. But it's improving quickly.
 
 ## Quickstart
 
@@ -121,11 +121,11 @@ print(result.to_pandas())
 
 ## Benchmarks
 
-We benchmark a typical `ML Ranking` use case, where you have an ML scoring model running across `N=1000` documents each having `M=10` `float32` feature values. Key distribution is random, we have a tiny 10M row dataset.
+We benchmark a typical `ML Ranking` use case: an ML scoring model running across `N=1000` documents, each with `M=10` `float32` feature values. Key distribution is random, on a small 10M row dataset.
 
-* for **murrdb** we model it as a simple table with a `utf8` key and 10 `float32` non-nullable columns. We measure Flight gRPC and HTTP protocols.
-* for **Redis** with feature-blob approach, we pack all 10 per-document features into a 40-byte blob. So it's basically a key-value lookup using `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
-* for **Redis** with Feast-style approach, each document is a HSET, where the key is the feature name and the value is its value. Each feature can be read/written separately, but requires pipelining to get close to MGET performance.
+* **murrdb**: modeled as a simple table with a `utf8` key and 10 non-nullable `float32` columns. We measure both Flight gRPC and HTTP protocols.
+* **Redis** with feature-blob approach: all 10 per-document features packed into a 40-byte blob. Essentially a key-value lookup via `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
+* **Redis** with [Feast](https://feast.dev/)-style approach: each document is an HSET where the key is the feature name and the value is its value. Each feature can be read/written separately, but you need pipelining to get anywhere near MGET performance.
 
 We measure last-byte latency and don't include protocol parsing overhead yet.
 
@@ -140,7 +140,7 @@ Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36
 
 ## Roadmap
 
-No ETAs here, but at least you can see how far we are right now:
+No ETAs, but at least you can see where things stand:
 - [x] HTTP API
 - [x] Arrow Flight gRPC API
 - [x] API for data ingestion
@@ -156,19 +156,19 @@ No ETAs here, but at least you can see how far we are right now:
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
 - [ ] Sparse columns
 - [ ] Add RocksDB and Postgres to the benchmark harness
-- [ ] Apache Iceberg and the very popular `parquet dump on S3` data catalog support
+- [ ] [Apache Iceberg](https://iceberg.apache.org/) and the very popular `parquet dump on S3` data catalog support
 
 
 ## Architecture
 
 ### Storage Engine
 
-The storage subsystem is a custom columnar format inspired by Apache Lucene's immutable segment model:
+The storage subsystem is a custom columnar format heavily inspired by [Apache Lucene](https://lucene.apache.org/)'s immutable segment model:
 
-- **Segments** (`.seg` files) are the atomic unit of write — one batch of data becomes one immutable segment. Segments are never modified in place, which simplifies concurrency and maps naturally to object storage.
-- **Directory abstraction** decouples logical data organization from physical storage (local filesystem now, S3 later).
-- **Memory-mapped reads** via `memmap2` — the OS manages page caching, segment data is accessed as zero-copy byte slices.
-- **Last-write-wins** key resolution: newer segments shadow older ones for the same key, enabling incremental updates without rewriting history.
+- **Segments** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
+- **Directory abstraction** keeps logical data organization separate from physical storage (local filesystem for now, S3 later).
+- **Memory-mapped reads** via [`memmap2`](https://crates.io/crates/memmap2) -- the OS takes care of page caching, segment data is accessed as zero-copy byte slices.
+- **Last-write-wins** key resolution: newer segments shadow older ones for the same key, so you get incremental updates without rewriting old data.
 
 Segment wire format:
 ```
@@ -178,11 +178,11 @@ Segment wire format:
 [footer_size u32 LE]
 ```
 
-The footer-at-the-end layout follows the same pattern as our favourite: Lucene's compound file format.
+The footer-at-the-end layout follows the same pattern as Lucene's compound file format.
 
 ### Column Types
 
-Each column type has its own binary encoding for scatter-gather reads. BTW we tried to use Arrow for in-memory representation in the past and it was surprisingly slow compared to a hand-rolled implementation:
+Each column type has its own binary encoding tuned for scatter-gather reads. We tried using Arrow for the in-memory representation early on, and it turned out surprisingly slow compared to a hand-rolled implementation:
 
 | Type | Status | Description |
 |------|--------|-------------|
@@ -190,7 +190,7 @@ Each column type has its own binary encoding for scatter-gather reads. BTW we tr
 | `utf8` | Implemented | 20-byte header, i32 value offsets, concatenated strings, optional null bitmap |
 | `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned |   |
 
-Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
+Null bitmaps are u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
 
 ### REST API (port 8080)
 
@@ -204,11 +204,11 @@ Null bitmaps use u64-word bit arrays (bit set = valid). Non-nullable columns ski
 | POST | `/api/v1/table/{name}/fetch` | Read data (JSON or Arrow IPC response) |
 | PUT | `/api/v1/table/{name}/write` | Write data (JSON, Parquet or Arrow IPC request) |
 
-**Content negotiation**: Fetch responses use `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` header for the same formats.
+Fetch responses respect the `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` for the same formats.
 
 ### Arrow Flight gRPC API (port 8081)
 
-A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native integration with Arrow-based data tools. 
+A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native Arrow integration without the HTTP overhead.
 
 | RPC | Description |
 |-----|-------------|
