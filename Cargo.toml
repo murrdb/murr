@@ -8,6 +8,8 @@ version = "0.1.2"
 name = "murr"
 version.workspace = true
 edition = "2024"
+description = "Columnar in-memory cache for AI/ML inference workloads"
+license = "Apache-2.0"
 
 [features]
 testutil = ["dep:tempfile", "dep:rand"]

@@ -2,6 +2,7 @@
 name = "murr-python"
 version.workspace = true
 edition = "2024"
+publish = false
 
 [lib]
 name = "libmurr"
