@@ -10,7 +10,7 @@ sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 cargo check --all-targets
 
 git add Cargo.toml Cargo.lock
-git commit -m "release v$VERSION"
+git commit -m "release v$VERSION [skip ci]"
 git tag "v$VERSION"
 
 echo "Done. Run: git push && git push --tags"
