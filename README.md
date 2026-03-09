@@ -7,7 +7,7 @@
 ![Rust](https://shields.io/badge/-Rust-3776AB?style=flat&logo=rust)
 
 <p align="center">
-<a href="#what-is-murr">What is Murr?</a> &middot; <a href="#why-murr">Why Murr?</a> &middot; <a href="#why-not-murr">Why NOT Murr?</a> &middot; <a href="#quickstart">Quickstart</a> &middot; <a href="#benchmarks">Benchmarks</a> &middot; <a href="#roadmap">Roadmap</a>
+<a href="#what-is-murr">🐱 What is Murr?</a> &middot; <a href="#why-murr">🚀 Why Murr?</a> &middot; <a href="#why-not-murr">🚫 Why NOT Murr?</a> &middot; <a href="#quickstart">⚡ Quickstart</a> &middot; <a href="#benchmarks">📊 Benchmarks</a> &middot; <a href="#roadmap">🗺 Roadmap</a>
 </p>
 
 **Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
@@ -23,7 +23,7 @@
 
 Murr is a caching layer for ML/AI data serving that sits between your batch data pipelines and inference apps:
 
-- **Tiered storage**: hot data lives in memory, cold data stays on disk with S3-based replication. It's 2026, RAM is expensive -- keep only the hot stuff there.
+- **Tiered storage**: hot data lives in memory, cold data stays on disk with S3-based replication. It's 2026, RAM is expensive - keep only the hot stuff there.
 - **Batch-in, batch-out**: native batch reads and writes over columnar storage, with no per-row overhead. Dumping 1GB Parquet/Arrow files into the ingestion API is a perfectly valid use case.
 ```shell
 # yes this works for batch writes
@@ -35,7 +35,7 @@ curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
 print(result.to_pandas()) # look mom, zero copy!
 ```
-- **Stateless**: Murr is not a database -- all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
+- **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
 
 Murr shines when:
 * **your data is heavy and tabular**: that giant Parquet dump on S3 your AI inference or ML prep job produces? Perfect fit.
