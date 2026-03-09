@@ -122,7 +122,7 @@ jobs:
           merge-multiple: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Publish to PyPI
         run: uv publish dist/*.whl
