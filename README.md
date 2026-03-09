@@ -70,7 +70,7 @@ TLDR: latency, simplicity, cost -- pick two. Murrdb tries to nail all three: fas
 ![comparison with competitors](doc/img/compare.png)
 
 For the typical use case of `read N datapoints across M documents` (an agent reading document attributes, an ML ranker fetching feature values), on top of being the fastest, Murrdb:
-- vs **Redis**: is persistent (S3 is the new filesystem) and can offload cold data to local NVMe.
+- vs **[Redis](https://redis.io/)**: is persistent (S3 is the new filesystem) and can offload cold data to local NVMe.
 - vs embedded **[RocksDB](https://rocksdb.org/)**: no need to build data sync between producer jobs and inference nodes yourself. Murrdb was designed to be distributed from the start.
 - vs **[DynamoDB](https://aws.amazon.com/dynamodb/)**: roughly 10x cheaper, since you only pay for CPU/RAM, not per query.
 
