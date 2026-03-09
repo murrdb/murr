@@ -4,20 +4,18 @@
 [![License: Apache 2](https://img.shields.io/badge/License-Apache2-green.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Last commit](https://img.shields.io/github/last-commit/shuttie/murr)
 ![Last release](https://img.shields.io/github/release/shuttie/murr)
-![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white
+![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
+
+<p align="center">
+<a href="#what-is-murr">What is Murr?</a> &middot; <a href="#why-murr">Why Murr?</a> &middot; <a href="#why-not-murr">Why NOT Murr?</a> &middot; <a href="#quickstart">Quickstart</a> &middot; <a href="#benchmarks">Benchmarks</a> &middot; <a href="#roadmap">Roadmap</a>
+</p>
 
 **Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
 
-> [!NOTE]
-> This `README.md` is 100% human written.
+> This `README.md` is 99%[^1] human written.
 
-## Contents
-- [What is Murr?](#what-is-murr)
-- [Why Murr?](#why-murr)
-- [Why NOT Murr?](#why-not-murr)
-- [Quickstart](#quickstart)
-- [Benchmarks](#benchmarks)
-- [Roadmap](#roadmap)
+[^1]: Used only for grammar and syntax checking.
+
 
 ## What is Murr?
 
@@ -138,7 +136,7 @@ We benchmark a typical `ML Ranking` use case: an ML scoring model running across
 * **Redis** with feature-blob approach: all 10 per-document features packed into a 40-byte blob. Essentially a key-value lookup via `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
 * **Redis** with [Feast](https://feast.dev/)-style approach: each document is an HSET where the key is the feature name and the value is its value. Each feature can be read/written separately, but you need pipelining to get anywhere near MGET performance.
 
-| Approach | Latency (mean)[^1] | 95% CI | Throughput |
+| Approach | Latency (mean)[^2] | 95% CI | Throughput |
 |----------|----------------|--------|------------|
 | Murr (HTTP + Arrow IPC) | 104 µs | [103—104 µs] | 9.63 Mkeys/s |
 | Murr (Flight gRPC) | 105 µs | [104—105 µs] | 9.53 Mkeys/s |
@@ -147,7 +145,7 @@ We benchmark a typical `ML Ranking` use case: an ML scoring model running across
 
 Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36x faster than Feast-style hash-per-row storage.
 
-[^1]: We measure last-byte latency and don't include protocol parsing overhead yet.
+[^2]: We measure last-byte latency and don't include protocol parsing overhead yet.
 
 ## Roadmap
 
