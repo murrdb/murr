@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "murr"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "ahash",
  "arrow",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "murr-python"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "arrow",
  "murr",
