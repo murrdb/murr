@@ -84,6 +84,7 @@ Murr is not a general-purpose database:
 * **OLTP workloads**: if you have relations, transactions, and per-row reads/writes, go with [Postgres](https://www.postgresql.org/).
 * **Analytics**: aggregating over entire tables to produce reports? Pick [Clickhouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), or [Snowflake](https://www.snowflake.com/).
 * **General-purpose caching**: need to cache user session data for a web app? Use [Redis](https://redis.io/).
+* **Feature store**: yes, it kinda looks like one — but Murrdb doesn't govern how you compute and store your data. Murr is an online serving layer, and can be a part of both internal feature stores and open-source ones like [Feast](https://feast.dev/), [Hopsworks](https://www.hopsworks.ai/), and [Databricks Feature Store](https://docs.databricks.com/en/machine-learning/feature-store/index.html).
 
 > [!WARNING]
 > Murr is still in its early days and may not be stable enough for your use case yet. But it's improving quickly.
