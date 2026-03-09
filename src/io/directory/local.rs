@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use async_trait::async_trait;
-
 use crate::core::MurrError;
 
 use super::{Directory, IndexInfo, SegmentInfo, TableSchema};
@@ -116,7 +114,6 @@ impl LocalDirectory {
     }
 }
 
-#[async_trait]
 impl Directory for LocalDirectory {
     async fn from_storage(path: &std::path::Path) -> Result<Vec<Self>, MurrError> {
         Self::scan_subdirs(path)?
