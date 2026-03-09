@@ -30,11 +30,8 @@ tokio = { version = "1", features = [
     "sync",
     "macros",
 ] }
-tokio-stream = "0.1"
-async-trait = "0.1"
 memmap2 = "0.9"
 axum = "0.8"
-tower-http = { version = "0.6", features = ["trace"] }
 arrow-flight = "58"
 tonic = "0.14"
 futures = "0.3"
@@ -52,6 +49,7 @@ rand = { version = "0.10", optional = true }
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 http-body-util = "0.1"
+tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
 [profile.bench]
