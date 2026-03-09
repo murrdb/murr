@@ -49,44 +49,10 @@ tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 
 [dev-dependencies]
-mimalloc = { version = "0.1", default-features = false }
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
-rand = "0.10"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
-redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
-testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["redis"] }
-reqwest = { version = "0.13", features = ["json"] }
-
-[[bench]]
-name = "hashmap_bench"
-harness = false
-
-[[bench]]
-name = "hashmap_row_bench"
-harness = false
-
-[[bench]]
-name = "table_bench"
-harness = false
-
-[[bench]]
-name = "http_bench"
-harness = false
-
-[[bench]]
-name = "flight_bench"
-harness = false
-
-[[bench]]
-name = "redis_featureblob_bench"
-harness = false
-
-[[bench]]
-name = "redis_feast_bench"
-harness = false
 
 [profile.bench]
 debug = 1                   # line tables + symbols (good enough for perf)
@@ -97,7 +63,7 @@ force-frame-pointers = true
 
 [profile.bench.build-override]
 debug = true
-# force-frame-pointers = true                                                                                                                                                                                     
+# force-frame-pointers = true
 
 [profile.bench.package."*"]
 debug = true
