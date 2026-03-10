@@ -15,18 +15,15 @@ impl From<MurrError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self.0 {
-            MurrError::TableNotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            MurrError::TableAlreadyExists(msg) => (StatusCode::CONFLICT, msg.clone()),
-            MurrError::TableError(msg) | MurrError::SegmentError(msg) => {
-                (StatusCode::BAD_REQUEST, msg.clone())
-            }
-            MurrError::IoError(msg)
-            | MurrError::ArrowError(msg)
-            | MurrError::ConfigParsingError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, msg.clone())
-            }
+        let status = match &self.0 {
+            MurrError::TableNotFound(_) => StatusCode::NOT_FOUND,
+            MurrError::TableAlreadyExists(_) => StatusCode::CONFLICT,
+            MurrError::TableError(_) | MurrError::SegmentError(_) => StatusCode::BAD_REQUEST,
+            MurrError::IoError(_)
+            | MurrError::ArrowError(_)
+            | MurrError::ConfigParsingError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
+        let message = self.0.to_string();
 
         (status, Json(json!({"error": message}))).into_response()
     }

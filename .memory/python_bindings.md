@@ -7,7 +7,7 @@ Added `python/` as a workspace member (`murr-python` Rust crate, `murr` PyPI pac
 ## Key design choices
 
 - **Workspace, not cdylib in main crate**: Keeps PyO3 deps isolated from the server binary. The `python/` crate depends on `murr` by path.
-- **Sync Python API with Rust-side blocking**: Each `PyLocalMurr` owns a `tokio::runtime::Runtime`. All async `MurrService` methods are called via `runtime.block_on()`. No Python-side async.
+- **Dual sync/async Python API**: Two Rust pyclasses — `PySyncMurr` (owns `Runtime`, uses `py.detach()` + `block_on()`) and `PyAsyncMurr` (uses `pyo3-async-runtimes::tokio::future_into_py()`, no owned runtime). Python side: `from murr.sync import Murr` and `from murr.aio import Murr`, both with `Murr.start_local(cache_dir=...)` entry point and `Murr.connect(endpoint)` stub for future remote client. Old `LocalMurr` was removed (no backwards compat, pre-alpha).
 - **Schema passing via PyO3 FromPyObject/IntoPyObject**: Newtype wrappers (`PyDType`, `PyColumnSchema`, `PyTableSchema`) in `python/src/schema.rs` implement `FromPyObject` and `IntoPyObject`. Supports both Pydantic models and plain dicts (getattr with get_item fallback). Returns plain dicts on Rust→Python path; Python client wraps with `model_validate()`. Previously used JSON bridge (`serde_json`), replaced for cleaner API.
 - **Arrow zero-copy via C Data Interface**: `arrow::pyarrow::{FromPyArrow, ToPyArrow}` for RecordBatch. Uses Arrow FFI — pointer exchange, no serialization.
 - **Error mapping via `into_py_err` function**: Can't use `From<MurrError> for PyErr` due to orphan rule (neither type is local). Used a conversion function instead.
