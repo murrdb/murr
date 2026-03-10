@@ -89,6 +89,14 @@ nav .nav-brand {
   font-size: 1.1rem;
   color: var(--text);
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+nav .nav-logo {
+  height: 22px;
+  width: auto;
 }
 
 nav a {
