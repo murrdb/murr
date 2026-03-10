@@ -1,0 +1,26 @@
+<section id="why">
+  <div class="container">
+    <h2>Why Murr</h2>
+    <p>Latency, simplicity, cost - pick two. Murr tries to nail all three.</p>
+    <img src="/img/compare.png" alt="Murr vs competitors" class="section-img" style="margin-top: 1.5rem; max-width: 640px; display: block; margin-left: auto; margin-right: auto;" loading="lazy">
+    <div class="compare-grid">
+      <div class="compare-card">
+        <div class="compare-card-label">vs Redis</div>
+        <p>Persistent. S3 is the new filesystem. Offloads cold data to local NVMe instead of burning RAM.</p>
+      </div>
+      <div class="compare-card">
+        <div class="compare-card-label">vs RocksDB</div>
+        <p>No need to build data sync yourself. Distributed from day one, stateless by design.</p>
+      </div>
+      <div class="compare-card">
+        <div class="compare-card-label">vs DynamoDB</div>
+        <p>Roughly 10x cheaper. You pay for CPU/RAM, not per query.</p>
+      </div>
+      <div class="compare-card">
+        <div class="compare-card-label">vs Postgres</div>
+        <p>Zero-copy wire protocol, no parsing overhead. Build <code>np.ndarray</code> or <code>pd.DataFrame</code> directly from the response.</p>
+      </div>
+    </div>
+    <a href="{{ .Site.Params.github }}#why-murr" class="section-link">Full comparison</a>
+  </div>
+</section>

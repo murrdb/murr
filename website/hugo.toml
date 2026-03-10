@@ -1,0 +1,18 @@
+baseURL = "https://murrdb.dev/"
+languageCode = "en-us"
+title = "Murr — Columnar In-Memory Cache for AI Inference"
+disableKinds = ["taxonomy", "term"]
+
+[markup]
+  [markup.highlight]
+    style = "monokai"
+    lineNos = false
+    noClasses = true
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+
+[params]
+  description = "A columnar in-memory cache for AI inference workloads. A faster Redis replacement, optimized for batch zero-copy reads."
+  github = "https://github.com/shuttie/murr"
+  ogImage = "/img/logo2.png"
