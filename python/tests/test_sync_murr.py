@@ -1,12 +1,13 @@
 import pyarrow as pa
 import pytest
 
-from murr import ColumnSchema, DType, LocalMurr, TableSchema
+from murr import ColumnSchema, DType, TableSchema
+from murr.sync import Murr
 
 
 @pytest.fixture
 def murr_client(tmp_path):
-    return LocalMurr(cache_dir=str(tmp_path))
+    return Murr.start_local(cache_dir=str(tmp_path))
 
 
 def _user_schema() -> TableSchema:
@@ -93,11 +94,29 @@ def test_persistence_across_instances(tmp_path):
     cache_dir = str(tmp_path)
     schema = _user_schema()
 
-    client1 = LocalMurr(cache_dir=cache_dir)
+    client1 = Murr.start_local(cache_dir=cache_dir)
     client1.create_table("t", schema)
     client1.write("t", _user_batch())
     del client1
 
-    client2 = LocalMurr(cache_dir=cache_dir)
+    client2 = Murr.start_local(cache_dir=cache_dir)
     result = client2.read("t", ["c"], ["score"])
     assert result.column("score").to_pylist() == [3.0]
+
+
+def test_start_local_with_http(tmp_path):
+    import time
+    import urllib.request
+
+    client = Murr.start_local(cache_dir=str(tmp_path), http_port=19876)
+    time.sleep(0.1)  # let the HTTP server bind
+
+    resp = urllib.request.urlopen("http://127.0.0.1:19876/health")
+    assert resp.status == 200
+
+    del client
+
+
+def test_connect_raises():
+    with pytest.raises(NotImplementedError, match="not yet implemented"):
+        Murr.connect("grpc://localhost:8081")

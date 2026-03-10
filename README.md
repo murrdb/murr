@@ -33,7 +33,7 @@ curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
 - **Zero-copy wire protocol**: no conversion needed when building `np.ndarray`, `pd.DataFrame` or `pt.Tensor` from API responses. Sure, Redis is fast, but parsing its replies is not (especially in Python!).
 ```python
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
-print(result.to_pandas()) # look mom, zero copy!
+print(result.to_pandas())  # look mom, zero copy!
 ```
 - **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
 
@@ -48,9 +48,9 @@ uv pip install murrdb
 ```
 and then
 ```python
-from murr import MurrClient
+from murr.sync import Murr
 
-db = MurrClient("http://localhost:8080") # connect to a running murr instance
+db = Murr.start_local(cache_dir="/tmp/murr")  # embedded local instance
 
 # fetch columns for a batch of document keys
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
@@ -94,9 +94,10 @@ Murr is not a general-purpose database:
 ```python
 import pandas as pd
 import pyarrow as pa
-from murr import LocalMurr, TableSchema, ColumnSchema, DType
+from murr import TableSchema, ColumnSchema, DType
+from murr.sync import Murr
 
-db = LocalMurr(cache_dir="/tmp/murr")
+db = Murr.start_local(cache_dir="/tmp/murr")
 
 # define table schema
 schema = TableSchema(
