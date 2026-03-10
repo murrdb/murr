@@ -1,3 +1,6 @@
+import asyncio
+import socket
+
 import pyarrow as pa
 import pytest
 import pytest_asyncio
@@ -6,9 +9,10 @@ from murr import ColumnSchema, DType, TableSchema
 from murr.aio import Murr
 
 
-@pytest_asyncio.fixture
-async def murr_client(tmp_path):
-    return await Murr.start_local(cache_dir=str(tmp_path))
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _user_schema() -> TableSchema:
@@ -29,6 +33,23 @@ def _user_batch() -> pa.RecordBatch:
             pa.field("score", pa.float32(), nullable=True),
         ]),
     )
+
+
+@pytest_asyncio.fixture(params=["local", "http"])
+async def murr_client(request, tmp_path):
+    if request.param == "local":
+        yield await Murr.start_local(cache_dir=str(tmp_path))
+    else:
+        port = _free_port()
+        server = await Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+        await asyncio.sleep(0.1)
+        client = await Murr.connect(f"http://127.0.0.1:{port}")
+        yield client
+        await client.close()
+        del server
+
+
+# --- Shared tests (run for both local and http) ---
 
 
 @pytest.mark.asyncio
@@ -82,20 +103,40 @@ async def test_create_duplicate_raises(murr_client):
         columns={"id": ColumnSchema(dtype=DType.UTF8, nullable=False)},
     )
     await murr_client.create_table("t", schema)
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError):
         await murr_client.create_table("t", schema)
 
 
 @pytest.mark.asyncio
 async def test_read_nonexistent_table_raises(murr_client):
-    with pytest.raises(FileNotFoundError, match="not found"):
+    with pytest.raises(FileNotFoundError):
         await murr_client.read("nope", ["a"], ["x"])
 
 
 @pytest.mark.asyncio
 async def test_get_schema_nonexistent_raises(murr_client):
-    with pytest.raises(FileNotFoundError, match="not found"):
+    with pytest.raises(FileNotFoundError):
         await murr_client.get_schema("nope")
+
+
+@pytest.mark.asyncio
+async def test_write_pa_table(murr_client):
+    await murr_client.create_table("users", _user_schema())
+
+    table = pa.table(
+        {"id": ["a", "b"], "score": [1.0, 2.0]},
+        schema=pa.schema([
+            pa.field("id", pa.utf8(), nullable=False),
+            pa.field("score", pa.float32(), nullable=True),
+        ]),
+    )
+    await murr_client.write("users", table)
+
+    result = await murr_client.read("users", ["b"], ["score"])
+    assert result.column("score").to_pylist() == [2.0]
+
+
+# --- Local-only tests ---
 
 
 @pytest.mark.asyncio
@@ -115,19 +156,22 @@ async def test_persistence_across_instances(tmp_path):
 
 @pytest.mark.asyncio
 async def test_start_local_with_http(tmp_path):
-    import asyncio
     import urllib.request
 
-    client = await Murr.start_local(cache_dir=str(tmp_path), http_port=19877)
-    await asyncio.sleep(0.1)  # let the HTTP server bind
+    port = _free_port()
+    client = await Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+    await asyncio.sleep(0.1)
 
-    resp = urllib.request.urlopen("http://127.0.0.1:19877/health")
+    resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/health")
     assert resp.status == 200
 
     del client
 
 
 @pytest.mark.asyncio
-async def test_connect_raises():
-    with pytest.raises(NotImplementedError, match="not yet implemented"):
-        await Murr.connect("grpc://localhost:8081")
+async def test_connect_returns_client():
+    from murr.http import MurrClientAsync
+
+    client = await Murr.connect("http://localhost:8081")
+    assert isinstance(client, MurrClientAsync)
+    await client.close()

@@ -53,6 +53,8 @@ class Murr:
         return MurrLocalAsync(inner)
 
     @classmethod
-    async def connect(cls, endpoint: str) -> MurrLocalAsync:
-        """Connect to a remote Murr server (not yet implemented)."""
-        raise NotImplementedError("Remote client not yet implemented")
+    async def connect(cls, endpoint: str) -> MurrClientAsync:
+        """Connect to a remote Murr server over HTTP."""
+        from murr.http import MurrClientAsync
+
+        return MurrClientAsync(endpoint)

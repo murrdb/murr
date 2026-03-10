@@ -50,6 +50,8 @@ class Murr:
         return MurrLocalSync(_MurrLocalSync(str(cache_dir), http_port))
 
     @classmethod
-    def connect(cls, endpoint: str) -> MurrLocalSync:
-        """Connect to a remote Murr server (not yet implemented)."""
-        raise NotImplementedError("Remote client not yet implemented")
+    def connect(cls, endpoint: str) -> MurrClientSync:
+        """Connect to a remote Murr server over HTTP."""
+        from murr.http import MurrClientSync
+
+        return MurrClientSync(endpoint)
