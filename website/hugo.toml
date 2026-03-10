@@ -1,4 +1,4 @@
-baseURL = "https://murrdb.dev/"
+baseURL = "https://murrdb.github.io/murr/"
 languageCode = "en-us"
 title = "Murr — Columnar In-Memory Cache for AI Inference"
 disableKinds = ["taxonomy", "term"]
