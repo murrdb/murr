@@ -1,0 +1,44 @@
+<section id="benchmarks">
+  <div class="container">
+    <h2>Benchmarks</h2>
+    <p>ML ranking workload: 1000 documents × 10 float32 columns, random keys, 10M row dataset.</p>
+    <table class="bench-table">
+      <thead>
+        <tr>
+          <th>Approach</th>
+          <th>Latency</th>
+          <th>95% CI</th>
+          <th>Throughput</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="highlight">
+          <td>Murr (HTTP + Arrow IPC)</td>
+          <td>104 µs</td>
+          <td>[103—104 µs]</td>
+          <td>9.63 Mkeys/s</td>
+        </tr>
+        <tr class="highlight">
+          <td>Murr (Flight gRPC)</td>
+          <td>105 µs</td>
+          <td>[104—105 µs]</td>
+          <td>9.53 Mkeys/s</td>
+        </tr>
+        <tr>
+          <td>Redis MGET (feature blobs)</td>
+          <td>263 µs</td>
+          <td>[262—264 µs]</td>
+          <td>3.80 Mkeys/s</td>
+        </tr>
+        <tr>
+          <td>Redis Feast (HSET per row)</td>
+          <td>3.80 ms</td>
+          <td>[3.76—3.89 ms]</td>
+          <td>263 Kkeys/s</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="bench-note">~2.5x faster than the best Redis layout, ~36x faster than Feast-style storage. Last-byte latency measured.</p>
+    <a href="{{ .Site.Params.github }}#benchmarks" class="section-link">Methodology details</a>
+  </div>
+</section>

@@ -1,0 +1,26 @@
+<section id="what">
+  <div class="container">
+    <h2>What is Murr</h2>
+    <p>A caching layer for ML/AI data serving that sits between your batch data pipelines and inference apps.</p>
+    <img src="/img/overview.png" alt="Murr system overview" class="section-img" style="margin-top: 1.5rem;" loading="lazy">
+    <div class="features">
+      <div class="feature">
+        <div class="feature-title">Tiered storage</div>
+        <p>Hot data in memory, cold data on disk. S3-based replication. RAM is expensive — keep only the hot stuff there.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Batch I/O</div>
+        <p>Native batch reads and writes over columnar storage. Dumping a 1GB Parquet file into the API is a valid use case.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Zero-copy wire protocol</div>
+        <p>No conversion needed when building np.ndarray, pd.DataFrame, or pt.Tensor from API responses.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Stateless</div>
+        <p>All state lives on S3. When a node restarts, it self-bootstraps from block storage. No replication drama.</p>
+      </div>
+    </div>
+    <a href="{{ .Site.Params.github }}#what-is-murr" class="section-link">Learn more</a>
+  </div>
+</section>
