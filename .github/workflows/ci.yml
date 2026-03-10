@@ -69,8 +69,7 @@ jobs:
         run: |
           uv venv .venv --python ${{ matrix.python-version }}
           source .venv/bin/activate
-          uv pip install maturin pytest pyarrow pydantic
-          maturin develop -m python/Cargo.toml
+          uvx maturin develop -m python/Cargo.toml -E dev
 
       - name: Run Python tests
         run: |
