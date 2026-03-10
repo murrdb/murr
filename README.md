@@ -161,8 +161,8 @@ No ETAs, but at least you can see where things stand:
 - [x] Benchmarking harness: Redis support, Feast and feature-blob styles
 - [x] Win at your own benchmark (this was surprisingly hard btw)
 - [x] Support for `utf8` and `float32` datatypes
-- [ ] Python remote API client
-- [ ] Docker image
+- [x] Python remote API client (sync + async)
+- [x] Docker image
 - [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16/64, date-time)
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
 - [ ] Sparse columns

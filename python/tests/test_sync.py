@@ -1,4 +1,3 @@
-import socket
 import time
 
 import pyarrow as pa
@@ -7,31 +6,7 @@ import pytest
 from murr import ColumnSchema, DType, TableSchema
 from murr.sync import Murr
 
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _user_schema() -> TableSchema:
-    return TableSchema(
-        key="id",
-        columns={
-            "id": ColumnSchema(dtype=DType.UTF8, nullable=False),
-            "score": ColumnSchema(dtype=DType.FLOAT32, nullable=True),
-        },
-    )
-
-
-def _user_batch() -> pa.RecordBatch:
-    return pa.RecordBatch.from_pydict(
-        {"id": ["a", "b", "c"], "score": [1.0, 2.0, 3.0]},
-        schema=pa.schema([
-            pa.field("id", pa.utf8(), nullable=False),
-            pa.field("score", pa.float32(), nullable=True),
-        ]),
-    )
+from conftest import free_port, user_batch, user_schema
 
 
 @pytest.fixture(params=["local", "http"])
@@ -39,7 +14,7 @@ def murr_client(request, tmp_path):
     if request.param == "local":
         yield Murr.start_local(cache_dir=str(tmp_path))
     else:
-        port = _free_port()
+        port = free_port()
         server = Murr.start_local(cache_dir=str(tmp_path), http_port=port)
         time.sleep(0.1)
         client = Murr.connect(f"http://127.0.0.1:{port}")
@@ -52,8 +27,8 @@ def murr_client(request, tmp_path):
 
 
 def test_create_and_read_roundtrip(murr_client):
-    murr_client.create_table("users", _user_schema())
-    murr_client.write("users", _user_batch())
+    murr_client.create_table("users", user_schema())
+    murr_client.write("users", user_batch())
 
     result = murr_client.read("users", ["c", "a"], ["score"])
     assert result.num_rows == 2
@@ -61,8 +36,8 @@ def test_create_and_read_roundtrip(murr_client):
 
 
 def test_read_all_columns(murr_client):
-    murr_client.create_table("users", _user_schema())
-    murr_client.write("users", _user_batch())
+    murr_client.create_table("users", user_schema())
+    murr_client.write("users", user_batch())
 
     result = murr_client.read("users", ["b"], ["id", "score"])
     assert result.num_rows == 1
@@ -84,7 +59,7 @@ def test_list_tables(murr_client):
 
 
 def test_get_schema(murr_client):
-    schema = _user_schema()
+    schema = user_schema()
     murr_client.create_table("users", schema)
 
     result = murr_client.get_schema("users")
@@ -112,7 +87,7 @@ def test_get_schema_nonexistent_raises(murr_client):
 
 
 def test_write_pa_table(murr_client):
-    murr_client.create_table("users", _user_schema())
+    murr_client.create_table("users", user_schema())
 
     table = pa.table(
         {"id": ["a", "b"], "score": [1.0, 2.0]},
@@ -132,11 +107,11 @@ def test_write_pa_table(murr_client):
 
 def test_persistence_across_instances(tmp_path):
     cache_dir = str(tmp_path)
-    schema = _user_schema()
+    schema = user_schema()
 
     client1 = Murr.start_local(cache_dir=cache_dir)
     client1.create_table("t", schema)
-    client1.write("t", _user_batch())
+    client1.write("t", user_batch())
     del client1
 
     client2 = Murr.start_local(cache_dir=cache_dir)
@@ -147,7 +122,7 @@ def test_persistence_across_instances(tmp_path):
 def test_start_local_with_http(tmp_path):
     import urllib.request
 
-    port = _free_port()
+    port = free_port()
     client = Murr.start_local(cache_dir=str(tmp_path), http_port=port)
     time.sleep(0.1)
 

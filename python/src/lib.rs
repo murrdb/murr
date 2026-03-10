@@ -1,5 +1,6 @@
 mod async_client;
 mod error;
+mod init;
 mod schema;
 mod sync_client;
 

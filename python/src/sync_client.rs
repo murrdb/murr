@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
@@ -7,12 +6,10 @@ use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use murr::api::MurrHttpService;
-use murr::conf::Config;
-use murr::conf::StorageConfig;
 use murr::service::MurrService;
 
 use crate::error::into_py_err;
+use crate::init::{build_config, spawn_http_server};
 use crate::schema::PyTableSchema;
 
 #[pyclass(name = "MurrLocalSync")]
@@ -29,17 +26,7 @@ impl PyMurrLocalSync {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let mut config = Config {
-            storage: StorageConfig {
-                cache_dir: PathBuf::from(cache_dir),
-            },
-            ..Config::default()
-        };
-
-        if let Some(port) = http_port {
-            config.server.http.host = "127.0.0.1".to_string();
-            config.server.http.port = port;
-        }
+        let config = build_config(cache_dir, http_port);
 
         let service = runtime
             .block_on(MurrService::new(config))
@@ -48,12 +35,7 @@ impl PyMurrLocalSync {
         let service = Arc::new(service);
 
         if http_port.is_some() {
-            let http = MurrHttpService::new(service.clone());
-            runtime.spawn(async move {
-                if let Err(e) = http.serve().await {
-                    eprintln!("HTTP server error: {e}");
-                }
-            });
+            spawn_http_server(&service, runtime.handle());
         }
 
         Ok(Self { service, runtime })
