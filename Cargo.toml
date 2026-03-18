@@ -15,7 +15,7 @@ license = "Apache-2.0"
 testutil = ["dep:tempfile", "dep:rand"]
 
 [dependencies]
-config = "0.15.19"
+config = "0.15.21"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 log = { version = "0.4.29", features = ["kv"] }
