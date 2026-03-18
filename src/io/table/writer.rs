@@ -232,7 +232,7 @@ mod tests {
 
         // Read back via TableReader
         let index = local.index().await.unwrap().unwrap();
-        let view = TableView::open(dir.path(), &index.segments).unwrap();
+        let view = TableView::open(dir.path(), &index.segments, Vec::new()).unwrap();
 
         let mut read_schema = HashMap::new();
         read_schema.insert(
