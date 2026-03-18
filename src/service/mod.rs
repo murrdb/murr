@@ -47,7 +47,7 @@ impl MurrService {
             let cached = if index.segments.is_empty() {
                 None
             } else {
-                Some(CachedTable::open(dir.path(), &schema, &index.segments)?)
+                Some(CachedTable::open(dir.path(), &schema, &index.segments, None)?)
             };
 
             info!(
@@ -127,7 +127,8 @@ impl MurrService {
             ))
         })?;
 
-        let cached = CachedTable::open(state.dir.path(), &state.schema, &index.segments)?;
+        let old_cached = state.cached.take();
+        let cached = CachedTable::open(state.dir.path(), &state.schema, &index.segments, old_cached)?;
         state.cached = Some(cached);
 
         Ok(())

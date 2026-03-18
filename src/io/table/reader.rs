@@ -228,7 +228,7 @@ mod tests {
     async fn open_view(dir: &std::path::Path) -> TableView {
         let local = LocalDirectory::new(dir);
         let index = local.index().await.unwrap().unwrap();
-        TableView::open(dir, &index.segments).unwrap()
+        TableView::open(dir, &index.segments, Vec::new()).unwrap()
     }
 
     #[tokio::test]

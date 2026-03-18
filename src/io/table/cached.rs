@@ -21,8 +21,14 @@ impl CachedTable {
         dir_path: &Path,
         schema: &TableSchema,
         segments: &[SegmentInfo],
+        old: Option<CachedTable>,
     ) -> Result<Self, MurrError> {
-        let view = TableView::open(dir_path, segments)?;
+        let existing = match old {
+            Some(cached) => cached.into_heads().view.into_segments(),
+            None => Vec::new(),
+        };
+
+        let view = TableView::open(dir_path, segments, existing)?;
 
         CachedTableTryBuilder {
             view,
