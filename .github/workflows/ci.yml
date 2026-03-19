@@ -24,17 +24,23 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-14, windows-2022]
+        os: [ubuntu-22.04, macos-14, windows-2022, ubuntu-22.04-arm64]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install build-essential (arm64)
+        if: matrix.os == 'ubuntu-22.04-arm64'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
-      
+        with:
+          shared-key: "build-${{ matrix.os }}"
+
       - name: Run cargo check
         run: cargo check --all-targets
 
