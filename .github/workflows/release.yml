@@ -32,6 +32,9 @@ jobs:
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "build-ubuntu-22.04"
+          save-if: false
 
       - name: Publish to crates.io
         run: cargo publish
@@ -46,7 +49,7 @@ jobs:
           - os: ubuntu-22.04
             artifact: murr-linux-x64
             binary: murr
-          - os: linux-ubuntu2204-arm64
+          - os: ubuntu-22.04-arm64
             artifact: murr-linux-arm64
             binary: murr
           - os: macos-14
@@ -61,11 +64,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install build-essential (arm64)
+        if: matrix.os == 'ubuntu-22.04-arm64'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "build-${{ matrix.os }}"
+          save-if: false
 
       - name: Run tests
         run: cargo test
