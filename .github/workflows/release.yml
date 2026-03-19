@@ -134,14 +134,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           command: build
           args: --release -m python/Cargo.toml -i python3.11 python3.12 python3.13 python3.14
+          sccache: 'true'
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v7
