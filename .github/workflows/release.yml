@@ -33,8 +33,7 @@ jobs:
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "build-ubuntu-22.04"
-          save-if: false
+          shared-key: "release-ubuntu-22.04"
 
       - name: Publish to crates.io
         run: cargo publish
@@ -74,8 +73,7 @@ jobs:
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "build-${{ matrix.os }}"
-          save-if: false
+          shared-key: "release-${{ matrix.os }}"
 
       - name: Run tests
         run: cargo test
