@@ -14,7 +14,7 @@ use crate::io::table::column::{Column, KeyOffset};
 use segment::Float32Segment;
 
 pub struct Float32Column<'a> {
-    segments: Vec<Float32Segment<'a>>,
+    segments: Vec<Option<Float32Segment<'a>>>,
     field: Field,
     nullable: bool,
 }
@@ -23,14 +23,15 @@ impl<'a> Float32Column<'a> {
     pub fn new(
         name: &str,
         config: &ColumnSchema,
-        segments: &[&'a [u8]],
+        slices: &[(u32, &'a [u8])],
+        num_slots: usize,
     ) -> Result<Self, MurrError> {
-        let parsed: Result<Vec<_>, _> = segments
-            .iter()
-            .map(|data| Float32Segment::parse(name, config, data))
-            .collect();
+        let mut segments: Vec<Option<Float32Segment<'a>>> = (0..num_slots).map(|_| None).collect();
+        for &(seg_id, data) in slices {
+            segments[seg_id as usize] = Some(Float32Segment::parse(name, config, data)?);
+        }
         Ok(Self {
-            segments: parsed?,
+            segments,
             field: Field::new(name, DataType::Float32, config.nullable),
             nullable: config.nullable,
         })
@@ -63,12 +64,14 @@ impl<'a> Column for Float32Column<'a> {
                     segment_id,
                     segment_offset,
                 } => {
-                    let seg =
-                        self.segments.get(*segment_id as usize).ok_or_else(|| {
+                    let seg = self
+                        .segments
+                        .get(*segment_id as usize)
+                        .and_then(|s| s.as_ref())
+                        .ok_or_else(|| {
                             MurrError::TableError(format!(
-                                "segment_id {} out of range (have {})",
+                                "segment_id {} not found",
                                 segment_id,
-                                self.segments.len()
                             ))
                         })?;
 
@@ -103,7 +106,7 @@ impl<'a> Column for Float32Column<'a> {
         let mut builder = Float32Builder::with_capacity(total);
 
         if self.nullable {
-            for seg in &self.segments {
+            for seg in self.segments.iter().flatten() {
                 if let Some(ref nulls) = seg.nulls {
                     for i in 0..seg.footer.num_values {
                         if !nulls.is_valid(i as u64) {
@@ -119,7 +122,7 @@ impl<'a> Column for Float32Column<'a> {
                 }
             }
         } else {
-            for seg in &self.segments {
+            for seg in self.segments.iter().flatten() {
                 for i in 0..seg.footer.num_values {
                     builder.append_value(seg.payload[i as usize]);
                 }
@@ -130,11 +133,11 @@ impl<'a> Column for Float32Column<'a> {
     }
 
     fn size(&self) -> u32 {
-        self.segments.iter().map(|s| s.footer.num_values).sum()
+        self.segments.iter().flatten().map(|s| s.footer.num_values).sum()
     }
 
     fn segment_sizes(&self) -> Vec<u32> {
-        self.segments.iter().map(|s| s.footer.num_values).collect()
+        self.segments.iter().flatten().map(|s| s.footer.num_values).collect()
     }
 }
 
@@ -167,7 +170,7 @@ mod tests {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0), Some(40.0)]);
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
-        let col = Float32Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Float32Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -199,7 +202,7 @@ mod tests {
         let array = make_float32_array(&[Some(1.0), None, Some(3.0)]);
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
-        let col = Float32Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Float32Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -234,7 +237,8 @@ mod tests {
         let bytes1 = Float32Segment::write(&config, &array1).unwrap();
         let bytes2 = Float32Segment::write(&config, &array2).unwrap();
 
-        let col = Float32Column::new("test", &config, &[&bytes1[..], &bytes2[..]]).unwrap();
+        let col =
+            Float32Column::new("test", &config, &[(0, &bytes1[..]), (1, &bytes2[..])], 2).unwrap();
         assert_eq!(col.size(), 5);
 
         let result = col.get_all().unwrap();
@@ -268,7 +272,7 @@ mod tests {
         let array = make_float32_array(&[Some(10.0), Some(20.0), Some(30.0)]);
         let bytes = Float32Segment::write(&config, &array).unwrap();
 
-        let col = Float32Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Float32Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {

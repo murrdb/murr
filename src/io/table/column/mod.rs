@@ -13,7 +13,7 @@ use crate::core::MurrError;
 pub use float32::Float32Column;
 pub use utf8::Utf8Column;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum KeyOffset {
     SegmentOffset {
         segment_id: u32,

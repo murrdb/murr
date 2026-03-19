@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ahash::AHashMap;
-use arrow::array::{Array, StringArray, new_null_array};
+use arrow::array::new_null_array;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 
@@ -10,99 +10,65 @@ use crate::core::{ColumnSchema, DType};
 use crate::core::MurrError;
 
 use super::column::{Column, Float32Column, KeyOffset, Utf8Column};
+use super::index::KeyIndex;
 use super::view::TableView;
 
 pub struct TableReader<'a> {
     columns: AHashMap<String, Box<dyn Column + 'a>>,
-    index: AHashMap<String, KeyOffset>,
+    index: Arc<KeyIndex>,
 }
 
 impl<'a> TableReader<'a> {
     /// Build a table reader from a TableView and an explicit column schema.
     ///
-    /// The key column is always loaded as a non-nullable `Utf8Column` and
-    /// is used to build the key index. It does not need to appear in `schema`,
-    /// but if present it will also be queryable via `get()`.
-    ///
-    /// Segments are processed in order. When multiple segments contain the
-    /// same key, the last segment wins.
+    /// If `previous_index` is provided, only new segments (those with IDs
+    /// greater than the max segment ID in the previous index) will be scanned
+    /// for key indexing. Columns are always rebuilt from all segments.
     pub fn from_table(
         table: &'a TableView,
         key_column: &str,
         schema: &HashMap<String, ColumnSchema>,
+        previous_index: Option<Arc<KeyIndex>>,
     ) -> Result<Self, MurrError> {
         let segments = table.segments();
+        let num_slots = segments.len();
 
         let mut columns: AHashMap<String, Box<dyn Column + 'a>> = AHashMap::new();
 
         for (col_name, col_config) in schema {
-            let col_slices: Vec<&'a [u8]> = segments
+            let col_slices: Vec<(u32, &'a [u8])> = segments
                 .iter()
-                .map(|seg| {
-                    seg.column(col_name).ok_or_else(|| {
-                        MurrError::TableError(format!(
-                            "column '{}' not found in segment {}",
-                            col_name,
-                            seg.id()
-                        ))
-                    })
+                .enumerate()
+                .filter_map(|(i, seg)| {
+                    let seg = seg.as_ref()?;
+                    let data = seg.column(col_name)?;
+                    Some((i as u32, data))
                 })
-                .collect::<Result<_, _>>()?;
+                .collect();
 
             let column: Box<dyn Column + 'a> = match col_config.dtype {
-                DType::Float32 => Box::new(Float32Column::new(col_name, col_config, &col_slices)?),
-                DType::Utf8 => Box::new(Utf8Column::new(col_name, col_config, &col_slices)?),
+                DType::Float32 => {
+                    Box::new(Float32Column::new(col_name, col_config, &col_slices, num_slots)?)
+                }
+                DType::Utf8 => {
+                    Box::new(Utf8Column::new(col_name, col_config, &col_slices, num_slots)?)
+                }
             };
 
             columns.insert(col_name.to_string(), column);
         }
 
-        // Build key column and extract per-segment sizes.
-        let key_slices: Vec<&'a [u8]> = segments
-            .iter()
-            .map(|seg| {
-                seg.column(key_column).ok_or_else(|| {
-                    MurrError::TableError(format!(
-                        "key column '{}' not found in segment {}",
-                        key_column,
-                        seg.id()
-                    ))
-                })
-            })
-            .collect::<Result<_, _>>()?;
-
-        let key_config = ColumnSchema {
-            dtype: DType::Utf8,
-            nullable: false,
-        };
-        let key_col = Utf8Column::new(key_column, &key_config, &key_slices)?;
-        let seg_sizes = key_col.segment_sizes();
-        let key_array = key_col.get_all()?;
-        let key_strings = key_array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| MurrError::TableError("key column must produce StringArray".into()))?;
-
-        // Build index: walk the flat key array, tracking segment boundaries.
-        let mut index: AHashMap<String, KeyOffset> = AHashMap::new();
-        let mut flat_pos: usize = 0;
-
-        for (seg_idx, &seg_size) in seg_sizes.iter().enumerate() {
-            for row in 0..seg_size {
-                if !key_strings.is_null(flat_pos) {
-                    index.insert(
-                        key_strings.value(flat_pos).to_string(),
-                        KeyOffset::SegmentOffset {
-                            segment_id: seg_idx as u32,
-                            segment_offset: row,
-                        },
-                    );
-                }
-                flat_pos += 1;
-            }
-        }
+        let index = Arc::new(KeyIndex::build_incremental(
+            table,
+            key_column,
+            previous_index,
+        )?);
 
         Ok(Self { columns, index })
+    }
+
+    pub fn index(&self) -> &Arc<KeyIndex> {
+        &self.index
     }
 
     pub fn get(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError> {
@@ -135,8 +101,7 @@ impl<'a> TableReader<'a> {
             .iter()
             .map(|key| {
                 self.index
-                    .get(*key)
-                    .copied()
+                    .get(key)
                     .unwrap_or(KeyOffset::MissingKey)
             })
             .collect();
@@ -158,7 +123,7 @@ mod tests {
     use crate::io::table::column::ColumnSegment as _;
     use crate::io::table::column::float32::segment::Float32Segment;
     use crate::io::table::column::utf8::segment::Utf8Segment;
-    use arrow::array::Float32Array;
+    use arrow::array::{Array, Float32Array, StringArray};
     use std::fs::File;
     use tempfile::TempDir;
 
@@ -238,7 +203,7 @@ mod tests {
         write_segment(dir.path(), 0, &["a", "b", "c"], &[1.0, 2.0, 3.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&["b", "a"], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 2);
@@ -259,7 +224,7 @@ mod tests {
         write_segment(dir.path(), 0, &["a", "b"], &[10.0, 20.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&["a", "missing", "b"], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 3);
@@ -281,7 +246,7 @@ mod tests {
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&[], &["value"]).unwrap();
         assert_eq!(result.num_rows(), 0);
@@ -296,7 +261,7 @@ mod tests {
         write_segment(dir.path(), 1, &["a", "c"], &[100.0, 3.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&["a", "b", "c"], &["value"]).unwrap();
         let vals = result
@@ -317,7 +282,7 @@ mod tests {
         write_segment(dir.path(), 0, &["x", "y", "z"], &[1.0, 2.0, 3.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&["z", "x", "y"], &["value"]).unwrap();
         let vals = result
@@ -396,7 +361,7 @@ mod tests {
         );
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &schema).unwrap();
+        let table = TableReader::from_table(&view, "key", &schema, None).unwrap();
 
         let result = table.get(&["k2", "k1"], &["score", "name"]).unwrap();
         assert_eq!(result.num_rows(), 2);
@@ -426,7 +391,7 @@ mod tests {
         write_segment(dir.path(), 0, &["a"], &[1.0]);
 
         let view = open_view(dir.path()).await;
-        let table = TableReader::from_table(&view, "key", &make_schema()).unwrap();
+        let table = TableReader::from_table(&view, "key", &make_schema(), None).unwrap();
 
         let result = table.get(&["x", "y", "z"], &["value"]).unwrap();
         let vals = result
