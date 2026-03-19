@@ -52,6 +52,10 @@ http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
+[[bench]]
+name = "multi_segment_index_bench"
+harness = false
+
 [profile.bench]
 debug = 1                   # line tables + symbols (good enough for perf)
 lto = false                 # optional: makes disasm easier to read

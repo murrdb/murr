@@ -3,7 +3,7 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 
-pub(super) struct NullBitmap<'a> {
+pub(crate) struct NullBitmap<'a> {
     data: &'a [u64],
 }
 

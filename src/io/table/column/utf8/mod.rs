@@ -13,7 +13,7 @@ use crate::io::table::column::{Column, KeyOffset};
 use segment::Utf8Segment;
 
 pub struct Utf8Column<'a> {
-    segments: Vec<Utf8Segment<'a>>,
+    segments: Vec<Option<Utf8Segment<'a>>>,
     field: Field,
     nullable: bool,
 }
@@ -22,14 +22,15 @@ impl<'a> Utf8Column<'a> {
     pub fn new(
         name: &str,
         config: &ColumnSchema,
-        segments: &[&'a [u8]],
+        slices: &[(u32, &'a [u8])],
+        num_slots: usize,
     ) -> Result<Self, MurrError> {
-        let parsed: Result<Vec<_>, _> = segments
-            .iter()
-            .map(|data| Utf8Segment::parse(name, config, data))
-            .collect();
+        let mut segments: Vec<Option<Utf8Segment<'a>>> = (0..num_slots).map(|_| None).collect();
+        for &(seg_id, data) in slices {
+            segments[seg_id as usize] = Some(Utf8Segment::parse(name, config, data)?);
+        }
         Ok(Self {
-            segments: parsed?,
+            segments,
             field: Field::new(name, DataType::Utf8, config.nullable),
             nullable: config.nullable,
         })
@@ -54,12 +55,14 @@ impl<'a> Column for Utf8Column<'a> {
                         segment_id,
                         segment_offset,
                     } => {
-                        let seg =
-                            self.segments.get(*segment_id as usize).ok_or_else(|| {
+                        let seg = self
+                            .segments
+                            .get(*segment_id as usize)
+                            .and_then(|s| s.as_ref())
+                            .ok_or_else(|| {
                                 MurrError::TableError(format!(
-                                    "segment_id {} out of range (have {})",
+                                    "segment_id {} not found",
                                     segment_id,
-                                    self.segments.len()
                                 ))
                             })?;
 
@@ -94,12 +97,14 @@ impl<'a> Column for Utf8Column<'a> {
                         segment_id,
                         segment_offset,
                     } => {
-                        let seg =
-                            self.segments.get(*segment_id as usize).ok_or_else(|| {
+                        let seg = self
+                            .segments
+                            .get(*segment_id as usize)
+                            .and_then(|s| s.as_ref())
+                            .ok_or_else(|| {
                                 MurrError::TableError(format!(
-                                    "segment_id {} out of range (have {})",
+                                    "segment_id {} not found",
                                     segment_id,
-                                    self.segments.len()
                                 ))
                             })?;
 
@@ -128,7 +133,7 @@ impl<'a> Column for Utf8Column<'a> {
         let mut builder = StringBuilder::with_capacity(total, 0);
 
         if self.nullable {
-            for seg in &self.segments {
+            for seg in self.segments.iter().flatten() {
                 if let Some(ref nulls) = seg.nulls {
                     for i in 0..seg.footer.num_values {
                         if !nulls.is_valid(i as u64) {
@@ -155,7 +160,7 @@ impl<'a> Column for Utf8Column<'a> {
                 }
             }
         } else {
-            for seg in &self.segments {
+            for seg in self.segments.iter().flatten() {
                 for i in 0..seg.footer.num_values {
                     let (start, end) = seg.string_range(i);
                     let s = std::str::from_utf8(&seg.payload[start..end]).map_err(|e| {
@@ -170,11 +175,11 @@ impl<'a> Column for Utf8Column<'a> {
     }
 
     fn size(&self) -> u32 {
-        self.segments.iter().map(|s| s.footer.num_values).sum()
+        self.segments.iter().flatten().map(|s| s.footer.num_values).sum()
     }
 
     fn segment_sizes(&self) -> Vec<u32> {
-        self.segments.iter().map(|s| s.footer.num_values).collect()
+        self.segments.iter().flatten().map(|s| s.footer.num_values).collect()
     }
 }
 
@@ -207,7 +212,7 @@ mod tests {
         let array = make_string_array(&[Some("a"), Some("b"), Some("c"), Some("d")]);
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
-        let col = Utf8Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Utf8Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -239,7 +244,7 @@ mod tests {
         let array = make_string_array(&[Some("x"), None, Some("z")]);
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
-        let col = Utf8Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Utf8Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {
@@ -274,7 +279,8 @@ mod tests {
         let bytes1 = Utf8Segment::write(&config, &array1).unwrap();
         let bytes2 = Utf8Segment::write(&config, &array2).unwrap();
 
-        let col = Utf8Column::new("test", &config, &[&bytes1[..], &bytes2[..]]).unwrap();
+        let col =
+            Utf8Column::new("test", &config, &[(0, &bytes1[..]), (1, &bytes2[..])], 2).unwrap();
         assert_eq!(col.size(), 5);
 
         let result = col.get_all().unwrap();
@@ -308,7 +314,7 @@ mod tests {
         let array = make_string_array(&[Some("hello"), Some("world"), Some("foo")]);
         let bytes = Utf8Segment::write(&config, &array).unwrap();
 
-        let col = Utf8Column::new("test", &config, &[&bytes[..]]).unwrap();
+        let col = Utf8Column::new("test", &config, &[(0, &bytes[..])], 1).unwrap();
 
         let indexes = vec![
             KeyOffset::SegmentOffset {

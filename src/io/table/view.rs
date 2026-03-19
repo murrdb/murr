@@ -6,7 +6,7 @@ use crate::io::directory::SegmentInfo;
 use crate::io::segment::Segment;
 
 pub struct TableView {
-    segments: Vec<Segment>,
+    segments: Vec<Option<Segment>>,
 }
 
 impl TableView {
@@ -18,28 +18,46 @@ impl TableView {
         let needed_ids: HashSet<u32> = segment_infos.iter().map(|i| i.id).collect();
         let existing_ids: HashSet<u32> = existing.iter().map(|s| s.id()).collect();
 
-        let mut segments: Vec<Segment> = existing
+        let mut loaded: Vec<Segment> = existing
             .into_iter()
             .filter(|s| needed_ids.contains(&s.id()))
             .collect();
 
         for info in segment_infos {
             if !existing_ids.contains(&info.id) {
-                segments.push(Segment::open(path.join(&info.file_name))?);
+                loaded.push(Segment::open(path.join(&info.file_name))?);
             }
         }
 
-        segments.sort_by_key(|s| s.id());
+        let max_id = loaded.iter().map(|s| s.id()).max();
+        let num_slots = max_id.map(|id| id as usize + 1).unwrap_or(0);
+        let mut segments: Vec<Option<Segment>> = (0..num_slots).map(|_| None).collect();
+        for seg in loaded {
+            let id = seg.id() as usize;
+            segments[id] = Some(seg);
+        }
 
         Ok(Self { segments })
     }
 
     pub fn into_segments(self) -> Vec<Segment> {
-        self.segments
+        self.segments.into_iter().flatten().collect()
     }
 
-    pub fn segments(&self) -> &[Segment] {
+    pub fn segments(&self) -> &[Option<Segment>] {
         &self.segments
+    }
+
+    pub fn segment(&self, id: u32) -> Option<&Segment> {
+        self.segments.get(id as usize).and_then(|s| s.as_ref())
+    }
+
+    pub fn segment_ids(&self) -> Vec<u32> {
+        self.segments
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_ref().map(|_| i as u32))
+            .collect()
     }
 }
 
@@ -75,9 +93,9 @@ mod tests {
         write_seg(dir.path(), 1);
 
         let view = TableView::open(dir.path(), &[seg_info(0), seg_info(1)], Vec::new()).unwrap();
-        assert_eq!(view.segments().len(), 2);
-        assert_eq!(view.segments()[0].id(), 0);
-        assert_eq!(view.segments()[1].id(), 1);
+        assert_eq!(view.segment_ids(), vec![0, 1]);
+        assert!(view.segment(0).is_some());
+        assert!(view.segment(1).is_some());
     }
 
     #[test]
@@ -89,7 +107,7 @@ mod tests {
 
         // Open first two segments
         let view = TableView::open(dir.path(), &[seg_info(0), seg_info(1)], Vec::new()).unwrap();
-        assert_eq!(view.segments().len(), 2);
+        assert_eq!(view.segment_ids(), vec![0, 1]);
 
         // Reopen with all three, passing existing segments
         let existing = view.into_segments();
@@ -99,14 +117,11 @@ mod tests {
             existing,
         )
         .unwrap();
-        assert_eq!(view.segments().len(), 3);
-        assert_eq!(view.segments()[0].id(), 0);
-        assert_eq!(view.segments()[1].id(), 1);
-        assert_eq!(view.segments()[2].id(), 2);
+        assert_eq!(view.segment_ids(), vec![0, 1, 2]);
 
         // Verify data is readable
-        assert_eq!(view.segments()[0].column("data").unwrap(), &[0]);
-        assert_eq!(view.segments()[2].column("data").unwrap(), &[2]);
+        assert_eq!(view.segment(0).unwrap().column("data").unwrap(), &[0]);
+        assert_eq!(view.segment(2).unwrap().column("data").unwrap(), &[2]);
     }
 
     #[test]
@@ -131,8 +146,9 @@ mod tests {
             existing,
         )
         .unwrap();
-        assert_eq!(view.segments().len(), 2);
-        assert_eq!(view.segments()[0].id(), 1);
-        assert_eq!(view.segments()[1].id(), 2);
+        assert_eq!(view.segment_ids(), vec![1, 2]);
+        assert!(view.segment(0).is_none());
+        assert!(view.segment(1).is_some());
+        assert!(view.segment(2).is_some());
     }
 }
