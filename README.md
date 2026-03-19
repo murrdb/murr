@@ -132,22 +132,48 @@ print(result.to_pandas())
 
 ## Benchmarks
 
-We benchmark a typical `ML Ranking` use case: an ML scoring model running across `N=1000` documents, each with `M=10` `float32` feature values. Key distribution is random, on a small 10M row dataset.
+Full benchmark suite with reproduction steps: [murrdb/murr-benchmark](https://github.com/murrdb/murr-benchmark).
 
-* **murrdb**: modeled as a simple table with a `utf8` key and 10 non-nullable `float32` columns. We measure both Flight gRPC and HTTP protocols.
-* **Redis** with feature-blob approach: all 10 per-document features packed into a 40-byte blob. Essentially a key-value lookup via `MGET`, all 1000 keys at once. Efficient, but good luck adding a new column.
-* **Redis** with [Feast](https://feast.dev/)-style approach: each document is an HSET where the key is the feature name and the value is its value. Each feature can be read/written separately, but you need pipelining to get anywhere near MGET performance.
+We benchmark a typical `ML Ranking` use case: 100M rows, 10 `float32` columns, 1000 random key lookups per iteration. The suite includes two complementary harnesses:
 
-| Approach | Latency (mean)[^2] | 95% CI | Throughput |
-|----------|----------------|--------|------------|
-| Murr (HTTP + Arrow IPC) | 104 µs | [103—104 µs] | 9.63 Mkeys/s |
-| Murr (Flight gRPC) | 105 µs | [104—105 µs] | 9.53 Mkeys/s |
-| Redis MGET (feature blobs) | 263 µs | [262—264 µs] | 3.80 Mkeys/s |
-| Redis Feast (HSET per row) | 3.80 ms | [3.76—3.89 ms] | 263 Kkeys/s |
+* **Rust (Criterion)** — measures raw service throughput as time-to-last-byte. Reads `select_rows` random keys per iteration and consumes raw response bytes without decoding. This isolates the storage/network layer and shows the theoretical ceiling of each backend.
+* **Python (pyperf)** — measures end-to-end latency as experienced by a Python ML client. Performs the same random-key reads but includes full protocol decoding and conversion into a `pd.DataFrame`. This captures the real cost a user pays: protocol parsing, byte deserialization, and DataFrame construction.
 
-Murr is ~2.5x faster than the best Redis layout (MGET with packed blobs) and ~36x faster than Feast-style hash-per-row storage.
+Backends and data layouts tested:
+* **murr** (columnar, Arrow IPC) — native columnar format with zero-copy reads and projection pushdown.
+* **Redis blob** — all features packed into a single 40-byte `MGET` blob. Compact and cache-friendly, but always reads all columns.
+* **Redis HSET** — [Feast](https://feast.dev/)-style hash-per-row: each feature is a separate HSET field. Flexible, but per-field overhead adds up.
+* **RocksDB blob** — embedded key-value store with the same packed binary layout as Redis blob.
+* **PostgreSQL blob** — BYTEA column with packed features.
+* **PostgreSQL col-per-feature** — explicit typed columns, one per feature.
 
-[^2]: We measure last-byte latency and don't include protocol parsing overhead yet.
+### Rust time-to-last-byte
+
+All backends run on the same machine; container-backed ones use Docker via `testcontainers`. Memory is measured via Docker cgroup stats (container backends) or `/proc/self/statm` (embedded backends) as a before/after delta around the data load phase.
+
+| Engine | Layout | Disk | Memory | Ingestion | p95 read latency |
+|--------|--------|-----:|-------:|----------:|-----------------:|
+| murr 0.1.8 | columnar | 4.8 GiB | 9.5 GiB | 2.76M rows/s | 443 us |
+| Redis 8.6.1 | blob | 1.3 GiB | 10.6 GiB | 1.31M rows/s | 998 us |
+| Redis 8.6.1 | HSET | 8.2 GiB | 21.2 GiB | 381K rows/s | 4.30 ms |
+| RocksDB | blob | 4.3 GiB | 2.5 GiB | 2.40M rows/s | 3.85 ms |
+| PostgreSQL 17 | blob | 12.8 GiB | 13.7 GiB | 283K rows/s | 9.75 ms |
+| PostgreSQL 17 | col-per-feature | 12.7 GiB | 13.5 GiB | 138K rows/s | 8.79 ms |
+
+### Python end-to-end
+
+Measures full round-trip latency including protocol decoding and `pd.DataFrame` conversion. Ingestion throughput includes Python-side serialization and batch writes.
+
+| Engine | Layout | Ingestion | Read latency |
+|--------|--------|----------:|-------------:|
+| murr 0.1.8 | columnar | 2.34M rows/s | 1.38 ms |
+| Redis 8.6.1 | blob | 136K rows/s | 2.42 ms |
+| Redis 8.6.1 | HSET | 61K rows/s | 9.39 ms |
+| RocksDB | blob | 622K rows/s | 4.90 ms |
+| PostgreSQL 17 | blob | 356K rows/s | 10.8 ms |
+| PostgreSQL 17 | col-per-feature | 143K rows/s | 10.6 ms |
+
+Murr is ~2.3x faster than the best Redis layout (MGET with packed blobs) on raw read latency, and ~17x faster on Python end-to-end ingestion throughput.
 
 ## Roadmap
 
@@ -166,7 +192,7 @@ No ETAs, but at least you can see where things stand:
 - [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16/64, date-time)
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
 - [ ] Sparse columns
-- [ ] Add RocksDB and Postgres to the benchmark harness
+- [x] Add RocksDB and Postgres to the benchmark harness
 - [ ] [Apache Iceberg](https://iceberg.apache.org/) and the very popular `parquet dump on S3` data catalog support
 
 
