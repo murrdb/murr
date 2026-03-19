@@ -4,6 +4,7 @@ mod handlers;
 
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
 use axum::Router;
 
@@ -28,6 +29,9 @@ impl MurrHttpService {
             .route("/api/v1/table/{name}", put(handlers::create_table))
             .route("/api/v1/table/{name}/fetch", post(handlers::fetch))
             .route("/api/v1/table/{name}/write", put(handlers::write_table))
+            .layer(DefaultBodyLimit::max(
+                self.service.config().server.http.max_payload_size,
+            ))
             .with_state(self.service.clone())
     }
 

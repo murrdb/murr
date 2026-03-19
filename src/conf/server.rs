@@ -7,6 +7,8 @@ pub struct HttpConfig {
     pub host: String,
     #[serde(default = "HttpConfig::default_port")]
     pub port: u16,
+    #[serde(default = "HttpConfig::default_max_payload_size")]
+    pub max_payload_size: usize,
 }
 
 impl HttpConfig {
@@ -16,6 +18,10 @@ impl HttpConfig {
 
     fn default_port() -> u16 {
         8080
+    }
+
+    fn default_max_payload_size() -> usize {
+        1024 * 1024 * 1024 // 1 GB
     }
 
     pub fn addr(&self) -> String {
@@ -28,6 +34,7 @@ impl Default for HttpConfig {
         Self {
             host: Self::default_host(),
             port: Self::default_port(),
+            max_payload_size: Self::default_max_payload_size(),
         }
     }
 }
