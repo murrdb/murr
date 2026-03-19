@@ -46,6 +46,9 @@ jobs:
           - os: ubuntu-22.04
             artifact: murr-linux-x64
             binary: murr
+          - os: linux-ubuntu2204-arm64
+            artifact: murr-linux-arm64
+            binary: murr
           - os: macos-14
             artifact: murr-macos-arm64
             binary: murr
@@ -79,11 +82,33 @@ jobs:
         with:
           files: ${{ matrix.artifact }}
 
+      - name: Upload binary for Docker build
+        if: startsWith(matrix.artifact, 'murr-linux-')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/${{ matrix.binary }}
+
   docker:
-    needs: create-release
+    needs: release
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download linux-x64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: murr-linux-x64
+          path: docker-bin/linux/amd64
+
+      - name: Download linux-arm64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: murr-linux-arm64
+          path: docker-bin/linux/arm64
+
+      - name: Prepare binaries
+        run: chmod +x docker-bin/linux/amd64/murr docker-bin/linux/arm64/murr
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
