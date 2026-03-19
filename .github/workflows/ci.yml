@@ -24,13 +24,13 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-22.04, macos-14, windows-2022, linux-ubuntu2204-arm64]
+        os: [ubuntu-22.04, macos-14, windows-2022, ubuntu-22.04-arm64]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Install build-essential (arm64)
-        if: matrix.os == 'linux-ubuntu2204-arm64'
+        if: matrix.os == 'ubuntu-22.04-arm64'
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: Install Rust toolchain
