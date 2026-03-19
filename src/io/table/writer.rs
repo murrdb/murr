@@ -243,7 +243,7 @@ mod tests {
             },
         );
 
-        let reader = TableReader::from_table(&view, "key", &read_schema).unwrap();
+        let reader = TableReader::from_table(&view, "key", &read_schema, None).unwrap();
         let result = reader.get(&["b", "c", "a"], &["score"]).unwrap();
 
         let vals = result

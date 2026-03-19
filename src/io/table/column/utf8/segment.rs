@@ -35,15 +35,15 @@ pub(crate) struct Utf8Footer {
 /// [footer_len: u32 LE]                // last 4 bytes
 /// ```
 pub(crate) struct Utf8Segment<'a> {
-    pub(super) footer: Utf8Footer,
-    pub(super) value_offsets: &'a [i32],
-    pub(super) payload: &'a [u8],
-    pub(super) nulls: Option<NullBitmap<'a>>,
+    pub(crate) footer: Utf8Footer,
+    pub(crate) value_offsets: &'a [i32],
+    pub(crate) payload: &'a [u8],
+    pub(crate) nulls: Option<NullBitmap<'a>>,
 }
 
 impl<'a> Utf8Segment<'a> {
     /// Get the string byte range for value at `idx`.
-    pub(super) fn string_range(&self, idx: u32) -> (usize, usize) {
+    pub(crate) fn string_range(&self, idx: u32) -> (usize, usize) {
         let start = self.value_offsets[idx as usize] as usize;
         let end = if idx + 1 < self.footer.num_values {
             self.value_offsets[(idx + 1) as usize] as usize
