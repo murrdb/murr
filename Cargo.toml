@@ -57,11 +57,9 @@ name = "multi_segment_index_bench"
 harness = false
 
 [profile.bench]
-debug = 1                   # line tables + symbols (good enough for perf)
-lto = false                 # optional: makes disasm easier to read
-codegen-units = 1           # optional: more stable codegen
-panic = "abort"             # optional
-force-frame-pointers = true
+debug = 1         # line tables + symbols (good enough for perf)
+lto = false       # optional: makes disasm easier to read
+codegen-units = 1 # optional: more stable codegen
 
 [profile.bench.build-override]
 debug = true
