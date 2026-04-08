@@ -48,12 +48,25 @@ rand = { version = "0.10", optional = true }
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+io-uring = "0.7"
+libc = "0.2"
+rand = "0.10"
+rustc-hash = "2"
+fst = "0.4"
+boomphf = "0.6"
+cedarwood = "0.4"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
+frozen-collections = "0.9.1"
+ph = "0.11"
 
 [[bench]]
 name = "multi_segment_index_bench"
+harness = false
+
+[[bench]]
+name = "mmap_uring_bench"
 harness = false
 
 [profile.bench]

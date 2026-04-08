@@ -2,6 +2,7 @@ pub mod api;
 pub mod conf;
 pub mod core;
 pub mod io;
+pub mod io2;
 pub mod service;
 
 #[cfg(feature = "testutil")]
