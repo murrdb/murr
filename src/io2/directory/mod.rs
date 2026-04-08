@@ -1,4 +1,5 @@
 pub mod mmap;
+
 use std::sync::Arc;
 
 use crate::{
@@ -6,47 +7,55 @@ use crate::{
     io2::{
         bytes::FromBytes,
         info::{ColumnInfo, TableInfo},
+        url::Url,
     },
 };
 
-const METADATA_JSON: &str = "_metadata.json";
+pub const METADATA_JSON: &str = "_metadata.json";
 
-trait Directory {
+#[allow(async_fn_in_trait)]
+pub trait Directory: Sized + Send + Sync + 'static {
     type Location: Url;
     type ReaderType: TableReader;
     type WriterType: TableWriter;
-    fn open(uri: &Location, page_size: u32, direct: bool) -> Self;
 
-    async fn open_reader() -> Self::ReaderType;
-    async fn open_writer() -> Self::WriterType;
+    fn open(url: &Self::Location, page_size: u32, direct: bool) -> Self;
+    async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
+    async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
 
-struct ReadRequest {
-    offset: u32,
-    size: u32,
+pub struct ReadRequest {
+    pub offset: u32,
+    pub size: u32,
 }
 
-struct SegmentReadRequest {
-    segment: u32,
-    read: ReadRequest,
+pub struct SegmentReadRequest {
+    pub segment: u32,
+    pub read: ReadRequest,
 }
 
-trait TableReader {
+#[allow(async_fn_in_trait)]
+pub trait TableReader: Sized {
     type D: Directory;
-    async fn new(dir: Arc<Self::D>) -> Self;
-    async fn info() -> Result<TableInfo, MurrError>;
-    async fn read<T, C: FromBytes<T>>(requests: &[SegmentReadRequest])
-    -> Result<Vec<T>, MurrError>;
+
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
+    fn info(&self) -> &TableInfo;
+    async fn read<T, C: FromBytes<T>>(
+        &self,
+        requests: &[SegmentReadRequest],
+    ) -> Result<Vec<T>, MurrError>;
 }
 
-trait TableWriter {
+#[allow(async_fn_in_trait)]
+pub trait TableWriter: Sized {
     type D: Directory;
-    async fn new(dir: Arc<Self::D>) -> Self;
-    async fn write_info(info: &TableInfo) -> Result<(), MurrError>;
-    async fn write_segment(segment: SegmentBytes) -> Result<(), MurrError>;
+
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
+    async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError>;
 }
 
 pub struct SegmentBytes {
-    payload: Vec<u8>,
-    columns: Vec<ColumnInfo>,
+    pub id: u32,
+    pub payload: Vec<u8>,
+    pub columns: Vec<ColumnInfo>,
 }

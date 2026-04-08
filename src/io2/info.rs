@@ -6,18 +6,21 @@ use crate::core::DType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
-    columns: HashMap<String, ColumnInfo>,
+    pub max_segment_id: u32,
+    pub columns: HashMap<String, ColumnInfo>,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnInfo {
-    name: String,
-    dtype: DType,
-    nullable: bool,
-    segments: HashMap<u32, ColumnSegment>,
+    pub name: String,
+    pub dtype: DType,
+    pub nullable: bool,
+    pub segments: HashMap<u32, ColumnSegment>,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnSegment {
-    offset: u32,
-    length: u32,
-    num_values: u32,
+    pub offset: u32,
+    pub length: u32,
+    pub num_values: u32,
 }
