@@ -1,3 +1,5 @@
+use log::debug;
+
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
@@ -33,6 +35,7 @@ impl<'a> Reader<'a> for MemReader<'a> {
         &self,
         requests: &[SegmentReadRequest],
     ) -> Result<Vec<T>, MurrError> {
+        debug!("mem read: {} requests", requests.len());
         let files = self
             .dir
             .files

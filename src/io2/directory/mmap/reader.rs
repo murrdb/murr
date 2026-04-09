@@ -1,3 +1,4 @@
+use log::debug;
 use memmap2::Mmap;
 
 use crate::core::MurrError;
@@ -65,6 +66,7 @@ impl<'a> Reader<'a> for MMapReader<'a> {
         &self,
         requests: &[SegmentReadRequest],
     ) -> Result<Vec<T>, MurrError> {
+        debug!("mmap read: {} requests", requests.len());
         let mut results = Vec::with_capacity(requests.len());
         for req in requests {
             let mmap = self

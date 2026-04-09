@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use log::info;
+
 use crate::core::MurrError;
 use crate::io2::directory::mmap::reader::MMapReader;
 use crate::io2::directory::mmap::writer::MMapWriter;
@@ -32,6 +34,7 @@ impl Directory for MMapDirectory {
     type WriterType<'a> = MMapWriter<'a>;
 
     fn open(url: &LocalUrl, page_size: u32, direct: bool) -> MMapDirectory {
+        info!("mmap directory opened: {}", url.path.display());
         MMapDirectory {
             url: url.clone(),
             page_size,
@@ -40,10 +43,12 @@ impl Directory for MMapDirectory {
     }
 
     async fn open_reader(&self) -> Result<Self::ReaderType<'_>, MurrError> {
+        info!("mmap reader opened: {}", self.path().display());
         MMapReader::new(self).await
     }
 
     async fn open_writer(&self) -> Result<Self::WriterType<'_>, MurrError> {
+        info!("mmap writer opened: {}", self.path().display());
         MMapWriter::new(self).await
     }
 }

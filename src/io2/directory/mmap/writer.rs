@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use log::debug;
+
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
 use crate::io2::directory::Writer;
@@ -120,6 +122,14 @@ impl<'a> Writer<'a> for MMapWriter<'a> {
                 });
             entry.segments.insert(segment_id, seg_info);
         }
+
+        let seg_path = self.dir.segment_path(segment_id);
+        debug!(
+            "mmap write: segment={segment_id} path={} columns={} bytes={}",
+            seg_path.display(),
+            columns.len(),
+            combined.len()
+        );
 
         self.flush_segment(segment_id, &combined)?;
         self.flush_info(&info)?;

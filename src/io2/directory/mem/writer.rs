@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use log::debug;
+
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
@@ -84,6 +86,12 @@ impl<'a> Writer<'a> for MemWriter<'a> {
 
         let metadata = serde_json::to_vec_pretty(&info)
             .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
+
+        debug!(
+            "mem write: segment={segment_id} columns={} bytes={}",
+            columns.len(),
+            combined.len()
+        );
 
         let mut files = self
             .dir

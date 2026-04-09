@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use log::info;
+
 use crate::core::MurrError;
 use crate::io2::directory::mem::reader::MemReader;
 use crate::io2::directory::mem::writer::MemWriter;
-use crate::io2::directory::{Directory, METADATA_JSON, Reader, Writer};
+use crate::io2::directory::{Directory, Reader, Writer};
 use crate::io2::url::MemUrl;
 
 pub struct MemDirectory {
@@ -23,16 +25,19 @@ impl Directory for MemDirectory {
     type WriterType<'a> = MemWriter<'a>;
 
     fn open(_url: &MemUrl, _page_size: u32, _direct: bool) -> MemDirectory {
+        info!("mem directory opened");
         MemDirectory {
             files: RwLock::new(HashMap::new()),
         }
     }
 
     async fn open_reader(&self) -> Result<Self::ReaderType<'_>, MurrError> {
+        info!("mem reader opened");
         MemReader::new(self).await
     }
 
     async fn open_writer(&self) -> Result<Self::WriterType<'_>, MurrError> {
+        info!("mem writer opened");
         MemWriter::new(self).await
     }
 }
