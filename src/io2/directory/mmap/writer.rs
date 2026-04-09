@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use log::debug;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
 use crate::io2::directory::Writer;
@@ -77,6 +79,7 @@ impl MMapWriter {
     }
 }
 
+#[async_trait]
 impl Writer for MMapWriter {
     type D = MMapDirectory;
 

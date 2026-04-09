@@ -3,6 +3,8 @@ use std::sync::Arc;
 use log::debug;
 use memmap2::Mmap;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mmap::directory::MMapDirectory;
@@ -51,6 +53,7 @@ impl MMapReader {
     }
 }
 
+#[async_trait]
 impl Reader for MMapReader {
     type D = MMapDirectory;
 

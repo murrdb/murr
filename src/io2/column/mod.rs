@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use arrow::array::Array;
 use async_trait::async_trait;
+use bincode::{Decode, Encode};
 
 use crate::{
     core::MurrError,
@@ -32,12 +33,13 @@ impl ColumnSegmentBytes {
     }
 }
 
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct OffsetSize {
     pub offset: u32,
     pub size: u32,
 }
 
-pub trait Column<D: Directory> {
+pub trait Column<D: Directory>: Send + Sync {
     type R: ColumnReader<D>;
     type W: ColumnWriter<D>;
     fn reader(&self) -> Self::R;
@@ -46,11 +48,10 @@ pub trait Column<D: Directory> {
 
 #[async_trait]
 pub trait ColumnReader<D: Directory>: Send + Sync {
-    async fn read(
-        &self,
-        reader: &D::ReaderType,
-        keys: &[KeyOffset],
-    ) -> Result<Arc<dyn Array>, MurrError>;
+    async fn open(dir: Arc<D>, column: Arc<ColumnInfo>) -> Result<Self, MurrError>
+    where
+        Self: Sized;
+    async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 
 #[async_trait]

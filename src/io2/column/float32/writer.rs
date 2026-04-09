@@ -1,0 +1,197 @@
+use std::sync::Arc;
+
+use arrow::array::{Array, Float32Array};
+use async_trait::async_trait;
+use bytemuck::cast_slice;
+
+use crate::core::MurrError;
+use crate::io2::bitmap::NullBitmap;
+use crate::io2::column::float32::footer::{align8_padding, encode_footer, Float32ColumnFooter};
+use crate::io2::column::{ColumnSegmentBytes, ColumnWriter, OffsetSize};
+use crate::io2::directory::Directory;
+use crate::io2::info::ColumnInfo;
+
+pub struct Float32ColumnWriter<D: Directory> {
+    dir: Arc<D>,
+    column: Arc<ColumnInfo>,
+}
+
+impl<D: Directory> Float32ColumnWriter<D> {
+    pub fn new(dir: Arc<D>, column: Arc<ColumnInfo>) -> Self {
+        Float32ColumnWriter { dir, column }
+    }
+}
+
+#[async_trait]
+impl<D: Directory> ColumnWriter<D> for Float32ColumnWriter<D> {
+    async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError> {
+        let array = values
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| MurrError::TableError("expected Float32Array".into()))?;
+
+        let num_values = array.len() as u32;
+
+        // Build payload: 0.0 for nulls
+        let payload: Vec<f32> = (0..array.len())
+            .map(|i| if array.is_null(i) { 0.0f32 } else { array.value(i) })
+            .collect();
+        let payload_bytes: &[u8] = cast_slice(&payload);
+
+        // Build null bitmap
+        let bitmap_bytes = if self.column.nullable {
+            NullBitmap::<D>::write(values.as_ref())
+        } else {
+            Vec::new()
+        };
+
+        // Layout
+        let payload_size = num_values * 4;
+        let padding1 = align8_padding(payload_size);
+
+        let (bitmap_offset, bitmap_size) = if bitmap_bytes.is_empty() {
+            (0u32, 0u32)
+        } else {
+            (payload_size + padding1, bitmap_bytes.len() as u32)
+        };
+        let padding2 = if bitmap_bytes.is_empty() {
+            0
+        } else {
+            align8_padding(bitmap_size)
+        };
+
+        let footer = Float32ColumnFooter {
+            payload: OffsetSize {
+                offset: 0,
+                size: payload_size,
+            },
+            bitmap: OffsetSize {
+                offset: bitmap_offset,
+                size: bitmap_size,
+            },
+        };
+        let footer_bytes = encode_footer(&footer)?;
+
+        let total_size =
+            payload_size + padding1 + bitmap_size + padding2 + footer_bytes.len() as u32;
+        let mut buf = Vec::with_capacity(total_size as usize);
+        buf.extend_from_slice(payload_bytes);
+        buf.extend_from_slice(&vec![0u8; padding1 as usize]);
+        if !bitmap_bytes.is_empty() {
+            buf.extend_from_slice(&bitmap_bytes);
+            buf.extend_from_slice(&vec![0u8; padding2 as usize]);
+        }
+        buf.extend_from_slice(&footer_bytes);
+
+        Ok(ColumnSegmentBytes::new(
+            (*self.column).clone(),
+            buf,
+            num_values,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::DType;
+    use crate::io2::column::float32::footer::Float32ColumnFooter;
+    use crate::io2::bytes::FromBytes;
+    use crate::io2::directory::mem::directory::MemDirectory;
+    use crate::io2::url::MemUrl;
+    use bytemuck::cast_slice;
+
+    fn test_dir() -> Arc<MemDirectory> {
+        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
+    }
+
+    fn non_nullable_info() -> Arc<ColumnInfo> {
+        Arc::new(ColumnInfo {
+            name: "score".to_string(),
+            dtype: DType::Float32,
+            nullable: false,
+        })
+    }
+
+    fn nullable_info() -> Arc<ColumnInfo> {
+        Arc::new(ColumnInfo {
+            name: "score".to_string(),
+            dtype: DType::Float32,
+            nullable: true,
+        })
+    }
+
+    fn make_array(values: &[Option<f32>]) -> Arc<dyn Array> {
+        Arc::new(values.iter().copied().collect::<Float32Array>())
+    }
+
+    fn make_non_null_array(values: &[f32]) -> Arc<dyn Array> {
+        Arc::new(Float32Array::from(values.to_vec()))
+    }
+
+    #[tokio::test]
+    async fn write_non_nullable() {
+        let dir = test_dir();
+        let writer = Float32ColumnWriter::new(dir, non_nullable_info());
+
+        let result = writer.write(make_non_null_array(&[1.0, 2.5, 3.0])).await.unwrap();
+        assert_eq!(result.num_values, 3);
+
+        let bytes = &result.bytes.bytes;
+        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        assert_eq!(footer.payload.offset, 0);
+        assert_eq!(footer.payload.size, 12);
+        assert_eq!(footer.bitmap.size, 0);
+
+        let payload: &[f32] = cast_slice(&bytes[0..12]);
+        assert_eq!(payload, &[1.0, 2.5, 3.0]);
+    }
+
+    #[tokio::test]
+    async fn write_nullable_with_nulls() {
+        let dir = test_dir();
+        let writer = Float32ColumnWriter::new(dir, nullable_info());
+
+        let result = writer
+            .write(make_array(&[Some(1.0), None, Some(3.0), None]))
+            .await
+            .unwrap();
+        assert_eq!(result.num_values, 4);
+
+        let bytes = &result.bytes.bytes;
+        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        assert_eq!(footer.payload.size, 16);
+        assert!(footer.bitmap.size > 0);
+
+        let bitmap_start = footer.bitmap.offset as usize;
+        let bitmap_end = bitmap_start + footer.bitmap.size as usize;
+        let bitmap_words: &[u64] = cast_slice(&bytes[bitmap_start..bitmap_end]);
+        // bit0=1, bit1=0, bit2=1, bit3=0 => 0b0101 = 5
+        assert_eq!(bitmap_words[0], 0b0101);
+    }
+
+    #[tokio::test]
+    async fn write_nullable_no_nulls() {
+        let dir = test_dir();
+        let writer = Float32ColumnWriter::new(dir, nullable_info());
+
+        let result = writer
+            .write(make_array(&[Some(1.0), Some(2.0)]))
+            .await
+            .unwrap();
+
+        let bytes = &result.bytes.bytes;
+        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        assert_eq!(footer.bitmap.offset, 0);
+        assert_eq!(footer.bitmap.size, 0);
+    }
+
+    #[tokio::test]
+    async fn write_empty() {
+        let dir = test_dir();
+        let writer = Float32ColumnWriter::new(dir, non_nullable_info());
+
+        let result = writer.write(make_non_null_array(&[])).await.unwrap();
+        assert_eq!(result.num_values, 0);
+    }
+}

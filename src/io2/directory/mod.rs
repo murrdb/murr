@@ -3,6 +3,8 @@ pub mod mmap;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::{
     core::MurrError,
     io2::{bytes::FromBytes, column::ColumnSegmentBytes, info::TableInfo, url::Url},
@@ -10,7 +12,7 @@ use crate::{
 
 pub const METADATA_JSON: &str = "_metadata.json";
 
-#[allow(async_fn_in_trait)]
+#[async_trait]
 pub trait Directory: Sized + Send + Sync + 'static {
     type Location: Url;
     type ReaderType: Reader + Send + Sync;
@@ -31,20 +33,20 @@ pub struct SegmentReadRequest {
     pub read: ReadRequest,
 }
 
-#[allow(async_fn_in_trait)]
-pub trait Reader: Sized {
+#[async_trait]
+pub trait Reader: Sized + Send + Sync {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
-    async fn read<T, C: FromBytes<T>>(
+    async fn read<T: Send, C: FromBytes<T> + Send>(
         &self,
         requests: &[SegmentReadRequest],
     ) -> Result<Vec<T>, MurrError>;
 }
 
-#[allow(async_fn_in_trait)]
-pub trait Writer: Sized {
+#[async_trait]
+pub trait Writer: Sized + Send + Sync {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;

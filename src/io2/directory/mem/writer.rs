@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use log::debug;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
@@ -38,6 +40,7 @@ impl MemWriter {
     }
 }
 
+#[async_trait]
 impl Writer for MemWriter {
     type D = MemDirectory;
 

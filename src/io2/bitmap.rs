@@ -1,54 +1,59 @@
+use std::sync::Arc;
+
 use arrow::array::Array;
 use bytemuck::cast_slice;
 
 use crate::core::MurrError;
+use crate::io2::column::OffsetSize;
 use crate::io2::{
     directory::{Directory, ReadRequest, Reader, SegmentReadRequest},
     table::key_offset::KeyOffset,
 };
 
-pub struct NullBitmap {
-    pub segment: u32,
-    pub offset: u32,
-    pub size: u32,
+pub struct NullBitmap<D: Directory> {
+    pub segments: Vec<Option<OffsetSize>>,
+    pub reader: Arc<D::ReaderType>,
 }
 
-impl NullBitmap {
-    pub fn new(segment: u32, offset: u32, size: u32) -> Self {
-        NullBitmap {
-            segment,
-            offset,
-            size,
-        }
+impl<D: Directory> NullBitmap<D> {
+    pub fn new(segments: Vec<Option<OffsetSize>>, reader: Arc<D::ReaderType>) -> Self {
+        NullBitmap { segments, reader }
     }
 
-    pub async fn get_nulls<D: Directory>(
-        &self,
-        reader: &D::ReaderType,
-        keys: &[KeyOffset],
-    ) -> Result<Vec<usize>, MurrError> {
-        if self.size == 0 || keys.is_empty() {
+    pub async fn get_nulls(&self, keys: &[KeyOffset]) -> Result<Vec<usize>, MurrError> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
 
-        let requests: Vec<SegmentReadRequest> = keys
-            .iter()
-            .map(|key| {
-                let word_index = key.segment_index / 64;
-                let word_byte_offset = self.offset + word_index * 8;
-                SegmentReadRequest {
-                    segment: self.segment,
-                    read: ReadRequest {
-                        offset: word_byte_offset,
-                        size: 8,
-                    },
+        let mut bitmap_keys: Vec<&KeyOffset> = Vec::new();
+        let mut requests: Vec<SegmentReadRequest> = Vec::new();
+
+        for key in keys {
+            let seg = key.segment as usize;
+            match self.segments.get(seg).and_then(|s| s.as_ref()) {
+                Some(os) if os.size > 0 => {
+                    let word_index = key.segment_index / 64;
+                    let word_byte_offset = os.offset + word_index * 8;
+                    requests.push(SegmentReadRequest {
+                        segment: key.segment,
+                        read: ReadRequest {
+                            offset: word_byte_offset,
+                            size: 8,
+                        },
+                    });
+                    bitmap_keys.push(key);
                 }
-            })
-            .collect();
+                _ => {}
+            }
+        }
 
-        let words: Vec<u64> = reader.read::<u64, u64>(&requests).await?;
+        if bitmap_keys.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let nulls = keys
+        let words: Vec<u64> = self.reader.read::<u64, u64>(&requests).await?;
+
+        let nulls = bitmap_keys
             .iter()
             .zip(words.iter())
             .filter_map(|(key, &word)| {
@@ -119,14 +124,14 @@ mod tests {
     #[test]
     fn write_no_nulls() {
         let array = Int32Array::from(vec![1, 2, 3]);
-        let bytes = NullBitmap::write(&array);
+        let bytes = NullBitmap::<MemDirectory>::write(&array);
         assert!(bytes.is_empty());
     }
 
     #[test]
     fn write_with_nulls() {
         let array = Int32Array::from(vec![Some(1), None, Some(3), Some(4)]);
-        let bytes = NullBitmap::write(&array);
+        let bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bytes.len(), 8);
         let words: &[u64] = cast_slice(&bytes);
         // bit 0 set, bit 1 clear, bit 2 set, bit 3 set = 0b1101 = 13
@@ -136,7 +141,7 @@ mod tests {
     #[test]
     fn write_all_nulls() {
         let array = Int32Array::from(vec![None, None, None]);
-        let bytes = NullBitmap::write(&array);
+        let bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bytes.len(), 8);
         let words: &[u64] = cast_slice(&bytes);
         assert_eq!(words[0], 0);
@@ -148,7 +153,7 @@ mod tests {
             .map(|i| if i == 63 { None } else { Some(i) })
             .collect();
         let array = Int32Array::from(values);
-        let bytes = NullBitmap::write(&array);
+        let bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bytes.len(), 8);
         let words: &[u64] = cast_slice(&bytes);
         assert_eq!(words[0], u64::MAX ^ (1 << 63));
@@ -160,7 +165,7 @@ mod tests {
             .map(|i| if i == 64 { None } else { Some(i) })
             .collect();
         let array = Int32Array::from(values);
-        let bytes = NullBitmap::write(&array);
+        let bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bytes.len(), 16);
         let words: &[u64] = cast_slice(&bytes);
         assert_eq!(words[0], u64::MAX);
@@ -171,19 +176,16 @@ mod tests {
     async fn get_nulls_empty_bitmap() {
         let dir = test_dir();
         let writer = dir.open_writer().await.unwrap();
-        writer
-            .write(&[bitmap_column(vec![0; 8], 4)])
-            .await
-            .unwrap();
+        writer.write(&[bitmap_column(vec![0; 8], 4)]).await.unwrap();
 
-        let reader = dir.open_reader().await.unwrap();
-        let bitmap = NullBitmap::new(0, 0, 0);
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let bitmap: NullBitmap<MemDirectory> = NullBitmap::new(vec![None], reader);
         let keys = vec![KeyOffset {
             request_index: 0,
             segment: 0,
             segment_index: 0,
         }];
-        let nulls = bitmap.get_nulls::<MemDirectory>(&reader, &keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&keys).await.unwrap();
         assert!(nulls.is_empty());
     }
 
@@ -191,21 +193,21 @@ mod tests {
     async fn get_nulls_empty_keys() {
         let dir = test_dir();
         let writer = dir.open_writer().await.unwrap();
-        writer
-            .write(&[bitmap_column(vec![0; 8], 4)])
-            .await
-            .unwrap();
+        writer.write(&[bitmap_column(vec![0; 8], 4)]).await.unwrap();
 
-        let reader = dir.open_reader().await.unwrap();
-        let bitmap = NullBitmap::new(0, 0, 8);
-        let nulls = bitmap.get_nulls::<MemDirectory>(&reader, &[]).await.unwrap();
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let bitmap: NullBitmap<MemDirectory> = NullBitmap::new(
+            vec![Some(OffsetSize { offset: 0, size: 8 })],
+            reader,
+        );
+        let nulls = bitmap.get_nulls(&[]).await.unwrap();
         assert!(nulls.is_empty());
     }
 
     #[tokio::test]
     async fn get_nulls_roundtrip() {
         let array = Int32Array::from(vec![Some(1), None, Some(3), None, Some(5)]);
-        let bitmap_bytes = NullBitmap::write(&array);
+        let bitmap_bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bitmap_bytes.len(), 8);
 
         let dir = test_dir();
@@ -215,8 +217,11 @@ mod tests {
             .await
             .unwrap();
 
-        let reader = dir.open_reader().await.unwrap();
-        let bitmap = NullBitmap::new(0, 0, bitmap_bytes.len() as u32);
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let bitmap: NullBitmap<MemDirectory> = NullBitmap::new(
+            vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
+            reader,
+        );
 
         let keys: Vec<KeyOffset> = (0..5)
             .map(|i| KeyOffset {
@@ -226,14 +231,14 @@ mod tests {
             })
             .collect();
 
-        let nulls = bitmap.get_nulls::<MemDirectory>(&reader, &keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&keys).await.unwrap();
         assert_eq!(nulls, vec![1, 3]);
     }
 
     #[tokio::test]
     async fn get_nulls_sparse_keys() {
         let array = Int32Array::from(vec![Some(1), None, Some(3), None, Some(5)]);
-        let bitmap_bytes = NullBitmap::write(&array);
+        let bitmap_bytes = NullBitmap::<MemDirectory>::write(&array);
 
         let dir = test_dir();
         let writer = dir.open_writer().await.unwrap();
@@ -242,8 +247,11 @@ mod tests {
             .await
             .unwrap();
 
-        let reader = dir.open_reader().await.unwrap();
-        let bitmap = NullBitmap::new(0, 0, bitmap_bytes.len() as u32);
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let bitmap: NullBitmap<MemDirectory> = NullBitmap::new(
+            vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
+            reader,
+        );
 
         // Only query indices 1 and 4 (request_index differs from segment_index)
         let keys = vec![
@@ -259,7 +267,7 @@ mod tests {
             },
         ];
 
-        let nulls = bitmap.get_nulls::<MemDirectory>(&reader, &keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&keys).await.unwrap();
         // segment_index 1 is null -> request_index 0
         // segment_index 4 is valid -> not included
         assert_eq!(nulls, vec![0]);
@@ -271,7 +279,7 @@ mod tests {
             .map(|i| if i == 64 { None } else { Some(i) })
             .collect();
         let array = Int32Array::from(values);
-        let bitmap_bytes = NullBitmap::write(&array);
+        let bitmap_bytes = NullBitmap::<MemDirectory>::write(&array);
         assert_eq!(bitmap_bytes.len(), 16);
 
         let dir = test_dir();
@@ -281,8 +289,11 @@ mod tests {
             .await
             .unwrap();
 
-        let reader = dir.open_reader().await.unwrap();
-        let bitmap = NullBitmap::new(0, 0, bitmap_bytes.len() as u32);
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let bitmap: NullBitmap<MemDirectory> = NullBitmap::new(
+            vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
+            reader,
+        );
 
         let keys: Vec<KeyOffset> = (0..65)
             .map(|i| KeyOffset {
@@ -292,7 +303,7 @@ mod tests {
             })
             .collect();
 
-        let nulls = bitmap.get_nulls::<MemDirectory>(&reader, &keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&keys).await.unwrap();
         assert_eq!(nulls, vec![64]);
     }
 }

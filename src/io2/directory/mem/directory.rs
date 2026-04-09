@@ -3,6 +3,8 @@ use std::sync::{Arc, RwLock};
 
 use log::info;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::directory::mem::reader::MemReader;
 use crate::io2::directory::mem::writer::MemWriter;
@@ -19,6 +21,7 @@ impl MemDirectory {
     }
 }
 
+#[async_trait]
 impl Directory for MemDirectory {
     type Location = MemUrl;
     type ReaderType = MemReader;

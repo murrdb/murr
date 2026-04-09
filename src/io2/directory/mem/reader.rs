@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use log::debug;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
@@ -13,6 +15,7 @@ pub struct MemReader {
     info: TableInfo,
 }
 
+#[async_trait]
 impl Reader for MemReader {
     type D = MemDirectory;
 

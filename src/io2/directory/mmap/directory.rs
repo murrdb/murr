@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use log::info;
 
+use async_trait::async_trait;
+
 use crate::core::MurrError;
 use crate::io2::directory::mmap::reader::MMapReader;
 use crate::io2::directory::mmap::writer::MMapWriter;
@@ -29,6 +31,7 @@ impl MMapDirectory {
     }
 }
 
+#[async_trait]
 impl Directory for MMapDirectory {
     type Location = LocalUrl;
     type ReaderType = MMapReader;
