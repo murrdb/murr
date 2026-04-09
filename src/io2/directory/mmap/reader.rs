@@ -1,20 +1,18 @@
-use std::sync::Arc;
-
 use memmap2::Mmap;
 
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mmap::directory::MMapDirectory;
-use crate::io2::directory::{SegmentReadRequest, TableReader};
+use crate::io2::directory::{Reader, SegmentReadRequest};
 use crate::io2::info::TableInfo;
 
-pub struct MMapReader {
-    dir: Arc<MMapDirectory>,
+pub struct MMapReader<'a> {
+    dir: &'a MMapDirectory,
     info: TableInfo,
     mmaps: Vec<Option<Mmap>>,
 }
 
-impl MMapReader {
+impl MMapReader<'_> {
     fn load_info(dir: &MMapDirectory) -> Result<TableInfo, MurrError> {
         let path = dir.metadata_path();
         let data = std::fs::read(&path)
@@ -50,12 +48,12 @@ impl MMapReader {
     }
 }
 
-impl TableReader for MMapReader {
+impl<'a> Reader<'a> for MMapReader<'a> {
     type D = MMapDirectory;
 
-    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
-        let info = Self::load_info(&dir)?;
-        let mmaps = Self::load_mmaps(&dir, &info)?;
+    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
+        let info = Self::load_info(dir)?;
+        let mmaps = Self::load_mmaps(dir, &info)?;
         Ok(MMapReader { dir, info, mmaps })
     }
 
@@ -87,16 +85,16 @@ impl TableReader for MMapReader {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io2::directory::{Directory, ReadRequest, SegmentBytes, TableWriter};
-    use crate::io2::info::{ColumnInfo, ColumnSegment};
+    use crate::io2::directory::{Directory, ReadRequest, SegmentBytes, Writer};
+    use crate::io2::info::{ColumnInfo, SegmentInfo};
     use crate::io2::url::LocalUrl;
     use std::collections::HashMap;
 
-    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
+    fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, 4096, false))
+        MMapDirectory::open(&url, 4096, false)
     }
 
     #[tokio::test]
@@ -110,15 +108,15 @@ mod tests {
         let mut col_segments = HashMap::new();
         col_segments.insert(
             0,
-            ColumnSegment {
+            SegmentInfo {
                 offset: 0,
                 length: payload.len() as u32,
                 num_values: 1,
             },
         );
         let segment = SegmentBytes {
-            id: 0,
-            payload,
+            segment_id: 0,
+            bytes,
             columns: vec![ColumnInfo {
                 name: "data".to_string(),
                 dtype: DType::Utf8,
@@ -152,15 +150,15 @@ mod tests {
         let mut col_segments = HashMap::new();
         col_segments.insert(
             0,
-            ColumnSegment {
+            SegmentInfo {
                 offset: 0,
                 length: 4,
                 num_values: 1,
             },
         );
         let segment = SegmentBytes {
-            id: 0,
-            payload,
+            segment_id: 0,
+            bytes,
             columns: vec![ColumnInfo {
                 name: "score".to_string(),
                 dtype: DType::Float32,
@@ -173,13 +171,10 @@ mod tests {
         let reader = dir.open_reader().await.unwrap();
         let requests = vec![SegmentReadRequest {
             segment: 0,
-            read: ReadRequest {
-                offset: 0,
-                size: 4,
-            },
+            read: ReadRequest { offset: 0, size: 4 },
         }];
         let results: Vec<f32> = reader.read::<f32, f32>(&requests).await.unwrap();
-        assert_eq!(results, vec![3.14_f32]);
+        assert_eq!(results, vec![42.5_f32]);
     }
 
     #[tokio::test]
@@ -197,7 +192,7 @@ mod tests {
             for j in 0..=i {
                 col_segments.insert(
                     j,
-                    ColumnSegment {
+                    SegmentInfo {
                         offset: 0,
                         length: 4,
                         num_values: 1,
@@ -205,8 +200,8 @@ mod tests {
                 );
             }
             let segment = SegmentBytes {
-                id: i,
-                payload,
+                segment_id: i,
+                bytes,
                 columns: vec![ColumnInfo {
                     name: "val".to_string(),
                     dtype: DType::Float32,
@@ -221,17 +216,11 @@ mod tests {
         let requests = vec![
             SegmentReadRequest {
                 segment: 1,
-                read: ReadRequest {
-                    offset: 0,
-                    size: 4,
-                },
+                read: ReadRequest { offset: 0, size: 4 },
             },
             SegmentReadRequest {
                 segment: 0,
-                read: ReadRequest {
-                    offset: 0,
-                    size: 4,
-                },
+                read: ReadRequest { offset: 0, size: 4 },
             },
         ];
         let results: Vec<f32> = reader.read::<f32, f32>(&requests).await.unwrap();
@@ -245,10 +234,17 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
 
         let mut col_segments = HashMap::new();
-        col_segments.insert(0, ColumnSegment { offset: 0, length: 4, num_values: 1 });
+        col_segments.insert(
+            0,
+            SegmentInfo {
+                offset: 0,
+                length: 4,
+                num_values: 1,
+            },
+        );
         let segment = SegmentBytes {
-            id: 0,
-            payload: vec![0; 4],
+            segment_id: 0,
+            bytes: vec![0; 4],
             columns: vec![ColumnInfo {
                 name: "x".to_string(),
                 dtype: DType::Float32,
@@ -261,10 +257,7 @@ mod tests {
         let reader = dir.open_reader().await.unwrap();
         let requests = vec![SegmentReadRequest {
             segment: 99,
-            read: ReadRequest {
-                offset: 0,
-                size: 4,
-            },
+            read: ReadRequest { offset: 0, size: 4 },
         }];
         let result = reader.read::<f32, f32>(&requests).await;
         assert!(result.is_err());
@@ -277,10 +270,17 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
 
         let mut col_segments = HashMap::new();
-        col_segments.insert(0, ColumnSegment { offset: 0, length: 4, num_values: 1 });
+        col_segments.insert(
+            0,
+            SegmentInfo {
+                offset: 0,
+                length: 4,
+                num_values: 1,
+            },
+        );
         let segment = SegmentBytes {
-            id: 0,
-            payload: vec![0; 4],
+            segment_id: 0,
+            bytes: vec![0; 4],
             columns: vec![ColumnInfo {
                 name: "x".to_string(),
                 dtype: DType::Float32,

@@ -2096,6 +2096,7 @@ dependencies = [
  "ahash",
  "arrow",
  "arrow-flight",
+ "async-trait",
  "axum",
  "bincode",
  "boomphf",

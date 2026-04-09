@@ -44,6 +44,7 @@ bytemuck = "1"
 bincode = { version = "2", features = ["derive"] }
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
+async-trait = "0.1"
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }

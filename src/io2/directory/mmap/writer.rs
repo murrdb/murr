@@ -1,26 +1,25 @@
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 use crate::core::MurrError;
 use crate::io2::directory::mmap::directory::MMapDirectory;
-use crate::io2::directory::{SegmentBytes, TableWriter};
+use crate::io2::directory::{SegmentBytes, Writer};
 use crate::io2::info::TableInfo;
 
-pub struct MMapWriter {
-    dir: Arc<MMapDirectory>,
+pub struct MMapWriter<'a> {
+    dir: &'a MMapDirectory,
 }
 
-fn tmp_path(path: &PathBuf) -> PathBuf {
+fn tmp_path(path: &Path) -> PathBuf {
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(".tmp");
     PathBuf::from(tmp)
 }
 
-impl MMapWriter {
+impl MMapWriter<'_> {
     fn flush_info(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
         let info = TableInfo {
-            max_segment_id: segment.id,
+            max_segment_id: segment.segment_id,
             columns: segment
                 .columns
                 .iter()
@@ -46,12 +45,12 @@ impl MMapWriter {
     }
 
     fn flush_segment(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
-        let seg_path = self.dir.segment_path(segment.id);
+        let seg_path = self.dir.segment_path(segment.segment_id);
         let tmp = tmp_path(&seg_path);
 
         let mut file = std::fs::File::create(&tmp)
             .map_err(|e| MurrError::IoError(format!("creating {}: {e}", tmp.display())))?;
-        file.write_all(&segment.payload)
+        file.write_all(&segment.bytes)
             .map_err(|e| MurrError::IoError(format!("writing {}: {e}", tmp.display())))?;
         file.sync_all()
             .map_err(|e| MurrError::IoError(format!("syncing {}: {e}", tmp.display())))?;
@@ -69,10 +68,10 @@ impl MMapWriter {
     }
 }
 
-impl TableWriter for MMapWriter {
+impl<'a> Writer<'a> for MMapWriter<'a> {
     type D = MMapDirectory;
 
-    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
+    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
         Ok(MMapWriter { dir })
     }
 
@@ -88,30 +87,30 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io2::directory::Directory;
-    use crate::io2::info::{ColumnInfo, ColumnSegment};
+    use crate::io2::info::{ColumnInfo, SegmentInfo};
     use crate::io2::url::LocalUrl;
     use std::collections::HashMap;
 
-    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
+    fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, 4096, false))
+        MMapDirectory::open(&url, 4096, false)
     }
 
     fn segment_with_column(id: u32, payload: Vec<u8>) -> SegmentBytes {
         let mut col_segments = HashMap::new();
         col_segments.insert(
             id,
-            ColumnSegment {
+            SegmentInfo {
                 offset: 0,
                 length: payload.len() as u32,
                 num_values: payload.len() as u32 / 4,
             },
         );
         SegmentBytes {
-            id,
-            payload,
+            segment_id: id,
+            bytes: payload,
             columns: vec![ColumnInfo {
                 name: "score".to_string(),
                 dtype: DType::Float32,
@@ -163,12 +162,26 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
 
         let mut col_segments = HashMap::new();
-        col_segments.insert(0, ColumnSegment { offset: 0, length: 16, num_values: 4 });
-        col_segments.insert(1, ColumnSegment { offset: 0, length: 16, num_values: 4 });
+        col_segments.insert(
+            0,
+            SegmentInfo {
+                offset: 0,
+                length: 16,
+                num_values: 4,
+            },
+        );
+        col_segments.insert(
+            1,
+            SegmentInfo {
+                offset: 0,
+                length: 16,
+                num_values: 4,
+            },
+        );
 
         let segment = SegmentBytes {
-            id: 1,
-            payload: vec![1; 16],
+            segment_id: 1,
+            bytes: vec![1; 16],
             columns: vec![ColumnInfo {
                 name: "score".to_string(),
                 dtype: DType::Float32,
