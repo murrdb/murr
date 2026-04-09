@@ -2,12 +2,7 @@ pub mod mmap;
 
 use crate::{
     core::MurrError,
-    io2::{
-        bytes::FromBytes,
-        info::{ColumnInfo, SegmentInfo, TableInfo},
-        table::column::ColumnSegmentBytes,
-        url::Url,
-    },
+    io2::{bytes::FromBytes, column::ColumnSegmentBytes, info::TableInfo, url::Url},
 };
 
 pub const METADATA_JSON: &str = "_metadata.json";

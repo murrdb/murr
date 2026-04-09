@@ -85,16 +85,33 @@ impl<'a> Reader<'a> for MMapReader<'a> {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io2::directory::{Directory, ReadRequest, SegmentBytes, Writer};
-    use crate::io2::info::{ColumnInfo, SegmentInfo};
+    use crate::io2::column::ColumnSegmentBytes;
+    use crate::io2::directory::{Directory, ReadRequest, Writer};
+    use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
-    use std::collections::HashMap;
 
     fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
         MMapDirectory::open(&url, 4096, false)
+    }
+
+    fn column_bytes(
+        name: &str,
+        dtype: DType,
+        payload: Vec<u8>,
+        num_values: u32,
+    ) -> ColumnSegmentBytes {
+        ColumnSegmentBytes::new(
+            ColumnInfo {
+                name: name.to_string(),
+                dtype,
+                nullable: false,
+            },
+            payload,
+            num_values,
+        )
     }
 
     #[tokio::test]
@@ -105,26 +122,10 @@ mod tests {
         // Write a segment with known bytes
         let writer = dir.open_writer().await.unwrap();
         let payload = b"hello world!".to_vec();
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            0,
-            SegmentInfo {
-                offset: 0,
-                length: payload.len() as u32,
-                num_values: 1,
-            },
-        );
-        let segment = SegmentBytes {
-            segment_id: 0,
-            bytes,
-            columns: vec![ColumnInfo {
-                name: "data".to_string(),
-                dtype: DType::Utf8,
-                nullable: false,
-                segments: col_segments,
-            }],
-        };
-        writer.write(&segment).await.unwrap();
+        writer
+            .write(&[column_bytes("data", DType::Utf8, payload, 1)])
+            .await
+            .unwrap();
 
         // Read back
         let reader = dir.open_reader().await.unwrap();
@@ -147,26 +148,10 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
         let value: f32 = 42.5;
         let payload = value.to_ne_bytes().to_vec();
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            0,
-            SegmentInfo {
-                offset: 0,
-                length: 4,
-                num_values: 1,
-            },
-        );
-        let segment = SegmentBytes {
-            segment_id: 0,
-            bytes,
-            columns: vec![ColumnInfo {
-                name: "score".to_string(),
-                dtype: DType::Float32,
-                nullable: false,
-                segments: col_segments,
-            }],
-        };
-        writer.write(&segment).await.unwrap();
+        writer
+            .write(&[column_bytes("score", DType::Float32, payload, 1)])
+            .await
+            .unwrap();
 
         let reader = dir.open_reader().await.unwrap();
         let requests = vec![SegmentReadRequest {
@@ -187,29 +172,10 @@ mod tests {
         for i in 0..2u32 {
             let value: f32 = i as f32 * 10.0;
             let payload = value.to_ne_bytes().to_vec();
-            let mut col_segments = HashMap::new();
-            // Full view: include all segments written so far
-            for j in 0..=i {
-                col_segments.insert(
-                    j,
-                    SegmentInfo {
-                        offset: 0,
-                        length: 4,
-                        num_values: 1,
-                    },
-                );
-            }
-            let segment = SegmentBytes {
-                segment_id: i,
-                bytes,
-                columns: vec![ColumnInfo {
-                    name: "val".to_string(),
-                    dtype: DType::Float32,
-                    nullable: false,
-                    segments: col_segments,
-                }],
-            };
-            writer.write(&segment).await.unwrap();
+            writer
+                .write(&[column_bytes("val", DType::Float32, payload, 1)])
+                .await
+                .unwrap();
         }
 
         let reader = dir.open_reader().await.unwrap();
@@ -233,26 +199,10 @@ mod tests {
         let dir = test_dir(&tmp);
         let writer = dir.open_writer().await.unwrap();
 
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            0,
-            SegmentInfo {
-                offset: 0,
-                length: 4,
-                num_values: 1,
-            },
-        );
-        let segment = SegmentBytes {
-            segment_id: 0,
-            bytes: vec![0; 4],
-            columns: vec![ColumnInfo {
-                name: "x".to_string(),
-                dtype: DType::Float32,
-                nullable: false,
-                segments: col_segments,
-            }],
-        };
-        writer.write(&segment).await.unwrap();
+        writer
+            .write(&[column_bytes("x", DType::Float32, vec![0; 4], 1)])
+            .await
+            .unwrap();
 
         let reader = dir.open_reader().await.unwrap();
         let requests = vec![SegmentReadRequest {
@@ -269,26 +219,10 @@ mod tests {
         let dir = test_dir(&tmp);
         let writer = dir.open_writer().await.unwrap();
 
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            0,
-            SegmentInfo {
-                offset: 0,
-                length: 4,
-                num_values: 1,
-            },
-        );
-        let segment = SegmentBytes {
-            segment_id: 0,
-            bytes: vec![0; 4],
-            columns: vec![ColumnInfo {
-                name: "x".to_string(),
-                dtype: DType::Float32,
-                nullable: false,
-                segments: col_segments,
-            }],
-        };
-        writer.write(&segment).await.unwrap();
+        writer
+            .write(&[column_bytes("x", DType::Float32, vec![0; 4], 1)])
+            .await
+            .unwrap();
 
         let reader = dir.open_reader().await.unwrap();
         let info = reader.info();

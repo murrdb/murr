@@ -1,9 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use crate::{core::MurrError, io2::{directory::Directory, table::column::ColumnReader}};
-use arrow::{array::Array, ipc::RecordBatch};
+use arrow::record_batch::RecordBatch;
 
-pub mod column;
+use crate::{
+    core::MurrError,
+    io2::{column::ColumnReader, directory::Directory},
+};
+
 pub mod key_offset;
 
 pub struct Table<D: Directory> {
@@ -13,7 +16,7 @@ pub struct Table<D: Directory> {
 pub struct TableReader<'a, D: Directory> {
     pub table: &'a Table<D>,
     pub reader: D::ReaderType<'a>,
-    pub columns: HashMap<String, Box<dyn ColumnReader>>,
+    pub columns: HashMap<String, Box<dyn ColumnReader<D>>>,
 }
 
 impl<'a, D: Directory> TableReader<'a, D> {
@@ -42,7 +45,7 @@ impl<'a, D: Directory> TableWriter<'a, D> {
         Ok(TableWriter { table, writer })
     }
 
-    async fn write(&self, batch: &RecordBatch<'_>) -> Result<(), MurrError> {
+    async fn write(&self, _batch: &RecordBatch) -> Result<(), MurrError> {
         todo!()
     }
 }

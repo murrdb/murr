@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::core::MurrError;
+use crate::io2::column::ColumnSegmentBytes;
+use crate::io2::directory::Writer;
 use crate::io2::directory::mmap::directory::MMapDirectory;
-use crate::io2::directory::{SegmentBytes, Writer};
-use crate::io2::info::TableInfo;
+use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
 pub struct MMapWriter<'a> {
     dir: &'a MMapDirectory,
@@ -17,18 +19,22 @@ fn tmp_path(path: &Path) -> PathBuf {
 }
 
 impl MMapWriter<'_> {
-    fn flush_info(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
-        let info = TableInfo {
-            max_segment_id: segment.segment_id,
-            columns: segment
-                .columns
-                .iter()
-                .map(|c| (c.name.clone(), c.clone()))
-                .collect(),
-        };
-
+    fn load_existing_info(&self) -> Option<TableInfo> {
         let path = self.dir.metadata_path();
-        let data = serde_json::to_vec_pretty(&info)
+        std::fs::read(&path)
+            .ok()
+            .and_then(|data| serde_json::from_slice(&data).ok())
+    }
+
+    fn next_segment_id(&self) -> u32 {
+        self.load_existing_info()
+            .map(|info| info.max_segment_id + 1)
+            .unwrap_or(0)
+    }
+
+    fn flush_info(&self, info: &TableInfo) -> Result<(), MurrError> {
+        let path = self.dir.metadata_path();
+        let data = serde_json::to_vec_pretty(info)
             .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
 
         let tmp = tmp_path(&path);
@@ -44,13 +50,13 @@ impl MMapWriter<'_> {
         Ok(())
     }
 
-    fn flush_segment(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
-        let seg_path = self.dir.segment_path(segment.segment_id);
+    fn flush_segment(&self, segment_id: u32, data: &[u8]) -> Result<(), MurrError> {
+        let seg_path = self.dir.segment_path(segment_id);
         let tmp = tmp_path(&seg_path);
 
         let mut file = std::fs::File::create(&tmp)
             .map_err(|e| MurrError::IoError(format!("creating {}: {e}", tmp.display())))?;
-        file.write_all(&segment.bytes)
+        file.write_all(data)
             .map_err(|e| MurrError::IoError(format!("writing {}: {e}", tmp.display())))?;
         file.sync_all()
             .map_err(|e| MurrError::IoError(format!("syncing {}: {e}", tmp.display())))?;
@@ -75,9 +81,48 @@ impl<'a> Writer<'a> for MMapWriter<'a> {
         Ok(MMapWriter { dir })
     }
 
-    async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
-        self.flush_segment(segment)?;
-        self.flush_info(segment)?;
+    async fn write(&self, columns: &[ColumnSegmentBytes]) -> Result<(), MurrError> {
+        let segment_id = self.next_segment_id();
+
+        // Concatenate all column bytes, tracking offsets
+        let mut combined = Vec::new();
+        let mut column_infos = Vec::new();
+
+        for col in columns {
+            let offset = combined.len() as u32;
+            let length = col.bytes.bytes.len() as u32;
+            combined.extend_from_slice(&col.bytes.bytes);
+            column_infos.push((
+                col.column.clone(),
+                SegmentInfo {
+                    id: segment_id,
+                    offset,
+                    length,
+                    num_values: col.num_values,
+                },
+            ));
+        }
+
+        // Build/merge TableInfo
+        let mut info = self.load_existing_info().unwrap_or_else(|| TableInfo {
+            max_segment_id: 0,
+            columns: HashMap::new(),
+        });
+        info.max_segment_id = segment_id;
+
+        for (col_info, seg_info) in column_infos {
+            let entry = info
+                .columns
+                .entry(col_info.name.clone())
+                .or_insert_with(|| ColumnSegments {
+                    column: col_info.clone(),
+                    segments: HashMap::new(),
+                });
+            entry.segments.insert(segment_id, seg_info);
+        }
+
+        self.flush_segment(segment_id, &combined)?;
+        self.flush_info(&info)?;
         Ok(())
     }
 }
@@ -87,9 +132,8 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io2::directory::Directory;
-    use crate::io2::info::{ColumnInfo, SegmentInfo};
+    use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
-    use std::collections::HashMap;
 
     fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
         let url = LocalUrl {
@@ -98,26 +142,16 @@ mod tests {
         MMapDirectory::open(&url, 4096, false)
     }
 
-    fn segment_with_column(id: u32, payload: Vec<u8>) -> SegmentBytes {
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            id,
-            SegmentInfo {
-                offset: 0,
-                length: payload.len() as u32,
-                num_values: payload.len() as u32 / 4,
-            },
-        );
-        SegmentBytes {
-            segment_id: id,
-            bytes: payload,
-            columns: vec![ColumnInfo {
-                name: "score".to_string(),
+    fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {
+        ColumnSegmentBytes::new(
+            ColumnInfo {
+                name: name.to_string(),
                 dtype: DType::Float32,
                 nullable: false,
-                segments: col_segments,
-            }],
-        }
+            },
+            payload,
+            num_values,
+        )
     }
 
     #[tokio::test]
@@ -126,8 +160,10 @@ mod tests {
         let dir = test_dir(&tmp);
         let writer = dir.open_writer().await.unwrap();
 
-        let segment = segment_with_column(0, vec![1, 2, 3, 4]);
-        writer.write(&segment).await.unwrap();
+        writer
+            .write(&[column_bytes("score", vec![1, 2, 3, 4], 1)])
+            .await
+            .unwrap();
 
         let seg_path = tmp.path().join("00000000.seg");
         assert!(seg_path.exists());
@@ -142,8 +178,10 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
 
         for i in 0..3u32 {
-            let segment = segment_with_column(i, vec![i as u8; 4]);
-            writer.write(&segment).await.unwrap();
+            writer
+                .write(&[column_bytes("score", vec![i as u8; 4], 1)])
+                .await
+                .unwrap();
         }
 
         assert!(tmp.path().join("00000000.seg").exists());
@@ -161,35 +199,15 @@ mod tests {
         let dir = test_dir(&tmp);
         let writer = dir.open_writer().await.unwrap();
 
-        let mut col_segments = HashMap::new();
-        col_segments.insert(
-            0,
-            SegmentInfo {
-                offset: 0,
-                length: 16,
-                num_values: 4,
-            },
-        );
-        col_segments.insert(
-            1,
-            SegmentInfo {
-                offset: 0,
-                length: 16,
-                num_values: 4,
-            },
-        );
-
-        let segment = SegmentBytes {
-            segment_id: 1,
-            bytes: vec![1; 16],
-            columns: vec![ColumnInfo {
-                name: "score".to_string(),
-                dtype: DType::Float32,
-                nullable: false,
-                segments: col_segments,
-            }],
-        };
-        writer.write(&segment).await.unwrap();
+        // Write two segments for the same column
+        writer
+            .write(&[column_bytes("score", vec![1; 16], 4)])
+            .await
+            .unwrap();
+        writer
+            .write(&[column_bytes("score", vec![2; 16], 4)])
+            .await
+            .unwrap();
 
         let meta_path = tmp.path().join("_metadata.json");
         let data = std::fs::read_to_string(&meta_path).unwrap();
