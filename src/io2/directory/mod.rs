@@ -1,6 +1,8 @@
 pub mod mem;
 pub mod mmap;
 
+use std::sync::Arc;
+
 use crate::{
     core::MurrError,
     io2::{bytes::FromBytes, column::ColumnSegmentBytes, info::TableInfo, url::Url},
@@ -11,12 +13,12 @@ pub const METADATA_JSON: &str = "_metadata.json";
 #[allow(async_fn_in_trait)]
 pub trait Directory: Sized + Send + Sync + 'static {
     type Location: Url;
-    type ReaderType<'a>: Reader<'a>;
-    type WriterType<'a>: Writer<'a>;
+    type ReaderType: Reader + Send + Sync;
+    type WriterType: Writer + Send + Sync;
 
     fn open(url: &Self::Location, page_size: u32, direct: bool) -> Self;
-    async fn open_reader(&self) -> Result<Self::ReaderType<'_>, MurrError>;
-    async fn open_writer(&self) -> Result<Self::WriterType<'_>, MurrError>;
+    async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
+    async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
 
 pub struct ReadRequest {
@@ -30,10 +32,10 @@ pub struct SegmentReadRequest {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait Reader<'a>: Sized {
+pub trait Reader: Sized {
     type D: Directory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError>;
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
     async fn read<T, C: FromBytes<T>>(
         &self,
@@ -42,9 +44,9 @@ pub trait Reader<'a>: Sized {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait Writer<'a>: Sized {
+pub trait Writer: Sized {
     type D: Directory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError>;
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     async fn write(&self, segment: &[ColumnSegmentBytes]) -> Result<(), MurrError>;
 }

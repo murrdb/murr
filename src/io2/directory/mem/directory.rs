@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use log::info;
 
@@ -21,8 +21,8 @@ impl MemDirectory {
 
 impl Directory for MemDirectory {
     type Location = MemUrl;
-    type ReaderType<'a> = MemReader<'a>;
-    type WriterType<'a> = MemWriter<'a>;
+    type ReaderType = MemReader;
+    type WriterType = MemWriter;
 
     fn open(_url: &MemUrl, _page_size: u32, _direct: bool) -> MemDirectory {
         info!("mem directory opened");
@@ -31,14 +31,14 @@ impl Directory for MemDirectory {
         }
     }
 
-    async fn open_reader(&self) -> Result<Self::ReaderType<'_>, MurrError> {
+    async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
         info!("mem reader opened");
-        MemReader::new(self).await
+        MemReader::new(Arc::clone(self)).await
     }
 
-    async fn open_writer(&self) -> Result<Self::WriterType<'_>, MurrError> {
+    async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError> {
         info!("mem writer opened");
-        MemWriter::new(self).await
+        MemWriter::new(Arc::clone(self)).await
     }
 }
 

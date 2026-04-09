@@ -10,6 +10,8 @@ use crate::{
 
 pub mod float32;
 
+pub const MAX_COLUMN_HEADER_SIZE: u32 = 4096;
+
 pub struct SegmentBytes {
     pub bytes: Vec<u8>,
 }
@@ -30,9 +32,14 @@ impl ColumnSegmentBytes {
     }
 }
 
+pub struct OffsetSize {
+    pub offset: u32,
+    pub size: u32,
+}
+
 pub trait Column<D: Directory> {
     type R: ColumnReader<D>;
-    type W: ColumnWriter;
+    type W: ColumnWriter<D>;
     fn reader(&self) -> Self::R;
     fn writer(&self) -> Self::W;
 }
@@ -41,12 +48,12 @@ pub trait Column<D: Directory> {
 pub trait ColumnReader<D: Directory>: Send + Sync {
     async fn read(
         &self,
-        reader: &D::ReaderType<'_>,
+        reader: &D::ReaderType,
         keys: &[KeyOffset],
     ) -> Result<Arc<dyn Array>, MurrError>;
 }
 
 #[async_trait]
-pub trait ColumnWriter: Send + Sync {
+pub trait ColumnWriter<D: Directory>: Send + Sync {
     async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError>;
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use log::debug;
 
@@ -10,8 +11,8 @@ use crate::io2::directory::Writer;
 use crate::io2::directory::mmap::directory::MMapDirectory;
 use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
-pub struct MMapWriter<'a> {
-    dir: &'a MMapDirectory,
+pub struct MMapWriter {
+    dir: Arc<MMapDirectory>,
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
@@ -20,7 +21,7 @@ fn tmp_path(path: &Path) -> PathBuf {
     PathBuf::from(tmp)
 }
 
-impl MMapWriter<'_> {
+impl MMapWriter {
     fn load_existing_info(&self) -> Option<TableInfo> {
         let path = self.dir.metadata_path();
         std::fs::read(&path)
@@ -76,10 +77,10 @@ impl MMapWriter<'_> {
     }
 }
 
-impl<'a> Writer<'a> for MMapWriter<'a> {
+impl Writer for MMapWriter {
     type D = MMapDirectory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
         Ok(MMapWriter { dir })
     }
 
@@ -145,11 +146,11 @@ mod tests {
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
 
-    fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
+    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        MMapDirectory::open(&url, 4096, false)
+        Arc::new(MMapDirectory::open(&url, 4096, false))
     }
 
     fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

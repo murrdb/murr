@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 
@@ -10,17 +11,17 @@ use crate::{
 pub mod key_offset;
 
 pub struct Table<D: Directory> {
-    pub dir: D,
+    pub dir: Arc<D>,
 }
 
-pub struct TableReader<'a, D: Directory> {
-    pub table: &'a Table<D>,
-    pub reader: D::ReaderType<'a>,
+pub struct TableReader<D: Directory> {
+    pub table: Arc<Table<D>>,
+    pub reader: D::ReaderType,
     pub columns: HashMap<String, Box<dyn ColumnReader<D>>>,
 }
 
-impl<'a, D: Directory> TableReader<'a, D> {
-    async fn new(table: &'a Table<D>) -> Result<Self, MurrError> {
+impl<D: Directory> TableReader<D> {
+    async fn new(table: Arc<Table<D>>) -> Result<Self, MurrError> {
         let reader = table.dir.open_reader().await?;
         Ok(TableReader {
             table,
@@ -34,13 +35,13 @@ impl<'a, D: Directory> TableReader<'a, D> {
     }
 }
 
-pub struct TableWriter<'a, D: Directory> {
-    pub table: &'a Table<D>,
-    pub writer: D::WriterType<'a>,
+pub struct TableWriter<D: Directory> {
+    pub table: Arc<Table<D>>,
+    pub writer: D::WriterType,
 }
 
-impl<'a, D: Directory> TableWriter<'a, D> {
-    async fn new(table: &'a Table<D>) -> Result<Self, MurrError> {
+impl<D: Directory> TableWriter<D> {
+    async fn new(table: Arc<Table<D>>) -> Result<Self, MurrError> {
         let writer = table.dir.open_writer().await?;
         Ok(TableWriter { table, writer })
     }

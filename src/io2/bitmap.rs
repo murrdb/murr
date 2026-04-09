@@ -24,7 +24,7 @@ impl NullBitmap {
 
     pub async fn get_nulls<D: Directory>(
         &self,
-        reader: &D::ReaderType<'_>,
+        reader: &D::ReaderType,
         keys: &[KeyOffset],
     ) -> Result<Vec<usize>, MurrError> {
         if self.size == 0 || keys.is_empty() {
@@ -91,6 +91,8 @@ mod tests {
     use super::*;
     use arrow::array::Int32Array;
 
+    use std::sync::Arc;
+
     use crate::core::DType;
     use crate::io2::column::ColumnSegmentBytes;
     use crate::io2::directory::mem::directory::MemDirectory;
@@ -98,8 +100,8 @@ mod tests {
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
 
-    fn test_dir() -> MemDirectory {
-        MemDirectory::open(&MemUrl, 4096, false)
+    fn test_dir() -> Arc<MemDirectory> {
+        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
     }
 
     fn bitmap_column(payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

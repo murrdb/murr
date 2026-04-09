@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use log::debug;
 use memmap2::Mmap;
 
@@ -7,13 +9,13 @@ use crate::io2::directory::mmap::directory::MMapDirectory;
 use crate::io2::directory::{Reader, SegmentReadRequest};
 use crate::io2::info::TableInfo;
 
-pub struct MMapReader<'a> {
-    dir: &'a MMapDirectory,
+pub struct MMapReader {
+    dir: Arc<MMapDirectory>,
     info: TableInfo,
     mmaps: Vec<Option<Mmap>>,
 }
 
-impl MMapReader<'_> {
+impl MMapReader {
     fn load_info(dir: &MMapDirectory) -> Result<TableInfo, MurrError> {
         let path = dir.metadata_path();
         let data = std::fs::read(&path)
@@ -49,12 +51,12 @@ impl MMapReader<'_> {
     }
 }
 
-impl<'a> Reader<'a> for MMapReader<'a> {
+impl Reader for MMapReader {
     type D = MMapDirectory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
-        let info = Self::load_info(dir)?;
-        let mmaps = Self::load_mmaps(dir, &info)?;
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
+        let info = Self::load_info(&dir)?;
+        let mmaps = Self::load_mmaps(&dir, &info)?;
         Ok(MMapReader { dir, info, mmaps })
     }
 
@@ -92,11 +94,11 @@ mod tests {
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
 
-    fn test_dir(tmp: &tempfile::TempDir) -> MMapDirectory {
+    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        MMapDirectory::open(&url, 4096, false)
+        Arc::new(MMapDirectory::open(&url, 4096, false))
     }
 
     fn column_bytes(

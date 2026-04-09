@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use log::debug;
 
@@ -8,11 +9,11 @@ use crate::io2::directory::mem::directory::MemDirectory;
 use crate::io2::directory::{METADATA_JSON, Writer};
 use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
-pub struct MemWriter<'a> {
-    dir: &'a MemDirectory,
+pub struct MemWriter {
+    dir: Arc<MemDirectory>,
 }
 
-impl MemWriter<'_> {
+impl MemWriter {
     fn load_existing_info(&self) -> Result<Option<TableInfo>, MurrError> {
         let files = self
             .dir
@@ -37,10 +38,10 @@ impl MemWriter<'_> {
     }
 }
 
-impl<'a> Writer<'a> for MemWriter<'a> {
+impl Writer for MemWriter {
     type D = MemDirectory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
         Ok(MemWriter { dir })
     }
 
@@ -113,8 +114,8 @@ mod tests {
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
 
-    fn test_dir() -> MemDirectory {
-        MemDirectory::open(&MemUrl, 4096, false)
+    fn test_dir() -> Arc<MemDirectory> {
+        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
     }
 
     fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

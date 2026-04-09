@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use log::info;
 
 use crate::core::MurrError;
 use crate::io2::directory::mmap::reader::MMapReader;
 use crate::io2::directory::mmap::writer::MMapWriter;
-use crate::io2::directory::{Directory, METADATA_JSON, Reader, Writer};
+use crate::io2::directory::{Directory, Reader, Writer};
 use crate::io2::url::LocalUrl;
 
 pub struct MMapDirectory {
@@ -24,14 +25,14 @@ impl MMapDirectory {
     }
 
     pub fn metadata_path(&self) -> PathBuf {
-        self.url.path.join(METADATA_JSON)
+        self.url.path.join(crate::io2::directory::METADATA_JSON)
     }
 }
 
 impl Directory for MMapDirectory {
     type Location = LocalUrl;
-    type ReaderType<'a> = MMapReader<'a>;
-    type WriterType<'a> = MMapWriter<'a>;
+    type ReaderType = MMapReader;
+    type WriterType = MMapWriter;
 
     fn open(url: &LocalUrl, page_size: u32, direct: bool) -> MMapDirectory {
         info!("mmap directory opened: {}", url.path.display());
@@ -42,14 +43,14 @@ impl Directory for MMapDirectory {
         }
     }
 
-    async fn open_reader(&self) -> Result<Self::ReaderType<'_>, MurrError> {
+    async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
         info!("mmap reader opened: {}", self.path().display());
-        MMapReader::new(self).await
+        MMapReader::new(Arc::clone(self)).await
     }
 
-    async fn open_writer(&self) -> Result<Self::WriterType<'_>, MurrError> {
+    async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError> {
         info!("mmap writer opened: {}", self.path().display());
-        MMapWriter::new(self).await
+        MMapWriter::new(Arc::clone(self)).await
     }
 }
 

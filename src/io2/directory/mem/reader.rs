@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use log::debug;
 
 use crate::core::MurrError;
@@ -6,24 +8,26 @@ use crate::io2::directory::mem::directory::MemDirectory;
 use crate::io2::directory::{Reader, SegmentReadRequest, METADATA_JSON};
 use crate::io2::info::TableInfo;
 
-pub struct MemReader<'a> {
-    dir: &'a MemDirectory,
+pub struct MemReader {
+    dir: Arc<MemDirectory>,
     info: TableInfo,
 }
 
-impl<'a> Reader<'a> for MemReader<'a> {
+impl Reader for MemReader {
     type D = MemDirectory;
 
-    async fn new(dir: &'a Self::D) -> Result<Self, MurrError> {
-        let files = dir
-            .files
-            .read()
-            .map_err(|e| MurrError::IoError(format!("lock poisoned: {e}")))?;
-        let data = files
-            .get(METADATA_JSON)
-            .ok_or_else(|| MurrError::IoError("no metadata found".to_string()))?;
-        let info: TableInfo = serde_json::from_slice(data)
-            .map_err(|e| MurrError::IoError(format!("parsing metadata: {e}")))?;
+    async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
+        let info = {
+            let files = dir
+                .files
+                .read()
+                .map_err(|e| MurrError::IoError(format!("lock poisoned: {e}")))?;
+            let data = files
+                .get(METADATA_JSON)
+                .ok_or_else(|| MurrError::IoError("no metadata found".to_string()))?;
+            serde_json::from_slice(data)
+                .map_err(|e| MurrError::IoError(format!("parsing metadata: {e}")))?
+        };
         Ok(MemReader { dir, info })
     }
 
@@ -63,8 +67,8 @@ mod tests {
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
 
-    fn test_dir() -> MemDirectory {
-        MemDirectory::open(&MemUrl, 4096, false)
+    fn test_dir() -> Arc<MemDirectory> {
+        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
     }
 
     fn column_bytes(
