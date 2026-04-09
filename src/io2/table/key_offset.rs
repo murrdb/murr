@@ -1,9 +1,9 @@
 const MISSING_KEY: u32 = u32::MAX;
 
 pub struct KeyOffset {
-    request_index: usize,
-    segment: u32,
-    segment_index: u32,
+    pub request_index: usize,
+    pub segment: u32,
+    pub segment_index: u32,
 }
 
 impl KeyOffset {

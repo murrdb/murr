@@ -17,6 +17,12 @@ impl FromBytes<String> for String {
     }
 }
 
+impl FromBytes<u64> for u64 {
+    fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> u64 {
+        unsafe { *(page.as_ptr().add(page_offset as usize) as *const u64) }
+    }
+}
+
 impl FromBytes<Vec<u8>> for Vec<u8> {
     fn from_bytes(page: &[u8], page_offset: u32, size: u32) -> Vec<u8> {
         let start = page_offset as usize;
