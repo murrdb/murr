@@ -8,6 +8,8 @@ use crate::{
     io2::{directory::Directory, info::ColumnInfo, table::key_offset::KeyOffset},
 };
 
+pub mod float32;
+
 pub struct SegmentBytes {
     pub bytes: Vec<u8>,
 }
@@ -29,8 +31,10 @@ impl ColumnSegmentBytes {
 }
 
 pub trait Column<D: Directory> {
-    fn reader(&self) -> Box<dyn ColumnReader<D>>;
-    fn writer(&self) -> Box<dyn ColumnWriter>;
+    type R: ColumnReader<D>;
+    type W: ColumnWriter;
+    fn reader(&self) -> Self::R;
+    fn writer(&self) -> Self::W;
 }
 
 #[async_trait]

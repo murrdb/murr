@@ -1,3 +1,4 @@
+pub mod mem;
 pub mod mmap;
 
 use crate::{

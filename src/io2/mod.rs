@@ -1,3 +1,4 @@
+pub mod bitmap;
 pub mod bytes;
 pub mod column;
 pub mod directory;

@@ -1,19 +1,25 @@
 const MISSING_KEY: u32 = u32::MAX;
 
 pub struct KeyOffset {
+    request_index: usize,
     segment: u32,
-    index: u32,
+    segment_index: u32,
 }
 
 impl KeyOffset {
-    fn new(segment: u32, index: u32) -> Self {
-        KeyOffset { segment, index }
+    fn new(request_index: usize, segment: u32, segment_index: u32) -> Self {
+        KeyOffset {
+            request_index,
+            segment,
+            segment_index,
+        }
     }
 
-    fn missing() -> Self {
+    fn missing(request_index: usize) -> Self {
         KeyOffset {
+            request_index: request_index,
             segment: MISSING_KEY,
-            index: MISSING_KEY,
+            segment_index: MISSING_KEY,
         }
     }
 

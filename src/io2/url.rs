@@ -17,8 +17,11 @@ pub struct S3Url {
     pub prefix: String,
 }
 
+pub struct MemUrl;
+
 impl Url for S3Url {}
 impl Url for LocalUrl {}
+impl Url for MemUrl {}
 
 impl FromStr for LocalUrl {
     type Err = MurrError;
