@@ -1,5 +1,6 @@
 use arrow::array::{Array, StringArray};
 use hashbrown::HashMap;
+use lean_string::LeanString;
 use rustc_hash::FxBuildHasher;
 
 use crate::io::table::key_offset::KeyOffset;
@@ -10,7 +11,7 @@ pub struct SegmentOffset {
 }
 
 pub struct KeyIndex {
-    map: HashMap<String, SegmentOffset, FxBuildHasher>,
+    map: HashMap<LeanString, SegmentOffset, FxBuildHasher>,
 }
 
 impl KeyIndex {
@@ -25,7 +26,7 @@ impl KeyIndex {
             if values.is_null(i) {
                 continue;
             }
-            let key = unsafe { values.value_unchecked(i).to_string() };
+            let key = unsafe { LeanString::from(values.value_unchecked(i)) };
             self.map.insert(
                 key,
                 SegmentOffset {
