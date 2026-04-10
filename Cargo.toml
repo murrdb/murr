@@ -48,8 +48,6 @@ rustc-hash = "2"
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
-io-uring = "0.7"
-libc = "0.2"
 rand = "0.10"
 http-body-util = "0.1"
 tokio-stream = "0.1"
@@ -57,10 +55,6 @@ tower = { version = "0.5", features = ["util"] }
 
 [[bench]]
 name = "multi_segment_index_bench"
-harness = false
-
-[[bench]]
-name = "mmap_uring_bench"
 harness = false
 
 [profile.bench]

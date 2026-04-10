@@ -35,7 +35,7 @@ cargo test <name>            # Run specific test by name
 cargo check                  # Fast syntax/type check without codegen
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a specific benchmark (multi_segment_index_bench, mmap_uring_bench)
+cargo bench --bench <name>   # Run a specific benchmark (multi_segment_index_bench)
 ```
 
 ### Python bindings
@@ -139,4 +139,4 @@ Supported dtypes: `utf8`, `float32`
 - E2E Flight gRPC tests in `tests/flight_test.rs`
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
-- Benchmarks: `multi_segment_index_bench` (incremental key index rebuild), `mmap_uring_bench` (mmap vs io_uring read comparison)
+- Benchmarks: `multi_segment_index_bench` (incremental key index rebuild)
