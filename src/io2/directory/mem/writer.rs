@@ -57,8 +57,8 @@ impl DirectoryWriter for MemWriter {
 
         for col in columns {
             let offset = combined.len() as u32;
-            let length = col.bytes.bytes.len() as u32;
-            combined.extend_from_slice(&col.bytes.bytes);
+            let length = col.bytes.len() as u32;
+            combined.extend_from_slice(&col.bytes);
             column_infos.push((
                 col.column.clone(),
                 SegmentInfo {
@@ -118,7 +118,7 @@ mod tests {
     use crate::io2::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
+        Arc::new(MemDirectory::open(&MemUrl, "default", 4096, false))
     }
 
     fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

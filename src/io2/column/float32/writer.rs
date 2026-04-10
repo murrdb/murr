@@ -6,8 +6,8 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
-use crate::io2::column::float32::footer::{align8_padding, encode_footer, Float32ColumnFooter};
-use crate::io2::column::{ColumnSegmentBytes, ColumnWriter, OffsetSize};
+use crate::io2::column::float32::footer::{encode_footer, Float32ColumnFooter};
+use crate::io2::column::{align8_padding, ColumnSegmentBytes, ColumnWriter, OffsetSize};
 use crate::io2::info::ColumnInfo;
 
 pub struct Float32ColumnWriter {
@@ -75,10 +75,10 @@ impl ColumnWriter for Float32ColumnWriter {
             payload_size + padding1 + bitmap_size + padding2 + footer_bytes.len() as u32;
         let mut buf = Vec::with_capacity(total_size as usize);
         buf.extend_from_slice(payload_bytes);
-        buf.extend_from_slice(&vec![0u8; padding1 as usize]);
+        buf.resize(buf.len() + padding1 as usize, 0);
         if !bitmap_bytes.is_empty() {
             buf.extend_from_slice(&bitmap_bytes);
-            buf.extend_from_slice(&vec![0u8; padding2 as usize]);
+            buf.resize(buf.len() + padding2 as usize, 0);
         }
         buf.extend_from_slice(&footer_bytes);
 
@@ -129,7 +129,7 @@ mod tests {
         let result = writer.write(make_non_null_array(&[1.0, 2.5, 3.0])).await.unwrap();
         assert_eq!(result.num_values, 3);
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.payload.offset, 0);
         assert_eq!(footer.payload.size, 12);
@@ -149,7 +149,7 @@ mod tests {
             .unwrap();
         assert_eq!(result.num_values, 4);
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.payload.size, 16);
         assert!(footer.bitmap.size > 0);
@@ -170,7 +170,7 @@ mod tests {
             .await
             .unwrap();
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.bitmap.offset, 0);
         assert_eq!(footer.bitmap.size, 0);

@@ -122,7 +122,7 @@ mod tests {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, 4096, false))
+        Arc::new(MMapDirectory::open(&url, "default", 4096, false))
     }
 
     fn column_bytes(

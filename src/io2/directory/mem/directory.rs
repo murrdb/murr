@@ -27,11 +27,15 @@ impl Directory for MemDirectory {
     type ReaderType = MemReader;
     type WriterType = MemWriter;
 
-    fn open(_url: &MemUrl, _page_size: u32, _direct: bool) -> MemDirectory {
+    fn open(_url: &MemUrl, _index: &str, _page_size: u32, _direct: bool) -> MemDirectory {
         info!("mem directory opened");
         MemDirectory {
             files: RwLock::new(HashMap::new()),
         }
+    }
+
+    fn list_indexes(_url: &MemUrl) -> Vec<String> {
+        Vec::new()
     }
 
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
@@ -51,7 +55,7 @@ mod tests {
 
     #[test]
     fn open_creates_empty_directory() {
-        let dir = MemDirectory::open(&MemUrl, 4096, false);
+        let dir = MemDirectory::open(&MemUrl, "default", 4096, false);
         let files = dir.files.read().unwrap();
         assert!(files.is_empty());
     }

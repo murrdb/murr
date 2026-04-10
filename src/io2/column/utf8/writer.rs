@@ -6,8 +6,8 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
-use crate::io2::column::utf8::footer::{align8_padding, encode_footer, Utf8ColumnFooter};
-use crate::io2::column::{ColumnSegmentBytes, ColumnWriter, OffsetSize};
+use crate::io2::column::utf8::footer::{encode_footer, Utf8ColumnFooter};
+use crate::io2::column::{align8_padding, ColumnSegmentBytes, ColumnWriter, OffsetSize};
 use crate::io2::info::ColumnInfo;
 
 pub struct Utf8ColumnWriter {
@@ -94,12 +94,12 @@ impl ColumnWriter for Utf8ColumnWriter {
                 + footer_bytes.len() as u32;
         let mut buf = Vec::with_capacity(total_size as usize);
         buf.extend_from_slice(offsets_bytes);
-        buf.extend_from_slice(&vec![0u8; padding1 as usize]);
+        buf.resize(buf.len() + padding1 as usize, 0);
         buf.extend_from_slice(&payload);
-        buf.extend_from_slice(&vec![0u8; padding2 as usize]);
+        buf.resize(buf.len() + padding2 as usize, 0);
         if !bitmap_bytes.is_empty() {
             buf.extend_from_slice(&bitmap_bytes);
-            buf.extend_from_slice(&vec![0u8; padding3 as usize]);
+            buf.resize(buf.len() + padding3 as usize, 0);
         }
         buf.extend_from_slice(&footer_bytes);
 
@@ -153,7 +153,7 @@ mod tests {
             .unwrap();
         assert_eq!(result.num_values, 3);
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.offsets.offset, 0);
         assert_eq!(footer.offsets.size, 16); // (3 + 1) * 4
@@ -179,7 +179,7 @@ mod tests {
             .unwrap();
         assert_eq!(result.num_values, 4);
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.offsets.size, 20); // (4 + 1) * 4
         assert_eq!(footer.payload.size, 3); // "a" + "bc"
@@ -201,7 +201,7 @@ mod tests {
             .await
             .unwrap();
 
-        let bytes = &result.bytes.bytes;
+        let bytes = &result.bytes;
         let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.bitmap.offset, 0);
         assert_eq!(footer.bitmap.size, 0);

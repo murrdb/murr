@@ -105,7 +105,7 @@ mod tests {
     use crate::io2::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
+        Arc::new(MemDirectory::open(&MemUrl, "default", 4096, false))
     }
 
     fn bitmap_column(payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

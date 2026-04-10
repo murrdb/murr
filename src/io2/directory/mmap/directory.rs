@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::info;
@@ -13,21 +13,22 @@ use crate::io2::url::LocalUrl;
 
 pub struct MMapDirectory {
     url: LocalUrl,
+    index: String,
     page_size: u32,
     direct: bool,
 }
 
 impl MMapDirectory {
-    pub fn path(&self) -> &Path {
-        &self.url.path
+    pub fn path(&self) -> PathBuf {
+        self.url.path.join(&self.index)
     }
 
     pub fn segment_path(&self, id: u32) -> PathBuf {
-        self.url.path.join(format!("{:08}.seg", id))
+        self.path().join(format!("{:08}.seg", id))
     }
 
     pub fn metadata_path(&self) -> PathBuf {
-        self.url.path.join(crate::io2::directory::METADATA_JSON)
+        self.path().join(crate::io2::directory::METADATA_JSON)
     }
 }
 
@@ -37,13 +38,29 @@ impl Directory for MMapDirectory {
     type ReaderType = MMapReader;
     type WriterType = MMapWriter;
 
-    fn open(url: &LocalUrl, page_size: u32, direct: bool) -> MMapDirectory {
-        info!("mmap directory opened: {}", url.path.display());
+    fn open(url: &LocalUrl, index: &str, page_size: u32, direct: bool) -> MMapDirectory {
+        info!(
+            "mmap directory opened: {}/{}",
+            url.path.display(),
+            index
+        );
         MMapDirectory {
             url: url.clone(),
+            index: index.to_string(),
             page_size,
             direct,
         }
+    }
+
+    fn list_indexes(url: &LocalUrl) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(&url.path) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect()
     }
 
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
@@ -62,30 +79,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn path_returns_url_path() {
+    fn path_returns_url_path_with_index() {
         let url: LocalUrl = "file:///tmp/murr".parse().unwrap();
-        let dir = MMapDirectory::open(&url, 4096, false);
-        assert_eq!(dir.path(), Path::new("/tmp/murr"));
+        let dir = MMapDirectory::open(&url, "default", 4096, false);
+        assert_eq!(dir.path(), PathBuf::from("/tmp/murr/default"));
     }
 
     #[test]
     fn segment_path_zero_padded() {
         let url: LocalUrl = "file:///tmp/murr".parse().unwrap();
-        let dir = MMapDirectory::open(&url, 4096, false);
-        assert_eq!(dir.segment_path(0), PathBuf::from("/tmp/murr/00000000.seg"));
+        let dir = MMapDirectory::open(&url, "idx", 4096, false);
+        assert_eq!(
+            dir.segment_path(0),
+            PathBuf::from("/tmp/murr/idx/00000000.seg")
+        );
         assert_eq!(
             dir.segment_path(42),
-            PathBuf::from("/tmp/murr/00000042.seg")
+            PathBuf::from("/tmp/murr/idx/00000042.seg")
         );
     }
 
     #[test]
     fn metadata_path() {
         let url: LocalUrl = "file:///tmp/murr".parse().unwrap();
-        let dir = MMapDirectory::open(&url, 4096, false);
+        let dir = MMapDirectory::open(&url, "idx", 4096, false);
         assert_eq!(
             dir.metadata_path(),
-            PathBuf::from("/tmp/murr/_metadata.json")
+            PathBuf::from("/tmp/murr/idx/_metadata.json")
         );
     }
 }

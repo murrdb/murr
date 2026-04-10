@@ -1,5 +1,5 @@
 use crate::core::MurrError;
-use crate::io2::column::{ColumnFooter, OffsetSize};
+use crate::io2::column::{read_u32, ColumnFooter, OffsetSize};
 
 // Footer layout (from end of data):
 //   [payload_offset:u32][payload_size:u32][bitmap_offset:u32][bitmap_size:u32][version:u32][footer_len:u32]
@@ -13,10 +13,6 @@ pub struct Float32ColumnFooter {
     pub base_offset: u32,
     pub payload: OffsetSize,
     pub bitmap: OffsetSize,
-}
-
-fn read_u32(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
 impl ColumnFooter for Float32ColumnFooter {
@@ -71,10 +67,6 @@ pub fn encode_footer(footer: &Float32ColumnFooter) -> Vec<u8> {
     let footer_len = (FOOTER_BODY_SIZE + 4) as u32; // body + version
     buf.extend_from_slice(&footer_len.to_le_bytes());
     buf
-}
-
-pub fn align8_padding(len: u32) -> u32 {
-    (8 - (len % 8)) % 8
 }
 
 #[cfg(test)]

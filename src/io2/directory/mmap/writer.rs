@@ -55,6 +55,12 @@ impl MMapWriter {
         Ok(())
     }
 
+    fn ensure_dir(&self) -> Result<(), MurrError> {
+        let path = self.dir.path();
+        std::fs::create_dir_all(&path)
+            .map_err(|e| MurrError::IoError(format!("creating dir {}: {e}", path.display())))
+    }
+
     fn flush_segment(&self, segment_id: u32, data: &[u8]) -> Result<(), MurrError> {
         let seg_path = self.dir.segment_path(segment_id);
         let tmp = tmp_path(&seg_path);
@@ -96,8 +102,8 @@ impl DirectoryWriter for MMapWriter {
 
         for col in columns {
             let offset = combined.len() as u32;
-            let length = col.bytes.bytes.len() as u32;
-            combined.extend_from_slice(&col.bytes.bytes);
+            let length = col.bytes.len() as u32;
+            combined.extend_from_slice(&col.bytes);
             column_infos.push((
                 col.column.clone(),
                 SegmentInfo {
@@ -135,6 +141,7 @@ impl DirectoryWriter for MMapWriter {
             combined.len()
         );
 
+        self.ensure_dir()?;
         self.flush_segment(segment_id, &combined)?;
         self.flush_info(&info)?;
         Ok(())
@@ -153,7 +160,7 @@ mod tests {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, 4096, false))
+        Arc::new(MMapDirectory::open(&url, "default", 4096, false))
     }
 
     fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {
@@ -179,10 +186,11 @@ mod tests {
             .await
             .unwrap();
 
-        let seg_path = tmp.path().join("00000000.seg");
+        let idx = tmp.path().join("default");
+        let seg_path = idx.join("00000000.seg");
         assert!(seg_path.exists());
         assert_eq!(std::fs::read(&seg_path).unwrap(), vec![1, 2, 3, 4]);
-        assert!(tmp.path().join("_metadata.json").exists());
+        assert!(idx.join("_metadata.json").exists());
     }
 
     #[tokio::test]

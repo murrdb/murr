@@ -307,7 +307,7 @@ impl<D: Directory> TableWriter<D> {
             debug!(
                 "encoded column '{}': {} bytes",
                 col_name,
-                bytes.bytes.bytes.len()
+                bytes.bytes.len()
             );
             segment_bytes.push(bytes);
         }
@@ -377,7 +377,7 @@ mod tests {
     use crate::io2::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
+        Arc::new(MemDirectory::open(&MemUrl, "default", 4096, false))
     }
 
     fn test_schema() -> TableSchema {

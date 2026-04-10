@@ -4,8 +4,8 @@ pub trait FromBytes<T> {
 
 impl FromBytes<f32> for f32 {
     fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> f32 {
-        // yolo cast!
-        unsafe { *(page.as_ptr().add(page_offset as usize) as *const f32) }
+        let off = page_offset as usize;
+        f32::from_le_bytes(page[off..off + 4].try_into().unwrap())
     }
 }
 
@@ -13,13 +13,14 @@ impl FromBytes<String> for String {
     fn from_bytes(page: &[u8], page_offset: u32, size: u32) -> String {
         let start = page_offset as usize;
         let end = start + (size as usize);
-        unsafe { String::from_utf8_unchecked(page[start..end].to_vec()) }
+        String::from_utf8(page[start..end].to_vec()).expect("invalid UTF-8 in segment data")
     }
 }
 
 impl FromBytes<u64> for u64 {
     fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> u64 {
-        unsafe { *(page.as_ptr().add(page_offset as usize) as *const u64) }
+        let off = page_offset as usize;
+        u64::from_le_bytes(page[off..off + 8].try_into().unwrap())
     }
 }
 
@@ -39,12 +40,10 @@ pub struct StringOffsetPair {
 
 impl FromBytes<StringOffsetPair> for StringOffsetPair {
     fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> StringOffsetPair {
-        unsafe {
-            let ptr = page.as_ptr().add(page_offset as usize);
-            StringOffsetPair {
-                start: *(ptr as *const i32),
-                end: *(ptr.add(4) as *const i32),
-            }
+        let off = page_offset as usize;
+        StringOffsetPair {
+            start: i32::from_le_bytes(page[off..off + 4].try_into().unwrap()),
+            end: i32::from_le_bytes(page[off + 4..off + 8].try_into().unwrap()),
         }
     }
 }

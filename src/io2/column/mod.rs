@@ -18,13 +18,9 @@ pub mod utf8;
 
 pub const MAX_COLUMN_HEADER_SIZE: u32 = 4096;
 
-pub struct SegmentBytes {
-    pub bytes: Vec<u8>,
-}
-
 pub struct ColumnSegmentBytes {
     pub column: ColumnInfo,
-    pub bytes: SegmentBytes,
+    pub bytes: Vec<u8>,
     pub num_values: u32,
 }
 
@@ -32,10 +28,18 @@ impl ColumnSegmentBytes {
     pub fn new(column: ColumnInfo, bytes: Vec<u8>, num_values: u32) -> Self {
         ColumnSegmentBytes {
             column,
-            bytes: SegmentBytes { bytes },
+            bytes,
             num_values,
         }
     }
+}
+
+pub fn read_u32(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+}
+
+pub fn align8_padding(len: u32) -> u32 {
+    (8 - (len % 8)) % 8
 }
 
 #[derive(Debug, Clone)]

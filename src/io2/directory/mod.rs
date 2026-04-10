@@ -23,7 +23,8 @@ pub trait Directory: Sized + Send + Sync + 'static {
     type ReaderType: DirectoryReader + Send + Sync;
     type WriterType: DirectoryWriter + Send + Sync;
 
-    fn open(url: &Self::Location, page_size: u32, direct: bool) -> Self;
+    fn open(url: &Self::Location, index: &str, page_size: u32, direct: bool) -> Self;
+    fn list_indexes(url: &Self::Location) -> Vec<String>;
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }

@@ -18,13 +18,13 @@ impl KeyOffset {
 
     pub fn missing(request_index: usize) -> Self {
         KeyOffset {
-            request_index: request_index,
+            request_index,
             segment: MISSING_KEY,
             segment_index: MISSING_KEY,
         }
     }
 
     pub fn is_missing(&self) -> bool {
-        return self.segment == MISSING_KEY;
+        self.segment == MISSING_KEY
     }
 }
