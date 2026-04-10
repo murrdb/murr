@@ -10,10 +10,11 @@ mod service;
 use std::sync::Arc;
 
 use clap::Parser;
+use murr::util::logo::ASCII_LOGO;
 
 use crate::api::{MurrFlightService, MurrHttpService};
 use crate::conf::Config;
-use crate::core::{setup_logging, CliArgs};
+use crate::core::{CliArgs, setup_logging};
 use crate::service::MurrService;
 use log::info;
 
@@ -23,8 +24,11 @@ async fn main() {
     let args = CliArgs::parse();
     let config = Config::from_args(&args).expect("failed to load config");
     info!("Starting murr with config: {config:?}");
+    info!("{ASCII_LOGO}");
 
-    let service = MurrService::new(config).await.expect("failed to load tables");
+    let service = MurrService::new(config)
+        .await
+        .expect("failed to load tables");
     let service = Arc::new(service);
 
     let http = MurrHttpService::new(service.clone());

@@ -1,9 +1,10 @@
-pub mod cached;
-pub mod column;
 pub mod index;
+pub mod key_offset;
 pub mod reader;
-pub mod view;
+pub mod table;
 pub mod writer;
 
-pub use cached::CachedTable;
+pub use key_offset::KeyOffset;
+pub use reader::TableReader;
+pub use table::Table;
 pub use writer::TableWriter;
