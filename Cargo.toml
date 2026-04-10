@@ -37,16 +37,12 @@ tonic = "0.14"
 futures = "0.3"
 serde_json = "1"
 serde_yaml_ng = "0.10"
-ahash = "0.8"
-ouroboros = "0.18"
 mimalloc = { version = "0.1", default-features = false }
 bytemuck = "1"
-bincode = { version = "2", features = ["derive"] }
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 async-trait = "0.1"
 hashbrown = "0.16.1"
-lean_string = "0.5.3"
 rustc-hash = "2"
 
 [dev-dependencies]
@@ -55,15 +51,9 @@ criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 io-uring = "0.7"
 libc = "0.2"
 rand = "0.10"
-rustc-hash = "2"
-fst = "0.4"
-boomphf = "0.6"
-cedarwood = "0.4"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
-frozen-collections = "0.9.1"
-ph = "0.11"
 
 [[bench]]
 name = "multi_segment_index_bench"
