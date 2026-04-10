@@ -206,11 +206,12 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(tmp.path().join("00000000.seg").exists());
-        assert!(tmp.path().join("00000001.seg").exists());
-        assert!(tmp.path().join("00000002.seg").exists());
+        let idx = tmp.path().join("default");
+        assert!(idx.join("00000000.seg").exists());
+        assert!(idx.join("00000001.seg").exists());
+        assert!(idx.join("00000002.seg").exists());
         assert_eq!(
-            std::fs::read(tmp.path().join("00000002.seg")).unwrap(),
+            std::fs::read(idx.join("00000002.seg")).unwrap(),
             vec![2, 2, 2, 2]
         );
     }
@@ -231,7 +232,7 @@ mod tests {
             .await
             .unwrap();
 
-        let meta_path = tmp.path().join("_metadata.json");
+        let meta_path = tmp.path().join("default").join("_metadata.json");
         let data = std::fs::read_to_string(&meta_path).unwrap();
         let parsed: TableInfo = serde_json::from_str(&data).unwrap();
 
