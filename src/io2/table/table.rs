@@ -19,21 +19,24 @@ use crate::io2::table::key_offset::KeyOffset;
 
 pub struct Table<D: Directory> {
     pub dir: Arc<D>,
-    pub schema: TableSchema,
 }
 
 impl<D: Directory> Table<D> {
-    pub fn new(dir: Arc<D>, schema: TableSchema) -> Arc<Self> {
-        Arc::new(Table { dir, schema })
+    pub fn new(dir: Arc<D>) -> Arc<Self> {
+        Arc::new(Table { dir })
+    }
+
+    pub fn schema(&self) -> &TableSchema {
+        self.dir.schema()
     }
 
     pub async fn open_reader(self: &Arc<Self>) -> Result<TableReader, MurrError> {
         let reader: Arc<dyn Reader> = Arc::new(self.dir.open_reader().await?);
-        TableReader::open(self.schema.clone(), reader).await
+        TableReader::open(self.dir.schema().clone(), reader).await
     }
 
     pub async fn open_writer(self: &Arc<Self>) -> Result<TableWriter<D>, MurrError> {
-        TableWriter::open(self.schema.clone(), self.dir.clone()).await
+        TableWriter::open(self.dir.schema().clone(), self.dir.clone()).await
     }
 }
 
@@ -377,7 +380,7 @@ mod tests {
     use crate::io2::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, "default", 4096, false))
+        Arc::new(MemDirectory::create(&MemUrl, "default", test_schema(), 4096, false).unwrap())
     }
 
     fn test_schema() -> TableSchema {
@@ -415,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn write_and_read_roundtrip() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer
@@ -438,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn missing_keys_produce_nulls() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer
@@ -465,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn multi_segment_last_write_wins() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer
@@ -495,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn incremental_reopen() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer
@@ -537,7 +540,7 @@ mod tests {
     #[tokio::test]
     async fn read_multiple_columns() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer
@@ -568,7 +571,7 @@ mod tests {
     #[tokio::test]
     async fn read_empty_table() {
         let dir = test_dir();
-        let table = Table::new(dir, test_schema());
+        let table = Table::new(dir);
 
         let writer = table.open_writer().await.unwrap();
         writer.write(&make_batch(&[], &[])).await.unwrap();

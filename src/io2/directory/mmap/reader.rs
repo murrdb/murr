@@ -112,17 +112,23 @@ impl DirectoryReader for MMapReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::DType;
+    use crate::core::{ColumnSchema, DType, TableSchema};
     use crate::io2::column::ColumnSegmentBytes;
     use crate::io2::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
 
+    fn test_schema() -> TableSchema {
+        let mut columns = std::collections::HashMap::new();
+        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
+        TableSchema { key: "key".to_string(), columns }
+    }
+
     fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, "default", 4096, false))
+        Arc::new(MMapDirectory::create(&url, "default", test_schema(), 4096, false).unwrap())
     }
 
     fn column_bytes(

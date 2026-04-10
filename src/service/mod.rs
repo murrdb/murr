@@ -2,6 +2,7 @@ mod state;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 use log::info;
@@ -9,66 +10,61 @@ use tokio::sync::RwLock;
 
 use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
-use crate::io::directory::{Directory, LocalDirectory};
-use crate::io::table::{CachedTable, TableWriter};
+use crate::io2::directory::mmap::directory::MMapDirectory;
+use crate::io2::directory::Directory;
+use crate::io2::table::Table;
+use crate::io2::url::LocalUrl;
 
 use state::TableState;
 
 pub struct MurrService {
     tables: RwLock<HashMap<String, TableState>>,
     data_dir: PathBuf,
+    url: LocalUrl,
     config: Config,
 }
 
 impl MurrService {
     pub async fn new(config: Config) -> Result<Self, MurrError> {
         let data_dir = config.storage.cache_dir.clone();
+        let url = LocalUrl {
+            path: data_dir.clone(),
+        };
         let mut tables = HashMap::new();
 
-        for dir in LocalDirectory::from_storage(&data_dir).await? {
-            let index = match dir.index().await? {
-                Some(index) => index,
-                None => continue,
+        for index in MMapDirectory::list_indexes(&url) {
+            let dir = match MMapDirectory::open(&url, &index, 4096, false) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    info!("skipping index '{}': {}", index, e);
+                    continue;
+                }
             };
+            let schema = dir.schema().clone();
+            let dir = Arc::new(dir);
+            let table = Table::new(dir);
 
-            let table_name = dir
-                .path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| {
-                    MurrError::IoError(format!(
-                        "invalid directory name: {}",
-                        dir.path().display()
-                    ))
-                })?
-                .to_string();
-
-            let schema = index.schema;
-            let cached = if index.segments.is_empty() {
-                None
+            let has_segments = !schema.columns.is_empty();
+            let reader = if has_segments {
+                match table.open_reader().await {
+                    Ok(reader) => Some(reader),
+                    Err(e) => {
+                        info!("table '{}' has no readable data: {}", index, e);
+                        None
+                    }
+                }
             } else {
-                Some(CachedTable::open(dir.path(), &schema, &index.segments, None)?)
+                None
             };
 
-            info!(
-                "loaded table '{}' with {} segments",
-                table_name,
-                index.segments.len()
-            );
-
-            tables.insert(
-                table_name,
-                TableState {
-                    dir,
-                    schema,
-                    cached,
-                },
-            );
+            info!("loaded table '{}'", index);
+            tables.insert(index, TableState { table, reader });
         }
 
         Ok(Self {
             tables: RwLock::new(tables),
             data_dir,
+            url,
             config,
         })
     }
@@ -84,21 +80,14 @@ impl MurrService {
             return Err(MurrError::TableAlreadyExists(table_name.to_string()));
         }
 
-        let table_dir = self.data_dir.join(table_name);
-        std::fs::create_dir_all(&table_dir).map_err(|e| {
-            MurrError::IoError(format!("creating directory {}: {}", table_dir.display(), e))
-        })?;
-
-        let mut dir = LocalDirectory::new(&table_dir);
-        let writer = TableWriter::create(&schema, &mut dir).await?;
-        drop(writer);
+        let dir = MMapDirectory::create(&self.url, table_name, schema, 4096, false)?;
+        let table = Table::new(Arc::new(dir));
 
         tables.insert(
             table_name.to_string(),
             TableState {
-                dir,
-                schema,
-                cached: None,
+                table,
+                reader: None,
             },
         );
 
@@ -116,20 +105,14 @@ impl MurrService {
             MurrError::TableNotFound(table_name.to_string())
         })?;
 
-        let mut writer = TableWriter::open(&mut state.dir).await?;
-        writer.add_segment(batch).await?;
-        drop(writer);
+        let writer = state.table.open_writer().await?;
+        writer.write(batch).await?;
 
-        let index = state.dir.index().await?.ok_or_else(|| {
-            MurrError::TableError(format!(
-                "table '{}' index missing after write",
-                table_name
-            ))
-        })?;
-
-        let old_cached = state.cached.take();
-        let cached = CachedTable::open(state.dir.path(), &state.schema, &index.segments, old_cached)?;
-        state.cached = Some(cached);
+        let reader = match state.reader.take() {
+            Some(existing) => existing.reopen().await?,
+            None => state.table.open_reader().await?,
+        };
+        state.reader = Some(reader);
 
         Ok(())
     }
@@ -138,7 +121,7 @@ impl MurrService {
         let tables = self.tables.read().await;
         tables
             .iter()
-            .map(|(k, v)| (k.clone(), v.schema.clone()))
+            .map(|(k, v)| (k.clone(), v.table.schema().clone()))
             .collect()
     }
 
@@ -147,7 +130,7 @@ impl MurrService {
         let state = tables.get(table_name).ok_or_else(|| {
             MurrError::TableNotFound(table_name.to_string())
         })?;
-        Ok(state.schema.clone())
+        Ok(state.table.schema().clone())
     }
 
     pub async fn read(
@@ -162,11 +145,11 @@ impl MurrService {
             MurrError::TableNotFound(table_name.to_string())
         })?;
 
-        let cached = state.cached.as_ref().ok_or_else(|| {
+        let reader = state.reader.as_ref().ok_or_else(|| {
             MurrError::TableError(format!("table '{}' has no data", table_name))
         })?;
 
-        cached.get(keys, columns)
+        reader.read(keys, columns).await
     }
 }
 

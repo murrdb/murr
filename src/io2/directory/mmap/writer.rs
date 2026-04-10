@@ -7,14 +7,15 @@ use log::debug;
 
 use async_trait::async_trait;
 
-use crate::core::MurrError;
+use crate::core::{MurrError, TableSchema};
 use crate::io2::column::ColumnSegmentBytes;
-use crate::io2::directory::DirectoryWriter;
+use crate::io2::directory::{Directory, DirectoryWriter};
 use crate::io2::directory::mmap::directory::MMapDirectory;
 use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
 pub struct MMapWriter {
     dir: Arc<MMapDirectory>,
+    schema: TableSchema,
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
@@ -32,9 +33,10 @@ impl MMapWriter {
     }
 
     fn next_segment_id(&self) -> u32 {
-        self.load_existing_info()
-            .map(|info| info.max_segment_id + 1)
-            .unwrap_or(0)
+        match self.load_existing_info() {
+            Some(info) if !info.columns.is_empty() => info.max_segment_id + 1,
+            _ => 0,
+        }
     }
 
     fn flush_info(&self, info: &TableInfo) -> Result<(), MurrError> {
@@ -90,7 +92,8 @@ impl DirectoryWriter for MMapWriter {
     type D = MMapDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
-        Ok(MMapWriter { dir })
+        let schema = dir.schema().clone();
+        Ok(MMapWriter { dir, schema })
     }
 
     async fn write(&self, columns: &[ColumnSegmentBytes]) -> Result<(), MurrError> {
@@ -117,6 +120,7 @@ impl DirectoryWriter for MMapWriter {
 
         // Build/merge TableInfo
         let mut info = self.load_existing_info().unwrap_or_else(|| TableInfo {
+            schema: self.schema.clone(),
             max_segment_id: 0,
             columns: HashMap::new(),
         });
@@ -151,16 +155,23 @@ impl DirectoryWriter for MMapWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::DType;
+    use crate::core::{ColumnSchema, DType, TableSchema};
     use crate::io2::directory::{Directory, DirectoryWriter};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
+
+    fn test_schema() -> TableSchema {
+        let mut columns = std::collections::HashMap::new();
+        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
+        columns.insert("score".to_string(), ColumnSchema { dtype: DType::Float32, nullable: false });
+        TableSchema { key: "key".to_string(), columns }
+    }
 
     fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
         let url = LocalUrl {
             path: tmp.path().to_path_buf(),
         };
-        Arc::new(MMapDirectory::open(&url, "default", 4096, false))
+        Arc::new(MMapDirectory::create(&url, "default", test_schema(), 4096, false).unwrap())
     }
 
     fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

@@ -162,18 +162,21 @@ pub trait Directory {
 struct MurrService {
     tables: RwLock<HashMap<String, TableState>>,
     data_dir: PathBuf,
+    url: LocalUrl,
 }
 ```
 
-`TableState` owns `LocalDirectory`, `TableSchema`, and `Option<CachedTable>`.
+`TableState` owns `Arc<Table<MMapDirectory>>` and `Option<TableReader>`.
+
+The service layer uses the async `io2` storage layer (not the old `io` module). `Directory` has `create()` (new table, writes initial `_metadata.json` with schema) and `open()` (loads schema from `_metadata.json`). `list_indexes()` discovers tables by scanning subdirectories. `TableReader::reopen(self)` provides incremental reader refresh without rebuilding from scratch.
 
 ### Request flow
 
-1. **Create**: `create(table_name, schema)` — writes `table.json` via `TableWriter::create`, inserts empty `TableState`
-2. **Write**: `write(table_name, batch)` — opens `TableWriter`, calls `add_segment(batch)`, then **rebuilds** `CachedTable` (re-mmaps all segments, rebuilds key index). This is the reload path — any external writer adding a `.seg` file triggers the same rebuild.
-3. **Read**: `read(table_name, keys, columns)` — acquires read lock, delegates to `CachedTable::get()`
+1. **Create**: `create(table_name, schema)` — calls `MMapDirectory::create()` which writes `_metadata.json` with schema + empty columns, wraps in `Table`, stores `TableState { table, reader: None }`
+2. **Write**: `write(table_name, batch)` — opens `TableWriter` via `table.open_writer()`, calls `writer.write(batch)`, then either `reader.reopen()` (incremental, reuses existing segments/index) or `table.open_reader()` (first write)
+3. **Read**: `read(table_name, keys, columns)` — acquires read lock, delegates to `reader.read(keys, columns).await`
 
-The write-then-rebuild pattern means the table is always consistent: readers see a snapshot, writers produce a new snapshot atomically.
+The write-then-reopen pattern means the table is always consistent: readers see a snapshot, writers produce a new snapshot. The incremental `reopen()` avoids re-indexing all segments — only new segments are scanned.
 
 ## Key Design Decisions
 

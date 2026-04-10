@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::DType;
+use crate::core::{DType, TableSchema};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
+    pub schema: TableSchema,
     pub max_segment_id: u32,
     pub columns: HashMap<String, ColumnSegments>,
 }

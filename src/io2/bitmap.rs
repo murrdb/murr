@@ -97,15 +97,20 @@ mod tests {
 
     use std::sync::Arc;
 
-    use crate::core::DType;
+    use crate::core::{ColumnSchema, DType, TableSchema};
     use crate::io2::column::ColumnSegmentBytes;
     use crate::io2::directory::mem::directory::MemDirectory;
     use crate::io2::directory::{Directory, DirectoryWriter};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
+    use std::collections::HashMap;
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, "default", 4096, false))
+        let mut columns = HashMap::new();
+        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
+        columns.insert("bitmap".to_string(), ColumnSchema { dtype: DType::Float32, nullable: true });
+        let schema = TableSchema { key: "key".to_string(), columns };
+        Arc::new(MemDirectory::create(&MemUrl, "default", schema, 4096, false).unwrap())
     }
 
     fn bitmap_column(payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {

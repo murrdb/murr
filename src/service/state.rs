@@ -1,9 +1,9 @@
-use crate::core::TableSchema;
-use crate::io::directory::LocalDirectory;
-use crate::io::table::CachedTable;
+use std::sync::Arc;
+
+use crate::io2::directory::mmap::directory::MMapDirectory;
+use crate::io2::table::{Table, TableReader};
 
 pub(crate) struct TableState {
-    pub dir: LocalDirectory,
-    pub schema: TableSchema,
-    pub cached: Option<CachedTable>,
+    pub table: Arc<Table<MMapDirectory>>,
+    pub reader: Option<TableReader>,
 }

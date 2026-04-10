@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    core::MurrError,
+    core::{MurrError, TableSchema},
     io2::{
         bytes::{FromBytes, StringOffsetPair},
         column::ColumnSegmentBytes,
@@ -23,8 +23,10 @@ pub trait Directory: Sized + Send + Sync + 'static {
     type ReaderType: DirectoryReader + Send + Sync;
     type WriterType: DirectoryWriter + Send + Sync;
 
-    fn open(url: &Self::Location, index: &str, page_size: u32, direct: bool) -> Self;
+    fn create(url: &Self::Location, index: &str, schema: TableSchema, page_size: u32, direct: bool) -> Result<Self, MurrError>;
+    fn open(url: &Self::Location, index: &str, page_size: u32, direct: bool) -> Result<Self, MurrError>;
     fn list_indexes(url: &Self::Location) -> Vec<String>;
+    fn schema(&self) -> &TableSchema;
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
