@@ -14,7 +14,7 @@ use crate::io2::info::TableInfo;
 pub struct MMapReader {
     dir: Arc<MMapDirectory>,
     info: TableInfo,
-    mmaps: Vec<Option<Mmap>>,
+    mmaps: Vec<Option<Arc<Mmap>>>,
 }
 
 impl MMapReader {
@@ -26,26 +26,37 @@ impl MMapReader {
             .map_err(|e| MurrError::IoError(format!("parsing {}: {e}", path.display())))
     }
 
-    fn load_mmaps(dir: &MMapDirectory, info: &TableInfo) -> Result<Vec<Option<Mmap>>, MurrError> {
-        let max_id = info.max_segment_id as usize;
-        let mut mmaps: Vec<Option<Mmap>> = (0..=max_id).map(|_| None).collect();
-
-        // Collect all segment IDs from column metadata
+    fn segment_ids(info: &TableInfo) -> std::collections::BTreeSet<u32> {
         let mut segment_ids = std::collections::BTreeSet::new();
         for col in info.columns.values() {
             for &seg_id in col.segments.keys() {
                 segment_ids.insert(seg_id);
             }
         }
+        segment_ids
+    }
 
-        for seg_id in segment_ids {
+    fn load_mmaps(
+        dir: &MMapDirectory,
+        info: &TableInfo,
+        existing: &[Option<Arc<Mmap>>],
+    ) -> Result<Vec<Option<Arc<Mmap>>>, MurrError> {
+        let max_id = info.max_segment_id as usize;
+        let mut mmaps: Vec<Option<Arc<Mmap>>> = (0..=max_id).map(|_| None).collect();
+
+        for seg_id in Self::segment_ids(info) {
+            let idx = seg_id as usize;
+            if let Some(existing_mmap) = existing.get(idx).and_then(|m| m.as_ref()) {
+                mmaps[idx] = Some(Arc::clone(existing_mmap));
+                continue;
+            }
             let path = dir.segment_path(seg_id);
             let file = std::fs::File::open(&path)
                 .map_err(|e| MurrError::IoError(format!("opening {}: {e}", path.display())))?;
             let mmap = unsafe { Mmap::map(&file) }
                 .map_err(|e| MurrError::IoError(format!("mmapping {}: {e}", path.display())))?;
-            if (seg_id as usize) < mmaps.len() {
-                mmaps[seg_id as usize] = Some(mmap);
+            if idx < mmaps.len() {
+                mmaps[idx] = Some(Arc::new(mmap));
             }
         }
 
@@ -59,8 +70,18 @@ impl Reader for MMapReader {
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
         let info = Self::load_info(&dir)?;
-        let mmaps = Self::load_mmaps(&dir, &info)?;
+        let mmaps = Self::load_mmaps(&dir, &info, &[])?;
         Ok(MMapReader { dir, info, mmaps })
+    }
+
+    async fn reopen(&self) -> Result<Self, MurrError> {
+        let info = Self::load_info(&self.dir)?;
+        let mmaps = Self::load_mmaps(&self.dir, &info, &self.mmaps)?;
+        Ok(MMapReader {
+            dir: self.dir.clone(),
+            info,
+            mmaps,
+        })
     }
 
     fn info(&self) -> &TableInfo {

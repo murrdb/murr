@@ -15,6 +15,15 @@ pub struct NullBitmap<D: Directory> {
     pub reader: Arc<D::ReaderType>,
 }
 
+impl<D: Directory> Clone for NullBitmap<D> {
+    fn clone(&self) -> Self {
+        NullBitmap {
+            segments: self.segments.clone(),
+            reader: self.reader.clone(),
+        }
+    }
+}
+
 impl<D: Directory> NullBitmap<D> {
     pub fn new(segments: Vec<Option<OffsetSize>>, reader: Arc<D::ReaderType>) -> Self {
         NullBitmap { segments, reader }

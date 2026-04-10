@@ -66,6 +66,11 @@ pub trait ColumnReader<D: Directory>: Send + Sync {
     ) -> Result<Self, MurrError>
     where
         Self: Sized;
+    async fn reopen(
+        &self,
+        reader: Arc<D::ReaderType>,
+        column: &ColumnSegments,
+    ) -> Result<Box<dyn ColumnReader<D>>, MurrError>;
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 

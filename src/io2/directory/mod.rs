@@ -38,6 +38,7 @@ pub trait Reader: Sized + Send + Sync {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
+    async fn reopen(&self) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
     async fn read<T: Send, C: FromBytes<T> + Send>(
         &self,

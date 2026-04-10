@@ -55,6 +55,20 @@ impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
         })
     }
 
+    async fn reopen(
+        &self,
+        reader: Arc<D::ReaderType>,
+        column: &ColumnSegments,
+    ) -> Result<Box<dyn ColumnReader<D>>, MurrError> {
+        let prev = Self {
+            reader: self.reader.clone(),
+            column: self.column.clone(),
+            segments: self.segments.clone(),
+            bitmap: self.bitmap.clone(),
+        };
+        Ok(Box::new(Self::open(reader, column, &Some(prev)).await?))
+    }
+
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let num_keys = keys.len();
         if num_keys == 0 {

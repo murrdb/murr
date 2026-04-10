@@ -34,6 +34,10 @@ impl Reader for MemReader {
         Ok(MemReader { dir, info })
     }
 
+    async fn reopen(&self) -> Result<Self, MurrError> {
+        Self::new(self.dir.clone()).await
+    }
+
     fn info(&self) -> &TableInfo {
         &self.info
     }
