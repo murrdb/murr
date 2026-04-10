@@ -2,14 +2,18 @@ use std::sync::Arc;
 
 use arrow::array::Array;
 use async_trait::async_trait;
-use bincode::{Decode, Encode};
 
 use crate::{
     core::MurrError,
-    io2::{directory::Directory, info::ColumnInfo, table::key_offset::KeyOffset},
+    io2::{
+        directory::Directory,
+        info::{ColumnInfo, ColumnSegments},
+        table::key_offset::KeyOffset,
+    },
 };
 
 pub mod float32;
+pub mod reopen;
 pub mod utf8;
 
 pub const MAX_COLUMN_HEADER_SIZE: u32 = 4096;
@@ -34,10 +38,16 @@ impl ColumnSegmentBytes {
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone)]
 pub struct OffsetSize {
     pub offset: u32,
     pub size: u32,
+}
+
+pub trait ColumnFooter: Clone + Send + Sync {
+    fn base_offset(&self) -> u32;
+    fn bitmap(&self) -> &OffsetSize;
+    fn parse(data: &[u8], base_offset: u32) -> Result<Self, MurrError>;
 }
 
 pub trait Column<D: Directory>: Send + Sync {
@@ -49,7 +59,11 @@ pub trait Column<D: Directory>: Send + Sync {
 
 #[async_trait]
 pub trait ColumnReader<D: Directory>: Send + Sync {
-    async fn open(dir: Arc<D>, column: Arc<ColumnInfo>) -> Result<Self, MurrError>
+    async fn open(
+        reader: Arc<D::ReaderType>,
+        column: &ColumnSegments,
+        previous: &Option<Self>,
+    ) -> Result<Self, MurrError>
     where
         Self: Sized;
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;

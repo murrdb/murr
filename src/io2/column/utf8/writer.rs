@@ -75,6 +75,7 @@ impl<D: Directory> ColumnWriter<D> for Utf8ColumnWriter<D> {
         };
 
         let footer = Utf8ColumnFooter {
+            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: offsets_size,
@@ -88,7 +89,7 @@ impl<D: Directory> ColumnWriter<D> for Utf8ColumnWriter<D> {
                 size: bitmap_size,
             },
         };
-        let footer_bytes = encode_footer(&footer)?;
+        let footer_bytes = encode_footer(&footer);
 
         let total_size =
             offsets_size + padding1 + payload_size + padding2 + bitmap_size + padding3
@@ -116,7 +117,7 @@ impl<D: Directory> ColumnWriter<D> for Utf8ColumnWriter<D> {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io2::bytes::FromBytes;
+    use crate::io2::column::ColumnFooter;
     use crate::io2::column::utf8::footer::Utf8ColumnFooter;
     use crate::io2::directory::mem::directory::MemDirectory;
     use crate::io2::url::MemUrl;
@@ -162,7 +163,7 @@ mod tests {
         assert_eq!(result.num_values, 3);
 
         let bytes = &result.bytes.bytes;
-        let footer = Utf8ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.offsets.offset, 0);
         assert_eq!(footer.offsets.size, 16); // (3 + 1) * 4
         assert_eq!(footer.payload.size, 11); // "hello" + "world" + "!"
@@ -189,7 +190,7 @@ mod tests {
         assert_eq!(result.num_values, 4);
 
         let bytes = &result.bytes.bytes;
-        let footer = Utf8ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.offsets.size, 20); // (4 + 1) * 4
         assert_eq!(footer.payload.size, 3); // "a" + "bc"
         assert!(footer.bitmap.size > 0);
@@ -212,7 +213,7 @@ mod tests {
             .unwrap();
 
         let bytes = &result.bytes.bytes;
-        let footer = Utf8ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.bitmap.offset, 0);
         assert_eq!(footer.bitmap.size, 0);
     }

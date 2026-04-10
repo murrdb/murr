@@ -5,15 +5,16 @@ use async_trait::async_trait;
 
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
+use crate::io2::column::reopen::open_segments;
 use crate::io2::column::utf8::footer::{StringOffsetPair, Utf8ColumnFooter};
-use crate::io2::column::{ColumnReader, OffsetSize, MAX_COLUMN_HEADER_SIZE};
+use crate::io2::column::ColumnReader;
 use crate::io2::directory::{Directory, ReadRequest, Reader, SegmentReadRequest};
-use crate::io2::info::ColumnInfo;
+use crate::io2::info::{ColumnInfo, ColumnSegments};
 use crate::io2::table::key_offset::KeyOffset;
 
 pub struct Utf8ColumnReader<D: Directory> {
-    dir: Arc<D>,
-    column: Arc<ColumnInfo>,
+    reader: Arc<D::ReaderType>,
+    column: ColumnInfo,
     segments: Vec<Option<Utf8ColumnFooter>>,
     bitmap: NullBitmap<D>,
 }
@@ -34,70 +35,23 @@ impl<D: Directory> Utf8ColumnReader<D> {
 
 #[async_trait]
 impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
-    async fn open(dir: Arc<D>, column: Arc<ColumnInfo>) -> Result<Self, MurrError> {
-        let reader = Arc::new(dir.open_reader().await?);
-        let info = reader.info();
-        let col_segments = info.columns.get(&column.name).ok_or_else(|| {
-            MurrError::TableError(format!("column '{}' not found in metadata", column.name))
-        })?;
-
-        let segment_ids: Vec<u32> = col_segments.segments.keys().copied().collect();
-        if segment_ids.is_empty() {
-            return Ok(Utf8ColumnReader {
-                dir,
-                column,
-                segments: Vec::new(),
-                bitmap: NullBitmap::new(Vec::new(), reader),
-            });
-        }
-
-        // Read footer region from tail of each column blob
-        let requests: Vec<SegmentReadRequest> = segment_ids
-            .iter()
-            .map(|&seg_id| {
-                let seg_info = &col_segments.segments[&seg_id];
-                let read_size = MAX_COLUMN_HEADER_SIZE.min(seg_info.length);
-                let read_offset = seg_info.offset + seg_info.length - read_size;
-                SegmentReadRequest {
-                    segment: seg_id,
-                    read: ReadRequest {
-                        offset: read_offset,
-                        size: read_size,
-                    },
-                }
-            })
-            .collect();
-
-        let footers: Vec<Utf8ColumnFooter> = reader
-            .read::<Utf8ColumnFooter, Utf8ColumnFooter>(&requests)
-            .await?;
-
-        let max_seg_id = segment_ids
-            .iter()
-            .copied()
-            .max()
-            .ok_or_else(|| MurrError::SegmentError("no segment ids".into()))?
-            as usize;
-        let mut segments: Vec<Option<Utf8ColumnFooter>> = vec![None; max_seg_id + 1];
-        let mut bitmap_segments: Vec<Option<OffsetSize>> = vec![None; max_seg_id + 1];
-
-        for (i, &seg_id) in segment_ids.iter().enumerate() {
-            let seg_info = &col_segments.segments[&seg_id];
-            let mut footer = footers[i].clone();
-            footer.offsets.offset += seg_info.offset;
-            footer.payload.offset += seg_info.offset;
-            if footer.bitmap.size > 0 {
-                footer.bitmap.offset += seg_info.offset;
-                bitmap_segments[seg_id as usize] = Some(footer.bitmap.clone());
-            }
-            segments[seg_id as usize] = Some(footer);
-        }
-
-        Ok(Utf8ColumnReader {
-            dir,
+    async fn open(
+        reader: Arc<D::ReaderType>,
+        column: &ColumnSegments,
+        previous: &Option<Self>,
+    ) -> Result<Self, MurrError> {
+        let opened = open_segments::<Utf8ColumnFooter, D>(
+            &reader,
             column,
-            segments,
-            bitmap: NullBitmap::new(bitmap_segments, reader),
+            previous.as_ref().map(|p| &p.segments),
+            previous.as_ref().map(|p| &p.bitmap),
+        )
+        .await?;
+        Ok(Utf8ColumnReader {
+            reader,
+            column: column.column.clone(),
+            segments: opened.segments,
+            bitmap: opened.bitmap,
         })
     }
 
@@ -118,7 +72,7 @@ impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
         }
 
         if !non_missing_keys.is_empty() {
-            let reader = self.dir.open_reader().await?;
+            let reader = &self.reader;
 
             // Phase 1: Read i32 offset pairs (8 bytes each: offsets[i] and offsets[i+1])
             let mut offset_requests: Vec<SegmentReadRequest> =
@@ -199,20 +153,20 @@ mod tests {
         Arc::new(MemDirectory::open(&MemUrl, 4096, false))
     }
 
-    fn non_nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn non_nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "name".to_string(),
             dtype: DType::Utf8,
             nullable: false,
-        })
+        }
     }
 
-    fn nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "name".to_string(),
             dtype: DType::Utf8,
             nullable: true,
-        })
+        }
     }
 
     fn make_array(values: &[Option<&str>]) -> Arc<dyn Array> {
@@ -225,13 +179,24 @@ mod tests {
 
     async fn write_segment(
         dir: &Arc<MemDirectory>,
-        col_info: &Arc<ColumnInfo>,
+        col_info: &ColumnInfo,
         values: Arc<dyn Array>,
     ) {
-        let writer = Utf8ColumnWriter::new(dir.clone(), col_info.clone());
+        let writer = Utf8ColumnWriter::new(dir.clone(), Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).await.unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
+    }
+
+    async fn open_reader(
+        dir: &Arc<MemDirectory>,
+        col_name: &str,
+    ) -> Utf8ColumnReader<MemDirectory> {
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let col_segments = reader.info().columns.get(col_name).unwrap().clone();
+        Utf8ColumnReader::open(reader, &col_segments, &None)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -241,7 +206,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&["hello", "world", "!"])).await;
 
-        let reader = Utf8ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "name").await;
 
         let keys = vec![
             KeyOffset {
@@ -270,7 +235,7 @@ mod tests {
         write_segment(&dir, &col_info, make_non_null_array(&["a", "bb"])).await;
         write_segment(&dir, &col_info, make_non_null_array(&["ccc", "dddd"])).await;
 
-        let reader = Utf8ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "name").await;
 
         let keys = vec![
             KeyOffset {
@@ -297,7 +262,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&["foo", "bar"])).await;
 
-        let reader = Utf8ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "name").await;
 
         let keys = vec![
             KeyOffset {
@@ -332,7 +297,7 @@ mod tests {
         )
         .await;
 
-        let reader = Utf8ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "name").await;
 
         let keys: Vec<KeyOffset> = (0..5)
             .map(|i| KeyOffset {
@@ -362,7 +327,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&["x"])).await;
 
-        let reader = Utf8ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "name").await;
 
         let result = reader.read(&[]).await.unwrap();
         let arr = result.as_any().downcast_ref::<StringArray>().unwrap();

@@ -61,6 +61,7 @@ impl<D: Directory> ColumnWriter<D> for Float32ColumnWriter<D> {
         };
 
         let footer = Float32ColumnFooter {
+            base_offset: 0,
             payload: OffsetSize {
                 offset: 0,
                 size: payload_size,
@@ -70,7 +71,7 @@ impl<D: Directory> ColumnWriter<D> for Float32ColumnWriter<D> {
                 size: bitmap_size,
             },
         };
-        let footer_bytes = encode_footer(&footer)?;
+        let footer_bytes = encode_footer(&footer);
 
         let total_size =
             payload_size + padding1 + bitmap_size + padding2 + footer_bytes.len() as u32;
@@ -96,7 +97,7 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io2::column::float32::footer::Float32ColumnFooter;
-    use crate::io2::bytes::FromBytes;
+    use crate::io2::column::ColumnFooter;
     use crate::io2::directory::mem::directory::MemDirectory;
     use crate::io2::url::MemUrl;
     use bytemuck::cast_slice;
@@ -138,7 +139,7 @@ mod tests {
         assert_eq!(result.num_values, 3);
 
         let bytes = &result.bytes.bytes;
-        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.payload.offset, 0);
         assert_eq!(footer.payload.size, 12);
         assert_eq!(footer.bitmap.size, 0);
@@ -159,7 +160,7 @@ mod tests {
         assert_eq!(result.num_values, 4);
 
         let bytes = &result.bytes.bytes;
-        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.payload.size, 16);
         assert!(footer.bitmap.size > 0);
 
@@ -181,7 +182,7 @@ mod tests {
             .unwrap();
 
         let bytes = &result.bytes.bytes;
-        let footer = Float32ColumnFooter::from_bytes(bytes, 0, bytes.len() as u32);
+        let footer = Float32ColumnFooter::parse(bytes, 0).unwrap();
         assert_eq!(footer.bitmap.offset, 0);
         assert_eq!(footer.bitmap.size, 0);
     }

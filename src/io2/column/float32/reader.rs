@@ -8,14 +8,15 @@ use async_trait::async_trait;
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
 use crate::io2::column::float32::footer::Float32ColumnFooter;
-use crate::io2::column::{ColumnReader, OffsetSize, MAX_COLUMN_HEADER_SIZE};
+use crate::io2::column::reopen::open_segments;
+use crate::io2::column::ColumnReader;
 use crate::io2::directory::{Directory, ReadRequest, Reader, SegmentReadRequest};
-use crate::io2::info::ColumnInfo;
+use crate::io2::info::{ColumnInfo, ColumnSegments};
 use crate::io2::table::key_offset::KeyOffset;
 
 pub struct Float32ColumnReader<D: Directory> {
-    dir: Arc<D>,
-    column: Arc<ColumnInfo>,
+    reader: Arc<D::ReaderType>,
+    column: ColumnInfo,
     segments: Vec<Option<Float32ColumnFooter>>,
     bitmap: NullBitmap<D>,
 }
@@ -36,64 +37,23 @@ impl<D: Directory> Float32ColumnReader<D> {
 
 #[async_trait]
 impl<D: Directory> ColumnReader<D> for Float32ColumnReader<D> {
-    async fn open(dir: Arc<D>, column: Arc<ColumnInfo>) -> Result<Self, MurrError> {
-        let reader = Arc::new(dir.open_reader().await?);
-        let info = reader.info();
-        let col_segments = info.columns.get(&column.name).ok_or_else(|| {
-            MurrError::TableError(format!("column '{}' not found in metadata", column.name))
-        })?;
-
-        let segment_ids: Vec<u32> = col_segments.segments.keys().copied().collect();
-        if segment_ids.is_empty() {
-            return Ok(Float32ColumnReader {
-                dir,
-                column,
-                segments: Vec::new(),
-                bitmap: NullBitmap::new(Vec::new(), reader),
-            });
-        }
-
-        // Read footer region from tail of each column blob
-        let requests: Vec<SegmentReadRequest> = segment_ids
-            .iter()
-            .map(|&seg_id| {
-                let seg_info = &col_segments.segments[&seg_id];
-                let read_size = MAX_COLUMN_HEADER_SIZE.min(seg_info.length);
-                let read_offset = seg_info.offset + seg_info.length - read_size;
-                SegmentReadRequest {
-                    segment: seg_id,
-                    read: ReadRequest {
-                        offset: read_offset,
-                        size: read_size,
-                    },
-                }
-            })
-            .collect();
-
-        let footers: Vec<Float32ColumnFooter> = reader
-            .read::<Float32ColumnFooter, Float32ColumnFooter>(&requests)
-            .await?;
-
-        let max_seg_id = *segment_ids.iter().max().unwrap() as usize;
-        let mut segments: Vec<Option<Float32ColumnFooter>> = vec![None; max_seg_id + 1];
-        let mut bitmap_segments: Vec<Option<OffsetSize>> = vec![None; max_seg_id + 1];
-
-        for (i, &seg_id) in segment_ids.iter().enumerate() {
-            let seg_info = &col_segments.segments[&seg_id];
-            let mut footer = footers[i].clone();
-            footer.payload.offset += seg_info.offset;
-            if footer.bitmap.size > 0 {
-                footer.bitmap.offset += seg_info.offset;
-                bitmap_segments[seg_id as usize] = Some(footer.bitmap.clone());
-            }
-            segments[seg_id as usize] = Some(footer);
-        }
-
-        Ok(Float32ColumnReader {
-            dir,
+    async fn open(
+        reader: Arc<D::ReaderType>,
+        column: &ColumnSegments,
+        previous: &Option<Self>,
+    ) -> Result<Self, MurrError> {
+        let opened = open_segments::<Float32ColumnFooter, D>(
+            &reader,
             column,
-            segments,
-            bitmap: NullBitmap::new(bitmap_segments, reader),
+            previous.as_ref().map(|p| &p.segments),
+            previous.as_ref().map(|p| &p.bitmap),
+        )
+        .await?;
+        Ok(Float32ColumnReader {
+            reader,
+            column: column.column.clone(),
+            segments: opened.segments,
+            bitmap: opened.bitmap,
         })
     }
 
@@ -132,8 +92,7 @@ impl<D: Directory> ColumnReader<D> for Float32ColumnReader<D> {
         }
 
         if !data_requests.is_empty() {
-            let reader = self.dir.open_reader().await?;
-            let data_values: Vec<f32> = reader.read::<f32, f32>(&data_requests).await?;
+            let data_values: Vec<f32> = self.reader.read::<f32, f32>(&data_requests).await?;
 
             for (i, &request_index) in request_indices.iter().enumerate() {
                 values[request_index] = data_values[i];
@@ -172,20 +131,20 @@ mod tests {
         Arc::new(MemDirectory::open(&MemUrl, 4096, false))
     }
 
-    fn non_nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn non_nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "score".to_string(),
             dtype: DType::Float32,
             nullable: false,
-        })
+        }
     }
 
-    fn nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "score".to_string(),
             dtype: DType::Float32,
             nullable: true,
-        })
+        }
     }
 
     fn make_array(values: &[Option<f32>]) -> Arc<dyn Array> {
@@ -198,13 +157,24 @@ mod tests {
 
     async fn write_segment(
         dir: &Arc<MemDirectory>,
-        col_info: &Arc<ColumnInfo>,
+        col_info: &ColumnInfo,
         values: Arc<dyn Array>,
     ) {
-        let writer = Float32ColumnWriter::new(dir.clone(), col_info.clone());
+        let writer = Float32ColumnWriter::new(dir.clone(), Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).await.unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
+    }
+
+    async fn open_reader(
+        dir: &Arc<MemDirectory>,
+        col_name: &str,
+    ) -> Float32ColumnReader<MemDirectory> {
+        let reader = Arc::new(dir.open_reader().await.unwrap());
+        let col_segments = reader.info().columns.get(col_name).unwrap().clone();
+        Float32ColumnReader::open(reader, &col_segments, &None)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -214,7 +184,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&[10.0, 20.0, 30.0])).await;
 
-        let reader = Float32ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -243,7 +213,7 @@ mod tests {
         write_segment(&dir, &col_info, make_non_null_array(&[1.0, 2.0])).await;
         write_segment(&dir, &col_info, make_non_null_array(&[10.0, 20.0])).await;
 
-        let reader = Float32ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -270,7 +240,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&[5.0, 6.0])).await;
 
-        let reader = Float32ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -305,7 +275,7 @@ mod tests {
         )
         .await;
 
-        let reader = Float32ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "score").await;
 
         let keys: Vec<KeyOffset> = (0..5)
             .map(|i| KeyOffset {
@@ -335,7 +305,7 @@ mod tests {
 
         write_segment(&dir, &col_info, make_non_null_array(&[1.0])).await;
 
-        let reader = Float32ColumnReader::open(dir.clone(), col_info).await.unwrap();
+        let reader = open_reader(&dir, "score").await;
 
         let result = reader.read(&[]).await.unwrap();
         let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
