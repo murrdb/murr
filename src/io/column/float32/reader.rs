@@ -61,14 +61,14 @@ impl ColumnReader for Float32ColumnReader {
         &self,
         reader: Arc<dyn Reader>,
         column: &ColumnSegments,
-    ) -> Result<Box<dyn ColumnReader>, MurrError> {
+    ) -> Result<Arc<dyn ColumnReader>, MurrError> {
         let prev = Self {
             reader: self.reader.clone(),
             column: self.column.clone(),
             segments: self.segments.clone(),
             bitmap: self.bitmap.clone(),
         };
-        Ok(Box::new(Self::open(reader, column, &Some(prev)).await?))
+        Ok(Arc::new(Self::open(reader, column, &Some(prev)).await?))
     }
 
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {

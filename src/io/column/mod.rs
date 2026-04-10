@@ -74,7 +74,7 @@ pub trait ColumnReader: Send + Sync {
         &self,
         reader: Arc<dyn Reader>,
         column: &ColumnSegments,
-    ) -> Result<Box<dyn ColumnReader>, MurrError>;
+    ) -> Result<Arc<dyn ColumnReader>, MurrError>;
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 
