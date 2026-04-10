@@ -68,7 +68,7 @@ pytest tests/ -v             # Run Python tests
 - `MurrService` — Owns `Config`, holds `RwLock<HashMap<String, TableState>>` table registry; constructor takes `Config` (not a path)
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
 - `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
-- `state.rs` — `TableState` holds `MMapDirectory`, `TableSchema`, `Option<Table>`
+- `state.rs` — `TableState` holds `Arc<Table<MMapDirectory>>` and `Option<TableReader>`; reader is `None` until first write, then incrementally reopened on subsequent writes
 
 **`api/http/`** — Axum HTTP API layer
 - `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
@@ -84,7 +84,7 @@ pytest tests/ -v             # Run Python tests
 - Implemented RPCs: `do_get` (fetch by keys+columns), `get_flight_info`, `get_schema`, `list_flights`
 - All write RPCs (`do_put`, `do_exchange`, `do_action`) return `Unimplemented`
 
-**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableNotFound`, `TableAlreadyExists`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
 
 **`conf/`** — Hierarchical configuration loaded via `Config::from_args(&CliArgs)`:
 - `config.rs` — `Config` struct with `server` + `storage` fields; loads from optional YAML file (`--config`) then env vars (`MURR_` prefix, `_` separator)
@@ -106,10 +106,10 @@ pytest tests/ -v             # Run Python tests
 
 ### Key Design Patterns
 
-- **Self-referential structs**: `CachedTable` uses `ouroboros` to own a `TableView` while borrowing from it in `TableReader`
-- **`AHashMap`** used in `TableReader` for faster hashing than std `HashMap`
+- **`Arc<Table<D>>` ownership**: `TableState` holds table behind `Arc` with an optional `TableReader` that is incrementally reopened (not rebuilt from scratch) after each write
 - **`bytemuck`** for zero-copy casting of segment headers
 - **`memmap2`** for memory-mapped segment reads
+- **Incremental index rebuild**: `KeyIndex` uses file-based segment IDs so new segments can be indexed without re-scanning existing ones
 - **Feature-gated test utilities**: `testutil` feature enables `tempfile` + `rand` deps for test/bench helpers
 
 ### Configuration Format
@@ -135,7 +135,8 @@ Supported dtypes: `utf8`, `float32`
 ### Testing
 
 - Unit tests in most modules via `#[cfg(test)]` (including inline tests in `service/mod.rs`, `convert.rs`)
-- E2E API tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
+- E2E HTTP tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
+- E2E Flight gRPC tests in `tests/flight_test.rs`
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
 - Benchmarks: `multi_segment_index_bench` (incremental key index rebuild), `mmap_uring_bench` (mmap vs io_uring read comparison)
