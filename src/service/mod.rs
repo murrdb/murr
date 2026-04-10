@@ -10,10 +10,10 @@ use tokio::sync::RwLock;
 
 use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
-use crate::io2::directory::mmap::directory::MMapDirectory;
-use crate::io2::directory::Directory;
-use crate::io2::table::Table;
-use crate::io2::url::LocalUrl;
+use crate::io::directory::mmap::directory::MMapDirectory;
+use crate::io::directory::Directory;
+use crate::io::table::Table;
+use crate::io::url::LocalUrl;
 
 use state::TableState;
 

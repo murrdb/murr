@@ -24,7 +24,7 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP and Arrow Flight gRPC (via `tokio::try_join!` in `main.rs`), with listen addresses driven by config. Only `Float32` and `Utf8` column types are implemented so far. A next-gen async storage layer (`src/io2/`) is in development with trait-based Directory/Reader/Writer abstractions and URL-based location scheme.
+**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP and Arrow Flight gRPC (via `tokio::try_join!` in `main.rs`), with listen addresses driven by config. Only `Float32` and `Utf8` column types are implemented so far. The storage layer (`src/io/`) uses trait-based Directory/Reader/Writer abstractions and URL-based location scheme.
 
 ## Common Commands
 
@@ -53,35 +53,22 @@ pytest tests/ -v             # Run Python tests
 
 ### Module Structure
 
-**`io/segment/`** — Custom binary `.seg` format
-- `format.rs` — Wire format: `[MURR magic][version u32 LE][column payloads (4-byte aligned)][footer entries][footer_size u32 LE]`
-- `write.rs` — `WriteSegment` builder: `add_column(name, bytes)` then `write(w)`
-- `read.rs` — `Segment::open(path)` memory-maps file, validates magic+version, parses footer, provides `column(name) -> Option<&[u8]>` zero-copy access
-
-**`io/directory/`** — Storage directory abstraction
-- `Directory` trait with `index()` (returns `IndexInfo`: schema + segment list) and `write()` methods
-- `LocalDirectory` reads `table.json` (schema) + scans `*.seg` files
-
-**`io/table/`** — Table layer built on segments
-- `writer.rs` — `TableWriter` creates `table.json` and writes `{id:08}.seg` files from `RecordBatch`
-- `reader.rs` — `TableReader` builds key index (`AHashMap<String, KeyOffset>`) across segments; last segment wins for duplicate keys
-- `view.rs` — `TableView` opens all segment files, holds `Vec<Segment>`
-- `cached.rs` — `CachedTable` uses `ouroboros` self-referential struct to own `TableView` + borrow `TableReader`
-- `table.rs` — Legacy Arrow IPC `Table` type (still used by benchmarks, not part of new storage path)
-- `index.rs` — `KeyIndex` with `build()` and `build_incremental()` for key-to-segment-offset mapping; supports incremental rebuild by only scanning segments newer than `max_segment_id`
-
-**`io/table/column/`** — Per-dtype column implementations
-- `Column` trait: `get_indexes(&[KeyOffset]) -> Arc<dyn Array>`, `get_all()`, `size()`
-- `ColumnSegment` trait: `parse(name, config, data)`, `write(config, array) -> Vec<u8>`
-- `float32/` — `Float32Column` with 16-byte segment header, 8-byte aligned payload, optional null bitmap
-- `utf8/` — `Utf8Column` with 20-byte segment header, i32 value offsets, concatenated strings, optional null bitmap
-- `bitmap.rs` — `NullBitmap` using u64-word bit array (bit set = valid)
+**`io/`** — Storage layer with trait-based Directory/Reader/Writer abstractions
+- `directory/mod.rs` — `Directory`, `Reader`, `Writer` traits with associated types for location (`Url`) and I/O backends
+- `directory/mmap/` — Memory-mapped file backend (`MMapDirectory`) using `memmap2`
+- `directory/mem/` — In-memory backend (`MemDirectory`) for testing
+- `url.rs` — `Url` trait with `LocalUrl` (`file://`) and `S3Url` (`s3://`) implementations
+- `info.rs` — `TableInfo`, `ColumnInfo`, `SegmentInfo` metadata structs (serialized as `_metadata.json`)
+- `bytes.rs` — `FromBytes<T>` trait for zero-copy type casting from raw page bytes
+- `column/` — Column segment types (`float32/`, `utf8/` with footer, reader, writer)
+- `bitmap.rs` — Null bitmap implementation using u64-word bit array
+- `table/` — Table-level abstractions: `Table`, `TableReader`, `KeyOffset`, `KeyIndex`
 
 **`service/`** — High-level service wrapping the storage layer
 - `MurrService` — Owns `Config`, holds `RwLock<HashMap<String, TableState>>` table registry; constructor takes `Config` (not a path)
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
 - `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
-- `state.rs` — `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
+- `state.rs` — `TableState` holds `MMapDirectory`, `TableSchema`, `Option<Table>`
 
 **`api/http/`** — Axum HTTP API layer
 - `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
@@ -104,17 +91,6 @@ pytest tests/ -v             # Run Python tests
 - `server.rs` — `ServerConfig` containing `HttpConfig` (default `0.0.0.0:8080`) and `GrpcConfig` (default `0.0.0.0:8081`), each with `addr()` method
 - `storage.rs` — `StorageConfig` with `cache_dir` auto-resolution: tries `<cwd>/murr` → `/var/lib/murr/murr` → `/data/murr` → `<tmpdir>/murr`, picking first writable location
 - All config structs use `#[serde(deny_unknown_fields)]` for strict validation
-
-**`io2/`** — Next-gen async storage layer (in development alongside `io/`)
-- `directory/mod.rs` — Async `Directory`, `Reader`, `Writer` traits with associated types for location (`Url`) and I/O backends
-- `directory/mmap/` — Memory-mapped file backend (`MmapDirectory`) using `memmap2`
-- `directory/mem/` — In-memory backend (`MemDirectory`) for testing
-- `url.rs` — `Url` trait with `LocalUrl` (`file://`) and `S3Url` (`s3://`) implementations
-- `info.rs` — `TableInfo`, `ColumnInfo`, `SegmentInfo` metadata structs (serialized as `_metadata.json`)
-- `bytes.rs` — `FromBytes<T>` trait for zero-copy type casting from raw page bytes
-- `column/` — Column segment types (`float32/` with footer, reader, writer)
-- `bitmap.rs` — Null bitmap implementation
-- `table/` — Table-level abstractions including `KeyOffset`
 
 **`util/`** — Miscellaneous utilities (`logo.rs` — ASCII art banner)
 

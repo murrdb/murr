@@ -168,7 +168,7 @@ struct MurrService {
 
 `TableState` owns `Arc<Table<MMapDirectory>>` and `Option<TableReader>`.
 
-The service layer uses the async `io2` storage layer (not the old `io` module). `Directory` has `create()` (new table, writes initial `_metadata.json` with schema) and `open()` (loads schema from `_metadata.json`). `list_indexes()` discovers tables by scanning subdirectories. `TableReader::reopen(self)` provides incremental reader refresh without rebuilding from scratch.
+The service layer uses the `io` storage layer. `Directory` has `create()` (new table, writes initial `_metadata.json` with schema) and `open()` (loads schema from `_metadata.json`). `list_indexes()` discovers tables by scanning subdirectories. `TableReader::reopen(self)` provides incremental reader refresh without rebuilding from scratch.
 
 ### Request flow
 
