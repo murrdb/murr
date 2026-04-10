@@ -43,6 +43,7 @@ tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 async-trait = "0.1"
 hashbrown = "0.17.0"
+lean_string = "0.5"
 rustc-hash = "2"
 
 [dev-dependencies]
