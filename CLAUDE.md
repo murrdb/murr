@@ -24,7 +24,7 @@ Murr is a columnar in-memory cache for AI/ML inference workloads, written in Rus
 - Stateless: No primary/replica coordination, horizontal scaling by pointing workers at S3
 - Columnar storage: Optimized for "give me columns X, Y, Z for keys 1-200" access patterns
 
-**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP and Arrow Flight gRPC (via `tokio::try_join!` in `main.rs`), with listen addresses driven by config. Only `Float32` and `Utf8` column types are implemented so far.
+**Status:** Pre-alpha. The codebase uses a custom binary `.seg` format (`src/io/`) with `MurrService` (`src/service/`) wrapping the storage layer. Two API layers serve concurrently: Axum HTTP and Arrow Flight gRPC (via `tokio::try_join!` in `main.rs`), with listen addresses driven by config. Only `Float32` and `Utf8` column types are implemented so far. The storage layer (`src/io/`) uses trait-based Directory/Reader/Writer abstractions and URL-based location scheme.
 
 ## Common Commands
 
@@ -35,7 +35,7 @@ cargo test <name>            # Run specific test by name
 cargo check                  # Fast syntax/type check without codegen
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a specific benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
+cargo bench --bench <name>   # Run a specific benchmark (multi_segment_index_bench)
 ```
 
 ### Python bindings
@@ -53,34 +53,22 @@ pytest tests/ -v             # Run Python tests
 
 ### Module Structure
 
-**`io/segment/`** — Custom binary `.seg` format
-- `format.rs` — Wire format: `[MURR magic][version u32 LE][column payloads (4-byte aligned)][footer entries][footer_size u32 LE]`
-- `write.rs` — `WriteSegment` builder: `add_column(name, bytes)` then `write(w)`
-- `read.rs` — `Segment::open(path)` memory-maps file, validates magic+version, parses footer, provides `column(name) -> Option<&[u8]>` zero-copy access
-
-**`io/directory/`** — Storage directory abstraction
-- `Directory` trait with `index()` (returns `IndexInfo`: schema + segment list) and `write()` methods
-- `LocalDirectory` reads `table.json` (schema) + scans `*.seg` files
-
-**`io/table/`** — Table layer built on segments
-- `writer.rs` — `TableWriter` creates `table.json` and writes `{id:08}.seg` files from `RecordBatch`
-- `reader.rs` — `TableReader` builds key index (`AHashMap<String, KeyOffset>`) across segments; last segment wins for duplicate keys
-- `view.rs` — `TableView` opens all segment files, holds `Vec<Segment>`
-- `cached.rs` — `CachedTable` uses `ouroboros` self-referential struct to own `TableView` + borrow `TableReader`
-- `table.rs` — Legacy Arrow IPC `Table` type (still used by benchmarks, not part of new storage path)
-
-**`io/table/column/`** — Per-dtype column implementations
-- `Column` trait: `get_indexes(&[KeyOffset]) -> Arc<dyn Array>`, `get_all()`, `size()`
-- `ColumnSegment` trait: `parse(name, config, data)`, `write(config, array) -> Vec<u8>`
-- `float32/` — `Float32Column` with 16-byte segment header, 8-byte aligned payload, optional null bitmap
-- `utf8/` — `Utf8Column` with 20-byte segment header, i32 value offsets, concatenated strings, optional null bitmap
-- `bitmap.rs` — `NullBitmap` using u64-word bit array (bit set = valid)
+**`io/`** — Storage layer with trait-based Directory/Reader/Writer abstractions
+- `directory/mod.rs` — `Directory`, `Reader`, `Writer` traits with associated types for location (`Url`) and I/O backends
+- `directory/mmap/` — Memory-mapped file backend (`MMapDirectory`) using `memmap2`
+- `directory/mem/` — In-memory backend (`MemDirectory`) for testing
+- `url.rs` — `Url` trait with `LocalUrl` (`file://`) and `S3Url` (`s3://`) implementations
+- `info.rs` — `TableInfo`, `ColumnInfo`, `SegmentInfo` metadata structs (serialized as `_metadata.json`)
+- `bytes.rs` — `FromBytes<T>` trait for zero-copy type casting from raw page bytes
+- `column/` — Column segment types (`float32/`, `utf8/` with footer, reader, writer)
+- `bitmap.rs` — Null bitmap implementation using u64-word bit array
+- `table/` — Table-level abstractions: `Table`, `TableReader`, `KeyOffset`, `KeyIndex`
 
 **`service/`** — High-level service wrapping the storage layer
 - `MurrService` — Owns `Config`, holds `RwLock<HashMap<String, TableState>>` table registry; constructor takes `Config` (not a path)
 - `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` flow
 - `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
-- `state.rs` — `TableState` holds `LocalDirectory`, `TableSchema`, `Option<CachedTable>`
+- `state.rs` — `TableState` holds `Arc<Table<MMapDirectory>>` and `Option<TableReader>`; reader is `None` until first write, then incrementally reopened on subsequent writes
 
 **`api/http/`** — Axum HTTP API layer
 - `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
@@ -96,13 +84,15 @@ pytest tests/ -v             # Run Python tests
 - Implemented RPCs: `do_get` (fetch by keys+columns), `get_flight_info`, `get_schema`, `list_flights`
 - All write RPCs (`do_put`, `do_exchange`, `do_action`) return `Unimplemented`
 
-**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableNotFound`, `TableAlreadyExists`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
 
 **`conf/`** — Hierarchical configuration loaded via `Config::from_args(&CliArgs)`:
 - `config.rs` — `Config` struct with `server` + `storage` fields; loads from optional YAML file (`--config`) then env vars (`MURR_` prefix, `_` separator)
 - `server.rs` — `ServerConfig` containing `HttpConfig` (default `0.0.0.0:8080`) and `GrpcConfig` (default `0.0.0.0:8081`), each with `addr()` method
 - `storage.rs` — `StorageConfig` with `cache_dir` auto-resolution: tries `<cwd>/murr` → `/var/lib/murr/murr` → `/data/murr` → `<tmpdir>/murr`, picking first writable location
 - All config structs use `#[serde(deny_unknown_fields)]` for strict validation
+
+**`util/`** — Miscellaneous utilities (`logo.rs` — ASCII art banner)
 
 **`testutil.rs`** — Feature-gated (`testutil`) test helpers: `generate_parquet_file()`, `setup_test_table()`, `setup_benchmark_table()`, `bench_generate_keys()`
 
@@ -116,10 +106,10 @@ pytest tests/ -v             # Run Python tests
 
 ### Key Design Patterns
 
-- **Self-referential structs**: `CachedTable` uses `ouroboros` to own a `TableView` while borrowing from it in `TableReader`
-- **`AHashMap`** used in `TableReader` for faster hashing than std `HashMap`
+- **`Arc<Table<D>>` ownership**: `TableState` holds table behind `Arc` with an optional `TableReader` that is incrementally reopened (not rebuilt from scratch) after each write
 - **`bytemuck`** for zero-copy casting of segment headers
 - **`memmap2`** for memory-mapped segment reads
+- **Incremental index rebuild**: `KeyIndex` uses file-based segment IDs so new segments can be indexed without re-scanning existing ones
 - **Feature-gated test utilities**: `testutil` feature enables `tempfile` + `rand` deps for test/bench helpers
 
 ### Configuration Format
@@ -145,7 +135,8 @@ Supported dtypes: `utf8`, `float32`
 ### Testing
 
 - Unit tests in most modules via `#[cfg(test)]` (including inline tests in `service/mod.rs`, `convert.rs`)
-- E2E API tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
+- E2E HTTP tests in `tests/api_test.rs` using `tower::ServiceExt::oneshot()` against the router (no TCP server needed)
+- E2E Flight gRPC tests in `tests/flight_test.rs`
 - Parameterized dtype tests using `rstest`
 - Test fixtures in `tests/fixtures/`
-- Benchmarks: `table_bench` (10M rows), `http_bench` and `flight_bench` (Murr HTTP/Flight vs Redis comparison via `testcontainers`), `hashmap_bench`, `hashmap_row_bench`, `redis_feast_bench`, `redis_featureblob_bench`
+- Benchmarks: `multi_segment_index_bench` (incremental key index rebuild)

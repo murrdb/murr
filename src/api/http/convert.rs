@@ -249,7 +249,7 @@ mod tests {
         );
         columns.insert(
             "score".to_string(),
-            vec![Value::from(3.14), Value::Null],
+            vec![Value::from(2.72), Value::Null],
         );
         let write = WriteRequest { columns };
         let schema = test_table_schema();
@@ -266,9 +266,9 @@ mod tests {
         assert_eq!(name_vals[1], Value::String("y".into()));
 
         let score_vals = cols.get("score").unwrap().as_array().unwrap();
-        // f64 3.14 → f32 → f64 round-trip may lose precision, so compare as f32
+        // f64 2.72 → f32 → f64 round-trip may lose precision, so compare as f32
         let v = score_vals[0].as_f64().unwrap() as f32;
-        assert!((v - 3.14f32).abs() < 1e-6);
+        assert!((v - 2.72f32).abs() < 1e-6);
         assert!(score_vals[1].is_null());
     }
 }
