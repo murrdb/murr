@@ -8,22 +8,20 @@ use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
 use crate::io2::column::float32::footer::{align8_padding, encode_footer, Float32ColumnFooter};
 use crate::io2::column::{ColumnSegmentBytes, ColumnWriter, OffsetSize};
-use crate::io2::directory::Directory;
 use crate::io2::info::ColumnInfo;
 
-pub struct Float32ColumnWriter<D: Directory> {
-    dir: Arc<D>,
+pub struct Float32ColumnWriter {
     column: Arc<ColumnInfo>,
 }
 
-impl<D: Directory> Float32ColumnWriter<D> {
-    pub fn new(dir: Arc<D>, column: Arc<ColumnInfo>) -> Self {
-        Float32ColumnWriter { dir, column }
+impl Float32ColumnWriter {
+    pub fn new(column: Arc<ColumnInfo>) -> Self {
+        Float32ColumnWriter { column }
     }
 }
 
 #[async_trait]
-impl<D: Directory> ColumnWriter<D> for Float32ColumnWriter<D> {
+impl ColumnWriter for Float32ColumnWriter {
     async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError> {
         let array = values
             .as_any()
@@ -40,7 +38,7 @@ impl<D: Directory> ColumnWriter<D> for Float32ColumnWriter<D> {
 
         // Build null bitmap
         let bitmap_bytes = if self.column.nullable {
-            NullBitmap::<D>::write(values.as_ref())
+            NullBitmap::write(values.as_ref())
         } else {
             Vec::new()
         };
@@ -98,13 +96,7 @@ mod tests {
     use crate::core::DType;
     use crate::io2::column::float32::footer::Float32ColumnFooter;
     use crate::io2::column::ColumnFooter;
-    use crate::io2::directory::mem::directory::MemDirectory;
-    use crate::io2::url::MemUrl;
     use bytemuck::cast_slice;
-
-    fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
-    }
 
     fn non_nullable_info() -> Arc<ColumnInfo> {
         Arc::new(ColumnInfo {
@@ -132,8 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_non_nullable() {
-        let dir = test_dir();
-        let writer = Float32ColumnWriter::new(dir, non_nullable_info());
+        let writer = Float32ColumnWriter::new(non_nullable_info());
 
         let result = writer.write(make_non_null_array(&[1.0, 2.5, 3.0])).await.unwrap();
         assert_eq!(result.num_values, 3);
@@ -150,8 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_nullable_with_nulls() {
-        let dir = test_dir();
-        let writer = Float32ColumnWriter::new(dir, nullable_info());
+        let writer = Float32ColumnWriter::new(nullable_info());
 
         let result = writer
             .write(make_array(&[Some(1.0), None, Some(3.0), None]))
@@ -173,8 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_nullable_no_nulls() {
-        let dir = test_dir();
-        let writer = Float32ColumnWriter::new(dir, nullable_info());
+        let writer = Float32ColumnWriter::new(nullable_info());
 
         let result = writer
             .write(make_array(&[Some(1.0), Some(2.0)]))
@@ -189,8 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_empty() {
-        let dir = test_dir();
-        let writer = Float32ColumnWriter::new(dir, non_nullable_info());
+        let writer = Float32ColumnWriter::new(non_nullable_info());
 
         let result = writer.write(make_non_null_array(&[])).await.unwrap();
         assert_eq!(result.num_values, 0);

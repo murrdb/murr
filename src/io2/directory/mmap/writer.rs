@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
-use crate::io2::directory::Writer;
+use crate::io2::directory::DirectoryWriter;
 use crate::io2::directory::mmap::directory::MMapDirectory;
 use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
@@ -80,7 +80,7 @@ impl MMapWriter {
 }
 
 #[async_trait]
-impl Writer for MMapWriter {
+impl DirectoryWriter for MMapWriter {
     type D = MMapDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
@@ -145,7 +145,7 @@ impl Writer for MMapWriter {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io2::directory::Directory;
+    use crate::io2::directory::{Directory, DirectoryWriter};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
 

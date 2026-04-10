@@ -1,5 +1,4 @@
 use crate::core::MurrError;
-use crate::io2::bytes::FromBytes;
 use crate::io2::column::{ColumnFooter, OffsetSize};
 
 // Footer layout (from end of data):
@@ -85,24 +84,6 @@ pub fn encode_footer(footer: &Utf8ColumnFooter) -> Vec<u8> {
 
 pub fn align8_padding(len: u32) -> u32 {
     (8 - (len % 8)) % 8
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct StringOffsetPair {
-    pub start: i32,
-    pub end: i32,
-}
-
-impl FromBytes<StringOffsetPair> for StringOffsetPair {
-    fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> StringOffsetPair {
-        unsafe {
-            let ptr = page.as_ptr().add(page_offset as usize);
-            StringOffsetPair {
-                start: *(ptr as *const i32),
-                end: *(ptr.add(4) as *const i32),
-            }
-        }
-    }
 }
 
 #[cfg(test)]

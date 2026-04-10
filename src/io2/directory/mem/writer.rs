@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::core::MurrError;
 use crate::io2::column::ColumnSegmentBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
-use crate::io2::directory::{METADATA_JSON, Writer};
+use crate::io2::directory::{DirectoryWriter, METADATA_JSON};
 use crate::io2::info::{ColumnSegments, SegmentInfo, TableInfo};
 
 pub struct MemWriter {
@@ -41,7 +41,7 @@ impl MemWriter {
 }
 
 #[async_trait]
-impl Writer for MemWriter {
+impl DirectoryWriter for MemWriter {
     type D = MemDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
@@ -113,7 +113,7 @@ impl Writer for MemWriter {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io2::directory::Directory;
+    use crate::io2::directory::{Directory, DirectoryWriter};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
 

@@ -5,21 +5,22 @@ use async_trait::async_trait;
 
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
+use crate::io2::bytes::StringOffsetPair;
 use crate::io2::column::reopen::open_segments;
-use crate::io2::column::utf8::footer::{StringOffsetPair, Utf8ColumnFooter};
+use crate::io2::column::utf8::footer::Utf8ColumnFooter;
 use crate::io2::column::ColumnReader;
-use crate::io2::directory::{Directory, ReadRequest, Reader, SegmentReadRequest};
+use crate::io2::directory::{ReadRequest, Reader, SegmentReadRequest};
 use crate::io2::info::{ColumnInfo, ColumnSegments};
 use crate::io2::table::key_offset::KeyOffset;
 
-pub struct Utf8ColumnReader<D: Directory> {
-    reader: Arc<D::ReaderType>,
+pub struct Utf8ColumnReader {
+    reader: Arc<dyn Reader>,
     column: ColumnInfo,
     segments: Vec<Option<Utf8ColumnFooter>>,
-    bitmap: NullBitmap<D>,
+    bitmap: NullBitmap,
 }
 
-impl<D: Directory> Utf8ColumnReader<D> {
+impl Utf8ColumnReader {
     fn footer(&self, segment: u32) -> Result<&Utf8ColumnFooter, MurrError> {
         self.segments
             .get(segment as usize)
@@ -34,13 +35,13 @@ impl<D: Directory> Utf8ColumnReader<D> {
 }
 
 #[async_trait]
-impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
+impl ColumnReader for Utf8ColumnReader {
     async fn open(
-        reader: Arc<D::ReaderType>,
+        reader: Arc<dyn Reader>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError> {
-        let opened = open_segments::<Utf8ColumnFooter, D>(
+        let opened = open_segments::<Utf8ColumnFooter>(
             &reader,
             column,
             previous.as_ref().map(|p| &p.segments),
@@ -57,9 +58,9 @@ impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
 
     async fn reopen(
         &self,
-        reader: Arc<D::ReaderType>,
+        reader: Arc<dyn Reader>,
         column: &ColumnSegments,
-    ) -> Result<Box<dyn ColumnReader<D>>, MurrError> {
+    ) -> Result<Box<dyn ColumnReader>, MurrError> {
         let prev = Self {
             reader: self.reader.clone(),
             column: self.column.clone(),
@@ -102,9 +103,8 @@ impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
                 });
             }
 
-            let offset_pairs: Vec<StringOffsetPair> = reader
-                .read::<StringOffsetPair, StringOffsetPair>(&offset_requests)
-                .await?;
+            let offset_pairs: Vec<StringOffsetPair> =
+                reader.read_string_offset_pair(&offset_requests).await?;
 
             // Phase 2: Read actual string bytes
             let mut payload_requests: Vec<SegmentReadRequest> =
@@ -131,7 +131,7 @@ impl<D: Directory> ColumnReader<D> for Utf8ColumnReader<D> {
 
             if !payload_requests.is_empty() {
                 let string_values: Vec<String> =
-                    reader.read::<String, String>(&payload_requests).await?;
+                    reader.read_string(&payload_requests).await?;
 
                 for (j, &orig_idx) in payload_indices.iter().enumerate() {
                     let key = &non_missing_keys[orig_idx];
@@ -160,7 +160,7 @@ mod tests {
     use crate::io2::column::utf8::writer::Utf8ColumnWriter;
     use crate::io2::column::ColumnWriter;
     use crate::io2::directory::mem::directory::MemDirectory;
-    use crate::io2::directory::{Directory, Writer};
+    use crate::io2::directory::{Directory, DirectoryWriter};
     use crate::io2::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
@@ -196,7 +196,7 @@ mod tests {
         col_info: &ColumnInfo,
         values: Arc<dyn Array>,
     ) {
-        let writer = Utf8ColumnWriter::new(dir.clone(), Arc::new(col_info.clone()));
+        let writer = Utf8ColumnWriter::new(Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).await.unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
@@ -205,8 +205,8 @@ mod tests {
     async fn open_reader(
         dir: &Arc<MemDirectory>,
         col_name: &str,
-    ) -> Utf8ColumnReader<MemDirectory> {
-        let reader = Arc::new(dir.open_reader().await.unwrap());
+    ) -> Utf8ColumnReader {
+        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
         let col_segments = reader.info().columns.get(col_name).unwrap().clone();
         Utf8ColumnReader::open(reader, &col_segments, &None)
             .await

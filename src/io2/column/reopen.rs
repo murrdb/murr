@@ -5,23 +5,22 @@ use log::debug;
 use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
 use crate::io2::column::{ColumnFooter, OffsetSize, MAX_COLUMN_HEADER_SIZE};
-use crate::io2::directory::{Directory, ReadRequest, Reader, SegmentReadRequest};
+use crate::io2::directory::{ReadRequest, Reader, SegmentReadRequest};
 use crate::io2::info::ColumnSegments;
 
-pub struct OpenedSegments<F: ColumnFooter, D: Directory> {
+pub struct OpenedSegments<F: ColumnFooter> {
     pub segments: Vec<Option<F>>,
-    pub bitmap: NullBitmap<D>,
+    pub bitmap: NullBitmap,
 }
 
-pub async fn open_segments<F, D>(
-    reader: &Arc<D::ReaderType>,
+pub async fn open_segments<F>(
+    reader: &Arc<dyn Reader>,
     column: &ColumnSegments,
     prev_segments: Option<&Vec<Option<F>>>,
-    prev_bitmap: Option<&NullBitmap<D>>,
-) -> Result<OpenedSegments<F, D>, MurrError>
+    prev_bitmap: Option<&NullBitmap>,
+) -> Result<OpenedSegments<F>, MurrError>
 where
     F: ColumnFooter,
-    D: Directory,
 {
     let all_segment_ids: Vec<u32> = column.segments.keys().copied().collect();
     if all_segment_ids.is_empty() {
@@ -94,8 +93,7 @@ where
             })
             .collect();
 
-        let raw_footers: Vec<Vec<u8>> =
-            reader.read::<Vec<u8>, Vec<u8>>(&requests).await?;
+        let raw_footers: Vec<Vec<u8>> = reader.read_bytes(&requests).await?;
 
         for (i, &seg_id) in new_segment_ids.iter().enumerate() {
             let seg_info = &column.segments[&seg_id];

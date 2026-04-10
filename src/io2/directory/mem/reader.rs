@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mem::directory::MemDirectory;
-use crate::io2::directory::{Reader, SegmentReadRequest, METADATA_JSON};
+use crate::io2::directory::{DirectoryReader, SegmentReadRequest, METADATA_JSON};
 use crate::io2::info::TableInfo;
 
 pub struct MemReader {
@@ -16,7 +16,7 @@ pub struct MemReader {
 }
 
 #[async_trait]
-impl Reader for MemReader {
+impl DirectoryReader for MemReader {
     type D = MemDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
@@ -34,7 +34,7 @@ impl Reader for MemReader {
         Ok(MemReader { dir, info })
     }
 
-    async fn reopen(&self) -> Result<Self, MurrError> {
+    async fn reopen_reader(&self) -> Result<Self, MurrError> {
         Self::new(self.dir.clone()).await
     }
 
@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io2::column::ColumnSegmentBytes;
-    use crate::io2::directory::{Directory, ReadRequest, Writer};
+    use crate::io2::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::MemUrl;
 

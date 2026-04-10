@@ -12,7 +12,7 @@ use crate::io2::column::float32::writer::Float32ColumnWriter;
 use crate::io2::column::utf8::reader::Utf8ColumnReader;
 use crate::io2::column::utf8::writer::Utf8ColumnWriter;
 use crate::io2::column::{ColumnReader, ColumnSegmentBytes, ColumnWriter};
-use crate::io2::directory::{Directory, Reader, Writer};
+use crate::io2::directory::{Directory, DirectoryWriter, Reader};
 use crate::io2::info::ColumnInfo;
 use crate::io2::table::index::KeyIndex;
 use crate::io2::table::key_offset::KeyOffset;
@@ -27,30 +27,33 @@ impl<D: Directory> Table<D> {
         Arc::new(Table { dir, schema })
     }
 
-    pub async fn open_reader(self: &Arc<Self>) -> Result<TableReader<D>, MurrError> {
-        TableReader::open(self.clone()).await
+    pub async fn open_reader(self: &Arc<Self>) -> Result<TableReader, MurrError> {
+        let reader: Arc<dyn Reader> = Arc::new(self.dir.open_reader().await?);
+        TableReader::open(self.schema.clone(), reader).await
     }
 
     pub async fn open_writer(self: &Arc<Self>) -> Result<TableWriter<D>, MurrError> {
-        TableWriter::open(self.clone()).await
+        TableWriter::open(self.schema.clone(), self.dir.clone()).await
     }
 }
 
-pub struct TableReader<D: Directory> {
-    table: Arc<Table<D>>,
-    reader: Arc<D::ReaderType>,
-    columns: HashMap<String, Box<dyn ColumnReader<D>>>,
+pub struct TableReader {
+    schema: TableSchema,
+    reader: Arc<dyn Reader>,
+    columns: HashMap<String, Box<dyn ColumnReader>>,
     index: RwLock<KeyIndex>,
 }
 
-impl<D: Directory> TableReader<D> {
-    pub async fn open(table: Arc<Table<D>>) -> Result<Self, MurrError> {
+impl TableReader {
+    pub async fn open(
+        schema: TableSchema,
+        reader: Arc<dyn Reader>,
+    ) -> Result<Self, MurrError> {
         info!(
             "table reader open: key='{}', schema columns: [{}]",
-            table.schema.key,
-            table.schema.columns.keys().cloned().collect::<Vec<_>>().join(", ")
+            schema.key,
+            schema.columns.keys().cloned().collect::<Vec<_>>().join(", ")
         );
-        let reader = Arc::new(table.dir.open_reader().await?);
         let info = reader.info();
         info!(
             "directory reader opened: {} columns, {} segments, max_segment_id={}",
@@ -59,10 +62,10 @@ impl<D: Directory> TableReader<D> {
             info.max_segment_id
         );
 
-        let mut columns: HashMap<String, Box<dyn ColumnReader<D>>> = HashMap::new();
+        let mut columns: HashMap<String, Box<dyn ColumnReader>> = HashMap::new();
         for (col_name, col_segments) in &info.columns {
             let num_segments = col_segments.segments.len();
-            let col_reader = open_column_reader::<D>(
+            let col_reader = open_column_reader(
                 &col_segments.column.dtype,
                 reader.clone(),
                 col_segments,
@@ -76,7 +79,7 @@ impl<D: Directory> TableReader<D> {
         }
 
         let mut index = KeyIndex::new();
-        let key_col_name = &table.schema.key;
+        let key_col_name = &schema.key;
         if let Some(key_col_segments) = info.columns.get(key_col_name) {
             let mut seg_ids: Vec<u32> = key_col_segments.segments.keys().copied().collect();
             seg_ids.sort();
@@ -99,7 +102,7 @@ impl<D: Directory> TableReader<D> {
             index.len(), columns.len());
 
         Ok(TableReader {
-            table,
+            schema,
             reader,
             columns,
             index: RwLock::new(index),
@@ -110,7 +113,7 @@ impl<D: Directory> TableReader<D> {
         let old_info = self.reader.info().clone();
         let old_key_seg_ids: HashSet<u32> = old_info
             .columns
-            .get(&self.table.schema.key)
+            .get(&self.schema.key)
             .map(|cs| cs.segments.keys().copied().collect())
             .unwrap_or_default();
 
@@ -119,7 +122,7 @@ impl<D: Directory> TableReader<D> {
             old_info.max_segment_id, old_key_seg_ids.len()
         );
 
-        let new_reader = Arc::new(self.reader.reopen().await?);
+        let new_reader = self.reader.reopen().await?;
         let new_info = new_reader.info();
         let new_all_seg_ids: HashSet<u32> = new_info
             .columns
@@ -141,7 +144,7 @@ impl<D: Directory> TableReader<D> {
             .into_inner()
             .map_err(|e| MurrError::TableError(format!("index lock poisoned: {e}")))?;
 
-        let mut columns: HashMap<String, Box<dyn ColumnReader<D>>> = HashMap::new();
+        let mut columns: HashMap<String, Box<dyn ColumnReader>> = HashMap::new();
         let mut reused_count = 0usize;
         let mut new_count = 0usize;
         for (col_name, col_segments) in &new_info.columns {
@@ -152,7 +155,7 @@ impl<D: Directory> TableReader<D> {
                 }
                 None => {
                     new_count += 1;
-                    open_column_reader::<D>(
+                    open_column_reader(
                         &col_segments.column.dtype,
                         new_reader.clone(),
                         col_segments,
@@ -167,7 +170,7 @@ impl<D: Directory> TableReader<D> {
             reused_count, new_count
         );
 
-        let key_col_name = &self.table.schema.key;
+        let key_col_name = &self.schema.key;
         if let Some(key_col_segments) = new_info.columns.get(key_col_name) {
             let mut new_seg_ids: Vec<u32> = key_col_segments
                 .segments
@@ -207,7 +210,7 @@ impl<D: Directory> TableReader<D> {
         }
 
         Ok(TableReader {
-            table: self.table,
+            schema: self.schema,
             reader: new_reader,
             columns,
             index: RwLock::new(index),
@@ -246,7 +249,6 @@ impl<D: Directory> TableReader<D> {
             let array = col_reader.read(&key_offsets).await?;
 
             let col_schema = self
-                .table
                 .schema
                 .columns
                 .get(col_name)
@@ -267,18 +269,18 @@ impl<D: Directory> TableReader<D> {
 }
 
 pub struct TableWriter<D: Directory> {
-    table: Arc<Table<D>>,
+    schema: TableSchema,
     writer: D::WriterType,
 }
 
 impl<D: Directory> TableWriter<D> {
-    pub async fn open(table: Arc<Table<D>>) -> Result<Self, MurrError> {
-        let writer = table.dir.open_writer().await?;
+    pub async fn open(schema: TableSchema, dir: Arc<D>) -> Result<Self, MurrError> {
+        let writer = dir.open_writer().await?;
         info!(
             "table writer opened: {} columns in schema",
-            table.schema.columns.len()
+            schema.columns.len()
         );
-        Ok(TableWriter { table, writer })
+        Ok(TableWriter { schema, writer })
     }
 
     pub async fn write(&self, batch: &RecordBatch) -> Result<(), MurrError> {
@@ -289,7 +291,7 @@ impl<D: Directory> TableWriter<D> {
         );
         let mut segment_bytes: Vec<ColumnSegmentBytes> = Vec::new();
 
-        for (col_name, col_schema) in &self.table.schema.columns {
+        for (col_name, col_schema) in &self.schema.columns {
             let col_index = batch.schema().index_of(col_name).map_err(|e| {
                 MurrError::TableError(format!("column '{}' not in batch: {e}", col_name))
             })?;
@@ -301,7 +303,7 @@ impl<D: Directory> TableWriter<D> {
                 nullable: col_schema.nullable,
             });
 
-            let bytes = write_column::<D>(&self.table.dir, col_info, array).await?;
+            let bytes = write_column(col_info, array).await?;
             debug!(
                 "encoded column '{}': {} bytes",
                 col_name,
@@ -316,40 +318,39 @@ impl<D: Directory> TableWriter<D> {
     }
 }
 
-async fn open_column_reader<D: Directory>(
+async fn open_column_reader(
     dtype: &DType,
-    reader: Arc<D::ReaderType>,
+    reader: Arc<dyn Reader>,
     column: &crate::io2::info::ColumnSegments,
-) -> Result<Box<dyn ColumnReader<D>>, MurrError> {
+) -> Result<Box<dyn ColumnReader>, MurrError> {
     match dtype {
         DType::Float32 => Ok(Box::new(
-            Float32ColumnReader::<D>::open(reader, column, &None).await?,
+            Float32ColumnReader::open(reader, column, &None).await?,
         )),
         DType::Utf8 => Ok(Box::new(
-            Utf8ColumnReader::<D>::open(reader, column, &None).await?,
+            Utf8ColumnReader::open(reader, column, &None).await?,
         )),
     }
 }
 
-async fn write_column<D: Directory>(
-    dir: &Arc<D>,
+async fn write_column(
     col_info: Arc<ColumnInfo>,
     array: Arc<dyn Array>,
 ) -> Result<ColumnSegmentBytes, MurrError> {
     match col_info.dtype {
         DType::Float32 => {
-            let writer = Float32ColumnWriter::<D>::new(dir.clone(), col_info);
+            let writer = Float32ColumnWriter::new(col_info);
             writer.write(array).await
         }
         DType::Utf8 => {
-            let writer = Utf8ColumnWriter::<D>::new(dir.clone(), col_info);
+            let writer = Utf8ColumnWriter::new(col_info);
             writer.write(array).await
         }
     }
 }
 
-async fn read_segment_keys<D: Directory>(
-    key_col_reader: &dyn ColumnReader<D>,
+async fn read_segment_keys(
+    key_col_reader: &dyn ColumnReader,
     seg_id: u32,
     num_values: u32,
 ) -> Result<StringArray, MurrError> {

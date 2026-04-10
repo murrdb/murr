@@ -30,3 +30,21 @@ impl FromBytes<Vec<u8>> for Vec<u8> {
         page[start..end].to_vec()
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct StringOffsetPair {
+    pub start: i32,
+    pub end: i32,
+}
+
+impl FromBytes<StringOffsetPair> for StringOffsetPair {
+    fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> StringOffsetPair {
+        unsafe {
+            let ptr = page.as_ptr().add(page_offset as usize);
+            StringOffsetPair {
+                start: *(ptr as *const i32),
+                end: *(ptr.add(4) as *const i32),
+            }
+        }
+    }
+}

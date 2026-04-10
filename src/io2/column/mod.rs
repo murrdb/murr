@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::{
     core::MurrError,
     io2::{
-        directory::Directory,
+        directory::Reader,
         info::{ColumnInfo, ColumnSegments},
         table::key_offset::KeyOffset,
     },
@@ -50,17 +50,17 @@ pub trait ColumnFooter: Clone + Send + Sync {
     fn parse(data: &[u8], base_offset: u32) -> Result<Self, MurrError>;
 }
 
-pub trait Column<D: Directory>: Send + Sync {
-    type R: ColumnReader<D>;
-    type W: ColumnWriter<D>;
+pub trait Column: Send + Sync {
+    type R: ColumnReader;
+    type W: ColumnWriter;
     fn reader(&self) -> Self::R;
     fn writer(&self) -> Self::W;
 }
 
 #[async_trait]
-pub trait ColumnReader<D: Directory>: Send + Sync {
+pub trait ColumnReader: Send + Sync {
     async fn open(
-        reader: Arc<D::ReaderType>,
+        reader: Arc<dyn Reader>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError>
@@ -68,13 +68,13 @@ pub trait ColumnReader<D: Directory>: Send + Sync {
         Self: Sized;
     async fn reopen(
         &self,
-        reader: Arc<D::ReaderType>,
+        reader: Arc<dyn Reader>,
         column: &ColumnSegments,
-    ) -> Result<Box<dyn ColumnReader<D>>, MurrError>;
+    ) -> Result<Box<dyn ColumnReader>, MurrError>;
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 
 #[async_trait]
-pub trait ColumnWriter<D: Directory>: Send + Sync {
+pub trait ColumnWriter: Send + Sync {
     async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError>;
 }

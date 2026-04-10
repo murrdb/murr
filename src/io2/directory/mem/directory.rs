@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::core::MurrError;
 use crate::io2::directory::mem::reader::MemReader;
 use crate::io2::directory::mem::writer::MemWriter;
-use crate::io2::directory::{Directory, Reader, Writer};
+use crate::io2::directory::{Directory, DirectoryReader, DirectoryWriter};
 use crate::io2::url::MemUrl;
 
 pub struct MemDirectory {

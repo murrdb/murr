@@ -8,22 +8,20 @@ use crate::core::MurrError;
 use crate::io2::bitmap::NullBitmap;
 use crate::io2::column::utf8::footer::{align8_padding, encode_footer, Utf8ColumnFooter};
 use crate::io2::column::{ColumnSegmentBytes, ColumnWriter, OffsetSize};
-use crate::io2::directory::Directory;
 use crate::io2::info::ColumnInfo;
 
-pub struct Utf8ColumnWriter<D: Directory> {
-    dir: Arc<D>,
+pub struct Utf8ColumnWriter {
     column: Arc<ColumnInfo>,
 }
 
-impl<D: Directory> Utf8ColumnWriter<D> {
-    pub fn new(dir: Arc<D>, column: Arc<ColumnInfo>) -> Self {
-        Utf8ColumnWriter { dir, column }
+impl Utf8ColumnWriter {
+    pub fn new(column: Arc<ColumnInfo>) -> Self {
+        Utf8ColumnWriter { column }
     }
 }
 
 #[async_trait]
-impl<D: Directory> ColumnWriter<D> for Utf8ColumnWriter<D> {
+impl ColumnWriter for Utf8ColumnWriter {
     async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError> {
         let array = values
             .as_any()
@@ -48,7 +46,7 @@ impl<D: Directory> ColumnWriter<D> for Utf8ColumnWriter<D> {
 
         // Build null bitmap
         let bitmap_bytes = if self.column.nullable {
-            NullBitmap::<D>::write(values.as_ref())
+            NullBitmap::write(values.as_ref())
         } else {
             Vec::new()
         };
@@ -119,13 +117,7 @@ mod tests {
     use crate::core::DType;
     use crate::io2::column::ColumnFooter;
     use crate::io2::column::utf8::footer::Utf8ColumnFooter;
-    use crate::io2::directory::mem::directory::MemDirectory;
-    use crate::io2::url::MemUrl;
     use bytemuck::cast_slice;
-
-    fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::open(&MemUrl, 4096, false))
-    }
 
     fn non_nullable_info() -> Arc<ColumnInfo> {
         Arc::new(ColumnInfo {
@@ -153,8 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_non_nullable() {
-        let dir = test_dir();
-        let writer = Utf8ColumnWriter::new(dir, non_nullable_info());
+        let writer = Utf8ColumnWriter::new(non_nullable_info());
 
         let result = writer
             .write(make_non_null_array(&["hello", "world", "!"]))
@@ -180,8 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_nullable_with_nulls() {
-        let dir = test_dir();
-        let writer = Utf8ColumnWriter::new(dir, nullable_info());
+        let writer = Utf8ColumnWriter::new(nullable_info());
 
         let result = writer
             .write(make_array(&[Some("a"), None, Some("bc"), None]))
@@ -204,8 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_nullable_no_nulls() {
-        let dir = test_dir();
-        let writer = Utf8ColumnWriter::new(dir, nullable_info());
+        let writer = Utf8ColumnWriter::new(nullable_info());
 
         let result = writer
             .write(make_array(&[Some("x"), Some("y")]))
@@ -220,8 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_empty() {
-        let dir = test_dir();
-        let writer = Utf8ColumnWriter::new(dir, non_nullable_info());
+        let writer = Utf8ColumnWriter::new(non_nullable_info());
 
         let result = writer.write(make_non_null_array(&[])).await.unwrap();
         assert_eq!(result.num_values, 0);

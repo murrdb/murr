@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::core::MurrError;
 use crate::io2::bytes::FromBytes;
 use crate::io2::directory::mmap::directory::MMapDirectory;
-use crate::io2::directory::{Reader, SegmentReadRequest};
+use crate::io2::directory::{DirectoryReader, SegmentReadRequest};
 use crate::io2::info::TableInfo;
 
 pub struct MMapReader {
@@ -65,7 +65,7 @@ impl MMapReader {
 }
 
 #[async_trait]
-impl Reader for MMapReader {
+impl DirectoryReader for MMapReader {
     type D = MMapDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
@@ -74,7 +74,7 @@ impl Reader for MMapReader {
         Ok(MMapReader { dir, info, mmaps })
     }
 
-    async fn reopen(&self) -> Result<Self, MurrError> {
+    async fn reopen_reader(&self) -> Result<Self, MurrError> {
         let info = Self::load_info(&self.dir)?;
         let mmaps = Self::load_mmaps(&self.dir, &info, &self.mmaps)?;
         Ok(MMapReader {
@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io2::column::ColumnSegmentBytes;
-    use crate::io2::directory::{Directory, ReadRequest, Writer};
+    use crate::io2::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
     use crate::io2::info::ColumnInfo;
     use crate::io2::url::LocalUrl;
 
