@@ -52,7 +52,7 @@ impl<D: Directory> TableWriter<D> {
             debug!(
                 "encoded column '{}': {} bytes",
                 col_name,
-                bytes.to_bytes().len()
+                bytes.byte_len()
             );
             segment_bytes.push(bytes);
         }

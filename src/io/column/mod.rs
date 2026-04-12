@@ -58,14 +58,16 @@ impl ColumnSegmentBytes {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let total: usize = self
-            .buffers
+    pub fn byte_len(&self) -> usize {
+        self.buffers
             .iter()
             .map(|b| b.padded_len() as usize)
             .sum::<usize>()
-            + self.footer.len();
-        let mut buf = Vec::with_capacity(total);
+            + self.footer.len()
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(self.byte_len());
         for payload in &self.buffers {
             buf.extend_from_slice(&payload.bytes);
             buf.resize(buf.len() + payload.padding as usize, 0);

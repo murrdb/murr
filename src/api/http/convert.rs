@@ -7,7 +7,7 @@ use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::json::{downcast_array, JsonCodec};
+use super::json::{JsonCodec, downcast_array};
 use crate::core::{DType, MurrError, TableSchema};
 
 /// Newtype to implement From<&RecordBatch> (orphan rule prevents impl for serde_json::Value).

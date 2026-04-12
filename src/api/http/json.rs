@@ -1,69 +1,86 @@
-use arrow::array::{Array, Float32Array, Float64Array, StringArray};
+use arrow::array::{Array, PrimitiveArray, StringArray};
+use arrow::datatypes::{ArrowPrimitiveType, Float32Type, Float64Type};
 use serde_json::Value;
 
 use crate::core::MurrError;
 
-pub(crate) trait JsonCodec {
+pub trait PrimitiveJsonCodec: Sized + Copy + Send + Sync {
+    type ArrowType: ArrowPrimitiveType<Native = Self>;
+
+    fn to_value(self) -> Value;
+    fn from_value(value: &Value) -> Result<Self, MurrError>;
+}
+
+impl PrimitiveJsonCodec for f32 {
+    type ArrowType = Float32Type;
+
+    fn to_value(self) -> Value {
+        Value::from(self)
+    }
+
+    fn from_value(value: &Value) -> Result<f32, MurrError> {
+        match value {
+            Value::Number(n) => n
+                .as_f64()
+                .map(|f| f as f32)
+                .ok_or_else(|| MurrError::TableError(format!("expected number, got {value}"))),
+            _ => Err(MurrError::TableError(format!(
+                "expected number, got {value}"
+            ))),
+        }
+    }
+}
+
+impl PrimitiveJsonCodec for f64 {
+    type ArrowType = Float64Type;
+
+    fn to_value(self) -> Value {
+        Value::from(self)
+    }
+
+    fn from_value(value: &Value) -> Result<f64, MurrError> {
+        match value {
+            Value::Number(n) => n
+                .as_f64()
+                .ok_or_else(|| MurrError::TableError(format!("expected number, got {value}"))),
+            _ => Err(MurrError::TableError(format!(
+                "expected number, got {value}"
+            ))),
+        }
+    }
+}
+
+pub trait JsonCodec {
     type Array: Array + 'static;
+
     fn to_json(array: &Self::Array) -> Vec<Value>;
     fn from_json(values: &[Value]) -> Result<Self::Array, MurrError>;
 }
 
-impl JsonCodec for f32 {
-    type Array = Float32Array;
+impl<T: PrimitiveJsonCodec> JsonCodec for T
+where
+    PrimitiveArray<T::ArrowType>: 'static,
+{
+    type Array = PrimitiveArray<T::ArrowType>;
 
-    fn to_json(array: &Float32Array) -> Vec<Value> {
+    fn to_json(array: &Self::Array) -> Vec<Value> {
         (0..array.len())
             .map(|i| {
                 if array.is_null(i) {
                     Value::Null
                 } else {
-                    Value::from(array.value(i))
+                    array.value(i).to_value()
                 }
             })
             .collect()
     }
 
-    fn from_json(values: &[Value]) -> Result<Float32Array, MurrError> {
+    fn from_json(values: &[Value]) -> Result<Self::Array, MurrError> {
         values
             .iter()
             .map(|v| match v {
                 Value::Null => Ok(None),
-                Value::Number(n) => n
-                    .as_f64()
-                    .map(|f| Some(f as f32))
-                    .ok_or_else(|| MurrError::TableError(format!("expected number, got {v}"))),
-                _ => Err(MurrError::TableError(format!("expected number, got {v}"))),
-            })
-            .collect()
-    }
-}
-
-impl JsonCodec for f64 {
-    type Array = Float64Array;
-
-    fn to_json(array: &Float64Array) -> Vec<Value> {
-        (0..array.len())
-            .map(|i| {
-                if array.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::from(array.value(i))
-                }
-            })
-            .collect()
-    }
-
-    fn from_json(values: &[Value]) -> Result<Float64Array, MurrError> {
-        values
-            .iter()
-            .map(|v| match v {
-                Value::Null => Ok(None),
-                Value::Number(n) => n
-                    .as_f64()
-                    .map(Some)
-                    .ok_or_else(|| MurrError::TableError(format!("expected number, got {v}"))),
-                _ => Err(MurrError::TableError(format!("expected number, got {v}"))),
+                other => T::from_value(other).map(Some),
             })
             .collect()
     }
@@ -97,15 +114,15 @@ impl JsonCodec for String {
 }
 
 pub(crate) fn downcast_array<A: Array + 'static>(array: &dyn Array) -> Result<&A, MurrError> {
-    array
-        .as_any()
-        .downcast_ref::<A>()
-        .ok_or_else(|| MurrError::ArrowError(format!("downcast failed for {:?}", array.data_type())))
+    array.as_any().downcast_ref::<A>().ok_or_else(|| {
+        MurrError::ArrowError(format!("downcast failed for {:?}", array.data_type()))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::{Float32Array, Float64Array};
 
     #[test]
     fn test_f32_round_trip() {
@@ -125,7 +142,9 @@ mod tests {
 
     #[test]
     fn test_string_round_trip() {
-        let original: StringArray = vec![Some("hello"), None, Some("world")].into_iter().collect();
+        let original: StringArray = vec![Some("hello"), None, Some("world")]
+            .into_iter()
+            .collect();
         let json = String::to_json(&original);
         let restored = String::from_json(&json).unwrap();
         assert_eq!(original, restored);
