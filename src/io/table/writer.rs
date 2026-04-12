@@ -7,6 +7,7 @@ use log::{debug, info};
 
 use crate::core::{DType, MurrError, TableSchema};
 use crate::io::column::float32::Float32ColumnWriter;
+use crate::io::column::float64::Float64ColumnWriter;
 use crate::io::column::utf8::writer::Utf8ColumnWriter;
 use crate::io::column::{ColumnSegmentBytes, ColumnWriter};
 use crate::io::directory::{Directory, DirectoryWriter};
@@ -69,6 +70,10 @@ fn write_column(
     match (&col_info.dtype, array.data_type()) {
         (DType::Float32, DataType::Float32) => {
             let writer = Float32ColumnWriter::new(col_info);
+            writer.write(array.as_primitive())
+        }
+        (DType::Float64, DataType::Float64) => {
+            let writer = Float64ColumnWriter::new(col_info);
             writer.write(array.as_primitive())
         }
         (DType::Utf8, DataType::Utf8) => {
