@@ -49,7 +49,6 @@ pub struct OffsetSize {
 }
 
 pub trait ColumnFooter: Clone + Send + Sync {
-    fn base_offset(&self) -> u32;
     fn bitmap(&self) -> &OffsetSize;
     fn parse(data: &[u8], base_offset: u32) -> Result<Self, MurrError>;
 }

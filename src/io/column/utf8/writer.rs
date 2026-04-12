@@ -73,7 +73,6 @@ impl ColumnWriter for Utf8ColumnWriter {
         };
 
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: offsets_size,

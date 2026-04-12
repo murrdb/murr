@@ -59,7 +59,6 @@ impl ColumnWriter for Float32ColumnWriter {
         };
 
         let footer = Float32ColumnFooter {
-            base_offset: 0,
             payload: OffsetSize {
                 offset: 0,
                 size: payload_size,

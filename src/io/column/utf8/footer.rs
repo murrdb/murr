@@ -10,17 +10,12 @@ const FOOTER_TOTAL_SIZE: usize = FOOTER_BODY_SIZE + 4 + 4; // body + version + f
 
 #[derive(Debug, Clone)]
 pub struct Utf8ColumnFooter {
-    pub base_offset: u32,
     pub offsets: OffsetSize,
     pub payload: OffsetSize,
     pub bitmap: OffsetSize,
 }
 
 impl ColumnFooter for Utf8ColumnFooter {
-    fn base_offset(&self) -> u32 {
-        self.base_offset
-    }
-
     fn bitmap(&self) -> &OffsetSize {
         &self.bitmap
     }
@@ -40,7 +35,6 @@ impl ColumnFooter for Utf8ColumnFooter {
         let bitmap_size = read_u32(data, body_start + 20);
 
         Ok(Utf8ColumnFooter {
-            base_offset,
             offsets: OffsetSize {
                 offset: offsets_offset + base_offset,
                 size: offsets_size,
@@ -85,7 +79,6 @@ mod tests {
     #[test]
     fn footer_roundtrip() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 40,
@@ -112,7 +105,6 @@ mod tests {
     #[test]
     fn footer_roundtrip_no_bitmap() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 12,
@@ -137,7 +129,6 @@ mod tests {
     #[test]
     fn footer_roundtrip_with_base_offset() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 40,
@@ -153,7 +144,6 @@ mod tests {
         };
         let bytes = encode_footer(&footer);
         let decoded = Utf8ColumnFooter::parse(&bytes, 500).unwrap();
-        assert_eq!(decoded.base_offset, 500);
         assert_eq!(decoded.offsets.offset, 500);
         assert_eq!(decoded.payload.offset, 540);
         assert_eq!(decoded.bitmap.offset, 740);
