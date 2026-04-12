@@ -49,7 +49,9 @@ impl KeyIndex {
             .map(|(index, key)| {
                 self.map
                     .get(*key)
-                    .map(|seg_off| KeyOffset::new(index, seg_off.segment_id, seg_off.segment_offset))
+                    .map(|seg_off| {
+                        KeyOffset::new(index, seg_off.segment_id, seg_off.segment_offset)
+                    })
                     .unwrap_or(KeyOffset::missing(index))
             })
             .collect()
