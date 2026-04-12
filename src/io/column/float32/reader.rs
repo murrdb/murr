@@ -10,18 +10,18 @@ use crate::io::bitmap::NullBitmap;
 use crate::io::column::float32::footer::Float32ColumnFooter;
 use crate::io::column::reopen::open_segments;
 use crate::io::column::ColumnReader;
-use crate::io::directory::{ReadRequest, Reader, SegmentReadRequest};
+use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
 use crate::io::info::{ColumnInfo, ColumnSegments};
 use crate::io::table::key_offset::KeyOffset;
 
-pub struct Float32ColumnReader {
-    reader: Arc<dyn Reader>,
+pub struct Float32ColumnReader<R: DirectoryReader> {
+    reader: Arc<R>,
     column: ColumnInfo,
     segments: Vec<Option<Float32ColumnFooter>>,
     bitmap: NullBitmap,
 }
 
-impl Float32ColumnReader {
+impl<R: DirectoryReader> Float32ColumnReader<R> {
     fn footer(&self, segment: u32) -> Result<&Float32ColumnFooter, MurrError> {
         self.segments
             .get(segment as usize)
@@ -36,13 +36,13 @@ impl Float32ColumnReader {
 }
 
 #[async_trait]
-impl ColumnReader for Float32ColumnReader {
+impl<R: DirectoryReader> ColumnReader<R> for Float32ColumnReader<R> {
     async fn open(
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError> {
-        let opened = open_segments::<Float32ColumnFooter>(
+        let opened = open_segments::<Float32ColumnFooter, _>(
             &reader,
             column,
             previous.as_ref().map(|p| &p.segments),
@@ -59,9 +59,9 @@ impl ColumnReader for Float32ColumnReader {
 
     async fn reopen(
         &self,
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
-    ) -> Result<Arc<dyn ColumnReader>, MurrError> {
+    ) -> Result<Arc<dyn ColumnReader<R>>, MurrError> {
         let prev = Self {
             reader: self.reader.clone(),
             column: self.column.clone(),
@@ -106,14 +106,14 @@ impl ColumnReader for Float32ColumnReader {
         }
 
         if !data_requests.is_empty() {
-            let data_values: Vec<f32> = self.reader.read_f32(&data_requests).await?;
+            let data_values: Vec<f32> = self.reader.read(&data_requests).await?;
 
             for (i, &request_index) in request_indices.iter().enumerate() {
                 values[request_index] = data_values[i];
             }
 
             if self.column.nullable {
-                let null_indices = self.bitmap.get_nulls(&non_missing_keys).await?;
+                let null_indices = self.bitmap.get_nulls(&*self.reader, &non_missing_keys).await?;
                 for idx in null_indices {
                     validity.set_bit(idx, false);
                     has_nulls = true;
@@ -139,6 +139,7 @@ mod tests {
     use crate::io::column::float32::writer::Float32ColumnWriter;
     use crate::io::column::ColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
+    use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::url::MemUrl;
     use std::collections::HashMap;
@@ -189,8 +190,8 @@ mod tests {
     async fn open_reader(
         dir: &Arc<MemDirectory>,
         col_name: &str,
-    ) -> Float32ColumnReader {
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+    ) -> Float32ColumnReader<MemReader> {
+        let reader: Arc<MemReader> = Arc::new(dir.open_reader().await.unwrap());
         let col_segments = reader.info().columns.get(col_name).unwrap().clone();
         Float32ColumnReader::open(reader, &col_segments, &None)
             .await

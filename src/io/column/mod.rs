@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::{
     core::MurrError,
     io::{
-        directory::Reader,
+        directory::DirectoryReader,
         info::{ColumnInfo, ColumnSegments},
         table::key_offset::KeyOffset,
     },
@@ -54,17 +54,10 @@ pub trait ColumnFooter: Clone + Send + Sync {
     fn parse(data: &[u8], base_offset: u32) -> Result<Self, MurrError>;
 }
 
-pub trait Column: Send + Sync {
-    type R: ColumnReader;
-    type W: ColumnWriter;
-    fn reader(&self) -> Self::R;
-    fn writer(&self) -> Self::W;
-}
-
 #[async_trait]
-pub trait ColumnReader: Send + Sync {
+pub trait ColumnReader<R: DirectoryReader>: Send + Sync {
     async fn open(
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError>
@@ -72,9 +65,9 @@ pub trait ColumnReader: Send + Sync {
         Self: Sized;
     async fn reopen(
         &self,
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
-    ) -> Result<Arc<dyn ColumnReader>, MurrError>;
+    ) -> Result<Arc<dyn ColumnReader<R>>, MurrError>;
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 

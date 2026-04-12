@@ -1,25 +1,26 @@
-use std::sync::Arc;
-
 use arrow::array::Array;
 use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io::column::OffsetSize;
-use crate::io::directory::{ReadRequest, Reader, SegmentReadRequest};
+use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
 use crate::io::table::key_offset::KeyOffset;
 
 #[derive(Clone)]
 pub struct NullBitmap {
     pub segments: Vec<Option<OffsetSize>>,
-    pub reader: Arc<dyn Reader>,
 }
 
 impl NullBitmap {
-    pub fn new(segments: Vec<Option<OffsetSize>>, reader: Arc<dyn Reader>) -> Self {
-        NullBitmap { segments, reader }
+    pub fn new(segments: Vec<Option<OffsetSize>>) -> Self {
+        NullBitmap { segments }
     }
 
-    pub async fn get_nulls(&self, keys: &[KeyOffset]) -> Result<Vec<usize>, MurrError> {
+    pub async fn get_nulls<R: DirectoryReader>(
+        &self,
+        reader: &R,
+        keys: &[KeyOffset],
+    ) -> Result<Vec<usize>, MurrError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -50,7 +51,7 @@ impl NullBitmap {
             return Ok(Vec::new());
         }
 
-        let words: Vec<u64> = self.reader.read_u64(&requests).await?;
+        let words: Vec<u64> = reader.read(&requests).await?;
 
         let nulls = bitmap_keys
             .iter()
@@ -182,14 +183,14 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
         writer.write(&[bitmap_column(vec![0; 8], 4)]).await.unwrap();
 
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
-        let bitmap = NullBitmap::new(vec![None], reader);
+        let reader = dir.open_reader().await.unwrap();
+        let bitmap = NullBitmap::new(vec![None]);
         let keys = vec![KeyOffset {
             request_index: 0,
             segment: 0,
             segment_index: 0,
         }];
-        let nulls = bitmap.get_nulls(&keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&reader, &keys).await.unwrap();
         assert!(nulls.is_empty());
     }
 
@@ -199,12 +200,11 @@ mod tests {
         let writer = dir.open_writer().await.unwrap();
         writer.write(&[bitmap_column(vec![0; 8], 4)]).await.unwrap();
 
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+        let reader = dir.open_reader().await.unwrap();
         let bitmap = NullBitmap::new(
             vec![Some(OffsetSize { offset: 0, size: 8 })],
-            reader,
         );
-        let nulls = bitmap.get_nulls(&[]).await.unwrap();
+        let nulls = bitmap.get_nulls(&reader, &[]).await.unwrap();
         assert!(nulls.is_empty());
     }
 
@@ -221,10 +221,9 @@ mod tests {
             .await
             .unwrap();
 
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+        let reader = dir.open_reader().await.unwrap();
         let bitmap = NullBitmap::new(
             vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
-            reader,
         );
 
         let keys: Vec<KeyOffset> = (0..5)
@@ -235,7 +234,7 @@ mod tests {
             })
             .collect();
 
-        let nulls = bitmap.get_nulls(&keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&reader, &keys).await.unwrap();
         assert_eq!(nulls, vec![1, 3]);
     }
 
@@ -251,10 +250,9 @@ mod tests {
             .await
             .unwrap();
 
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+        let reader = dir.open_reader().await.unwrap();
         let bitmap = NullBitmap::new(
             vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
-            reader,
         );
 
         // Only query indices 1 and 4 (request_index differs from segment_index)
@@ -271,7 +269,7 @@ mod tests {
             },
         ];
 
-        let nulls = bitmap.get_nulls(&keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&reader, &keys).await.unwrap();
         // segment_index 1 is null -> request_index 0
         // segment_index 4 is valid -> not included
         assert_eq!(nulls, vec![0]);
@@ -293,10 +291,9 @@ mod tests {
             .await
             .unwrap();
 
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+        let reader = dir.open_reader().await.unwrap();
         let bitmap = NullBitmap::new(
             vec![Some(OffsetSize { offset: 0, size: bitmap_bytes.len() as u32 })],
-            reader,
         );
 
         let keys: Vec<KeyOffset> = (0..65)
@@ -307,7 +304,7 @@ mod tests {
             })
             .collect();
 
-        let nulls = bitmap.get_nulls(&keys).await.unwrap();
+        let nulls = bitmap.get_nulls(&reader, &keys).await.unwrap();
         assert_eq!(nulls, vec![64]);
     }
 }
