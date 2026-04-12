@@ -41,11 +41,10 @@ jobs:
         with:
           shared-key: "build-${{ matrix.os }}"
 
-      - name: Run cargo check
-        run: cargo check --all-targets
-
       - name: Run tests
-        run: cargo test
+        run: |
+          cargo check --all-targets
+          cargo test
 
   python-test:
     strategy:
