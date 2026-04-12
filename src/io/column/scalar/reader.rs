@@ -149,9 +149,8 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::core::{ColumnSchema, TableSchema};
-    use crate::io::column::ColumnWriter;
     use crate::io::column::float32::Float32Codec;
-    use crate::io::column::scalar::writer::ScalarColumnWriter;
+    use crate::io::column::scalar::writer::write_scalar;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryWriter};
@@ -160,7 +159,6 @@ mod tests {
     use std::collections::HashMap;
 
     type Float32Reader = ScalarColumnReader<MemReader, Float32Codec>;
-    type Float32Writer = ScalarColumnWriter<Float32Codec>;
 
     fn test_dir() -> Arc<MemDirectory> {
         let mut columns = HashMap::new();
@@ -210,8 +208,7 @@ mod tests {
     }
 
     async fn write_segment(dir: &Arc<MemDirectory>, col_info: &ColumnInfo, values: &Float32Array) {
-        let writer = Float32Writer::new(Arc::new(col_info.clone()));
-        let segment_bytes = writer.write(values).unwrap();
+        let segment_bytes = write_scalar::<Float32Codec>(col_info, values).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
     }

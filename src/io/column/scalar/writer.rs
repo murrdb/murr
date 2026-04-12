@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use arrow::array::{Array, PrimitiveArray};
 use bytemuck::cast_slice;
 
@@ -7,76 +5,63 @@ use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
 use crate::io::column::scalar::ScalarCodec;
 use crate::io::column::scalar::footer::ScalarColumnFooter;
-use crate::io::column::{ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, PayloadBytes};
+use crate::io::column::{ColumnFooter, ColumnSegmentBytes, OffsetSize, PayloadBytes};
 use crate::io::info::ColumnInfo;
 
-pub struct ScalarColumnWriter<S: ScalarCodec> {
-    column: Arc<ColumnInfo>,
-    _codec: std::marker::PhantomData<S>,
-}
+pub fn write_scalar<S: ScalarCodec>(
+    column: &ColumnInfo,
+    array: &PrimitiveArray<S::ArrowType>,
+) -> Result<ColumnSegmentBytes, MurrError> {
+    let num_values = array.len() as u32;
 
-impl<S: ScalarCodec> ScalarColumnWriter<S> {
-    pub fn new(column: Arc<ColumnInfo>) -> Self {
-        ScalarColumnWriter {
-            column,
-            _codec: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<S: ScalarCodec> ColumnWriter<PrimitiveArray<S::ArrowType>> for ScalarColumnWriter<S> {
-    fn write(&self, array: &PrimitiveArray<S::ArrowType>) -> Result<ColumnSegmentBytes, MurrError> {
-        let num_values = array.len() as u32;
-
-        // Build payload: ZERO for nulls
-        let payload: Vec<S::Native> = (0..array.len())
-            .map(|i| {
-                if array.is_null(i) {
-                    S::ZERO
-                } else {
-                    array.value(i)
-                }
-            })
-            .collect();
-        let payload_bytes: &[u8] = cast_slice(&payload);
-        let payload_buf = PayloadBytes::new(payload_bytes.to_vec());
-
-        // Build null bitmap
-        let bitmap_bytes = if self.column.nullable {
-            NullBitmap::write(array)
-        } else {
-            Vec::new()
-        };
-        let bitmap_buf = PayloadBytes::new(bitmap_bytes);
-
-        // Compute footer offsets from padded buffer sizes
-        let payload_size = num_values * S::ELEMENT_SIZE;
-        let bitmap_offset = payload_buf.padded_len();
-        let bitmap_size = bitmap_buf.bytes.len() as u32;
-
-        let footer = ScalarColumnFooter {
-            payload: OffsetSize {
-                offset: 0,
-                size: payload_size,
-            },
-            bitmap: if bitmap_size > 0 {
-                OffsetSize {
-                    offset: bitmap_offset,
-                    size: bitmap_size,
-                }
+    // Build payload: ZERO for nulls
+    let payload: Vec<S::Native> = (0..array.len())
+        .map(|i| {
+            if array.is_null(i) {
+                S::ZERO
             } else {
-                OffsetSize { offset: 0, size: 0 }
-            },
-        };
-        let footer_bytes = footer.encode();
+                array.value(i)
+            }
+        })
+        .collect();
+    let payload_bytes: &[u8] = cast_slice(&payload);
+    let payload_buf = PayloadBytes::new(payload_bytes.to_vec());
 
-        Ok(ColumnSegmentBytes::new(
-            (*self.column).clone(),
-            vec![payload_buf, bitmap_buf],
-            footer_bytes,
-            num_values,
-        ))
-    }
+    // Build null bitmap
+    let bitmap_bytes = if column.nullable {
+        NullBitmap::write(array)
+    } else {
+        Vec::new()
+    };
+    let bitmap_buf = PayloadBytes::new(bitmap_bytes);
+
+    // Compute footer offsets from padded buffer sizes
+    let payload_size = num_values * S::ELEMENT_SIZE;
+    let bitmap_offset = payload_buf.padded_len();
+    let bitmap_size = bitmap_buf.bytes.len() as u32;
+
+    let footer = ScalarColumnFooter {
+        payload: OffsetSize {
+            offset: 0,
+            size: payload_size,
+        },
+        bitmap: if bitmap_size > 0 {
+            OffsetSize {
+                offset: bitmap_offset,
+                size: bitmap_size,
+            }
+        } else {
+            OffsetSize { offset: 0, size: 0 }
+        },
+    };
+    let footer_bytes = footer.encode();
+
+    Ok(ColumnSegmentBytes::new(
+        column.clone(),
+        vec![payload_buf, bitmap_buf],
+        footer_bytes,
+        num_values,
+    ))
 }
 
 #[cfg(test)]
@@ -89,22 +74,20 @@ mod tests {
     use arrow::array::Float32Array;
     use bytemuck::cast_slice;
 
-    type Float32Writer = ScalarColumnWriter<Float32Codec>;
-
-    fn non_nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn non_nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "score".to_string(),
             dtype: DType::Float32,
             nullable: false,
-        })
+        }
     }
 
-    fn nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "score".to_string(),
             dtype: DType::Float32,
             nullable: true,
-        })
+        }
     }
 
     fn make_array(values: &[Option<f32>]) -> Float32Array {
@@ -117,10 +100,9 @@ mod tests {
 
     #[test]
     fn write_non_nullable() {
-        let writer = Float32Writer::new(non_nullable_info());
         let array = make_non_null_array(&[1.0, 2.5, 3.0]);
 
-        let result = writer.write(&array).unwrap();
+        let result = write_scalar::<Float32Codec>(&non_nullable_info(), &array).unwrap();
         assert_eq!(result.num_values, 3);
 
         let bytes = result.to_bytes();
@@ -135,10 +117,9 @@ mod tests {
 
     #[test]
     fn write_nullable_with_nulls() {
-        let writer = Float32Writer::new(nullable_info());
         let array = make_array(&[Some(1.0), None, Some(3.0), None]);
 
-        let result = writer.write(&array).unwrap();
+        let result = write_scalar::<Float32Codec>(&nullable_info(), &array).unwrap();
         assert_eq!(result.num_values, 4);
 
         let bytes = result.to_bytes();
@@ -154,10 +135,9 @@ mod tests {
 
     #[test]
     fn write_nullable_no_nulls() {
-        let writer = Float32Writer::new(nullable_info());
         let array = make_array(&[Some(1.0), Some(2.0)]);
 
-        let result = writer.write(&array).unwrap();
+        let result = write_scalar::<Float32Codec>(&nullable_info(), &array).unwrap();
 
         let bytes = result.to_bytes();
         let footer = ScalarColumnFooter::parse(&bytes, 0).unwrap();
@@ -167,10 +147,9 @@ mod tests {
 
     #[test]
     fn write_empty() {
-        let writer = Float32Writer::new(non_nullable_info());
         let array = make_non_null_array(&[]);
 
-        let result = writer.write(&array).unwrap();
+        let result = write_scalar::<Float32Codec>(&non_nullable_info(), &array).unwrap();
         assert_eq!(result.num_values, 0);
     }
 }

@@ -114,6 +114,6 @@ pub trait ColumnReader<R: DirectoryReader>: Send + Sync {
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 
-pub trait ColumnWriter<A: Array>: Send + Sync {
-    fn write(&self, values: &A) -> Result<ColumnSegmentBytes, MurrError>;
+pub trait ColumnWriter: Array {
+    fn write_column(&self, column: &ColumnInfo) -> Result<ColumnSegmentBytes, MurrError>;
 }

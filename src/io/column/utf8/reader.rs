@@ -157,7 +157,6 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::utf8::writer::Utf8ColumnWriter;
     use crate::io::column::ColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
@@ -202,8 +201,7 @@ mod tests {
         col_info: &ColumnInfo,
         values: &StringArray,
     ) {
-        let writer = Utf8ColumnWriter::new(Arc::new(col_info.clone()));
-        let segment_bytes = writer.write(values).unwrap();
+        let segment_bytes = values.write_column(col_info).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
     }

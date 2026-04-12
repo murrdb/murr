@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use arrow::array::{Array, StringArray};
 use bytemuck::cast_slice;
 
@@ -9,27 +7,17 @@ use crate::io::column::utf8::footer::Utf8ColumnFooter;
 use crate::io::column::{ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, PayloadBytes};
 use crate::io::info::ColumnInfo;
 
-pub struct Utf8ColumnWriter {
-    column: Arc<ColumnInfo>,
-}
-
-impl Utf8ColumnWriter {
-    pub fn new(column: Arc<ColumnInfo>) -> Self {
-        Utf8ColumnWriter { column }
-    }
-}
-
-impl ColumnWriter<StringArray> for Utf8ColumnWriter {
-    fn write(&self, array: &StringArray) -> Result<ColumnSegmentBytes, MurrError> {
-        let num_values = array.len() as u32;
+impl ColumnWriter for StringArray {
+    fn write_column(&self, column: &ColumnInfo) -> Result<ColumnSegmentBytes, MurrError> {
+        let num_values = self.len() as u32;
 
         // Build i32 offset array (num_values + 1 entries) and concatenated payload
-        let mut offsets: Vec<i32> = Vec::with_capacity(array.len() + 1);
+        let mut offsets: Vec<i32> = Vec::with_capacity(self.len() + 1);
         let mut payload = Vec::new();
-        for i in 0..array.len() {
+        for i in 0..self.len() {
             offsets.push(payload.len() as i32);
-            if !array.is_null(i) {
-                payload.extend_from_slice(array.value(i).as_bytes());
+            if !self.is_null(i) {
+                payload.extend_from_slice(self.value(i).as_bytes());
             }
         }
         offsets.push(payload.len() as i32);
@@ -40,8 +28,8 @@ impl ColumnWriter<StringArray> for Utf8ColumnWriter {
         let payload_buf = PayloadBytes::new(payload);
 
         // Build null bitmap
-        let bitmap_bytes = if self.column.nullable {
-            NullBitmap::write(array)
+        let bitmap_bytes = if column.nullable {
+            NullBitmap::write(self)
         } else {
             Vec::new()
         };
@@ -75,7 +63,7 @@ impl ColumnWriter<StringArray> for Utf8ColumnWriter {
         let footer_bytes = footer.encode();
 
         Ok(ColumnSegmentBytes::new(
-            (*self.column).clone(),
+            column.clone(),
             vec![offsets_buf, payload_buf, bitmap_buf],
             footer_bytes,
             num_values,
@@ -91,20 +79,20 @@ mod tests {
     use crate::io::column::utf8::footer::Utf8ColumnFooter;
     use bytemuck::cast_slice;
 
-    fn non_nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn non_nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "name".to_string(),
             dtype: DType::Utf8,
             nullable: false,
-        })
+        }
     }
 
-    fn nullable_info() -> Arc<ColumnInfo> {
-        Arc::new(ColumnInfo {
+    fn nullable_info() -> ColumnInfo {
+        ColumnInfo {
             name: "name".to_string(),
             dtype: DType::Utf8,
             nullable: true,
-        })
+        }
     }
 
     fn make_array(values: &[Option<&str>]) -> StringArray {
@@ -117,10 +105,9 @@ mod tests {
 
     #[test]
     fn write_non_nullable() {
-        let writer = Utf8ColumnWriter::new(non_nullable_info());
         let array = make_non_null_array(&["hello", "world", "!"]);
 
-        let result = writer.write(&array).unwrap();
+        let result = array.write_column(&non_nullable_info()).unwrap();
         assert_eq!(result.num_values, 3);
 
         let bytes = result.to_bytes();
@@ -141,10 +128,9 @@ mod tests {
 
     #[test]
     fn write_nullable_with_nulls() {
-        let writer = Utf8ColumnWriter::new(nullable_info());
         let array = make_array(&[Some("a"), None, Some("bc"), None]);
 
-        let result = writer.write(&array).unwrap();
+        let result = array.write_column(&nullable_info()).unwrap();
         assert_eq!(result.num_values, 4);
 
         let bytes = result.to_bytes();
@@ -162,10 +148,9 @@ mod tests {
 
     #[test]
     fn write_nullable_no_nulls() {
-        let writer = Utf8ColumnWriter::new(nullable_info());
         let array = make_array(&[Some("x"), Some("y")]);
 
-        let result = writer.write(&array).unwrap();
+        let result = array.write_column(&nullable_info()).unwrap();
 
         let bytes = result.to_bytes();
         let footer = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
@@ -175,10 +160,9 @@ mod tests {
 
     #[test]
     fn write_empty() {
-        let writer = Utf8ColumnWriter::new(non_nullable_info());
         let array = make_non_null_array(&[]);
 
-        let result = writer.write(&array).unwrap();
+        let result = array.write_column(&non_nullable_info()).unwrap();
         assert_eq!(result.num_values, 0);
     }
 }
