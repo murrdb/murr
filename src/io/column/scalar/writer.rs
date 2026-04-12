@@ -5,7 +5,7 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
-use crate::io::codec::ScalarCodec;
+use crate::io::column::scalar::ScalarCodec;
 use crate::io::column::scalar::footer::ScalarColumnFooter;
 use crate::io::column::{ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, PayloadBytes};
 use crate::io::info::ColumnInfo;
@@ -25,10 +25,7 @@ impl<S: ScalarCodec> ScalarColumnWriter<S> {
 }
 
 impl<S: ScalarCodec> ColumnWriter<PrimitiveArray<S::ArrowType>> for ScalarColumnWriter<S> {
-    fn write(
-        &self,
-        array: &PrimitiveArray<S::ArrowType>,
-    ) -> Result<ColumnSegmentBytes, MurrError> {
+    fn write(&self, array: &PrimitiveArray<S::ArrowType>) -> Result<ColumnSegmentBytes, MurrError> {
         let num_values = array.len() as u32;
 
         // Build payload: ZERO for nulls
@@ -86,8 +83,8 @@ impl<S: ScalarCodec> ColumnWriter<PrimitiveArray<S::ArrowType>> for ScalarColumn
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io::codec::Float32Codec;
     use crate::io::column::ColumnFooter;
+    use crate::io::column::float32::Float32Codec;
     use crate::io::column::scalar::footer::ScalarColumnFooter;
     use arrow::array::Float32Array;
     use bytemuck::cast_slice;

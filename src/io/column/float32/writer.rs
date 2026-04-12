@@ -1,5 +1,4 @@
-use crate::io::codec::Float32Codec;
-use crate::io::column::scalar::ScalarColumnWriter;
+use crate::io::column::{float32::Float32Codec, scalar::ScalarColumnWriter};
 
 pub type Float32ColumnWriter = ScalarColumnWriter<Float32Codec>;
 
@@ -8,8 +7,8 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::io::column::ColumnFooter;
-    use crate::io::column::float32::footer::Float32ColumnFooter;
     use crate::io::column::ColumnWriter;
+    use crate::io::column::float32::footer::Float32ColumnFooter;
     use crate::io::info::ColumnInfo;
     use arrow::array::Float32Array;
     use bytemuck::cast_slice;
@@ -43,7 +42,9 @@ mod tests {
     fn write_non_nullable() {
         let writer = Float32ColumnWriter::new(non_nullable_info());
 
-        let result = writer.write(&make_non_null_array(&[1.0, 2.5, 3.0])).unwrap();
+        let result = writer
+            .write(&make_non_null_array(&[1.0, 2.5, 3.0]))
+            .unwrap();
         assert_eq!(result.num_values, 3);
 
         let bytes = result.to_bytes();
@@ -81,9 +82,7 @@ mod tests {
     fn write_nullable_no_nulls() {
         let writer = Float32ColumnWriter::new(nullable_info());
 
-        let result = writer
-            .write(&make_array(&[Some(1.0), Some(2.0)]))
-            .unwrap();
+        let result = writer.write(&make_array(&[Some(1.0), Some(2.0)])).unwrap();
 
         let bytes = result.to_bytes();
         let footer = Float32ColumnFooter::parse(&bytes, 0).unwrap();

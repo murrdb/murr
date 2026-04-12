@@ -1,5 +1,4 @@
-use crate::io::codec::Float32Codec;
-use crate::io::column::scalar::ScalarColumnReader;
+use crate::io::column::{float32::Float32Codec, scalar::ScalarColumnReader};
 
 pub type Float32ColumnReader<R> = ScalarColumnReader<R, Float32Codec>;
 
@@ -8,9 +7,9 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::core::{ColumnSchema, TableSchema};
-    use crate::io::column::float32::writer::Float32ColumnWriter;
-    use crate::io::column::ColumnWriter;
     use crate::io::column::ColumnReader;
+    use crate::io::column::ColumnWriter;
+    use crate::io::column::float32::writer::Float32ColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter};
@@ -68,11 +67,7 @@ mod tests {
         Float32Array::from(values.to_vec())
     }
 
-    async fn write_segment(
-        dir: &Arc<MemDirectory>,
-        col_info: &ColumnInfo,
-        values: &Float32Array,
-    ) {
+    async fn write_segment(dir: &Arc<MemDirectory>, col_info: &ColumnInfo, values: &Float32Array) {
         let writer = Float32ColumnWriter::new(Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();

@@ -1,6 +1,5 @@
 pub mod bitmap;
 pub mod bytes;
-pub mod codec;
 pub mod column;
 pub mod directory;
 pub mod info;

@@ -7,10 +7,10 @@ use async_trait::async_trait;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
-use crate::io::codec::ScalarCodec;
-use crate::io::column::reopen::open_segments;
-use crate::io::column::scalar::footer::ScalarColumnFooter;
 use crate::io::column::ColumnReader;
+use crate::io::column::reopen::open_segments;
+use crate::io::column::scalar::ScalarCodec;
+use crate::io::column::scalar::footer::ScalarColumnFooter;
 use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
 use crate::io::info::{ColumnInfo, ColumnSegments};
 use crate::io::table::key_offset::KeyOffset;
@@ -117,7 +117,10 @@ impl<R: DirectoryReader, S: ScalarCodec> ColumnReader<R> for ScalarColumnReader<
             }
 
             if self.column.nullable {
-                let null_indices = self.bitmap.get_nulls(&*self.reader, &non_missing_keys).await?;
+                let null_indices = self
+                    .bitmap
+                    .get_nulls(&*self.reader, &non_missing_keys)
+                    .await?;
                 for idx in null_indices {
                     validity.set_bit(idx, false);
                     has_nulls = true;
@@ -146,8 +149,8 @@ mod tests {
     use super::*;
     use crate::core::DType;
     use crate::core::{ColumnSchema, TableSchema};
-    use crate::io::codec::Float32Codec;
     use crate::io::column::ColumnWriter;
+    use crate::io::column::float32::Float32Codec;
     use crate::io::column::scalar::writer::ScalarColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
@@ -206,11 +209,7 @@ mod tests {
         Float32Array::from(values.to_vec())
     }
 
-    async fn write_segment(
-        dir: &Arc<MemDirectory>,
-        col_info: &ColumnInfo,
-        values: &Float32Array,
-    ) {
+    async fn write_segment(dir: &Arc<MemDirectory>, col_info: &ColumnInfo, values: &Float32Array) {
         let writer = Float32Writer::new(Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
