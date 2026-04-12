@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub enum DType {
     Utf8,
     Float32,
+    Float64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,6 +36,7 @@ impl From<&DType> for DataType {
         match dtype {
             DType::Utf8 => DataType::Utf8,
             DType::Float32 => DataType::Float32,
+            DType::Float64 => DataType::Float64,
         }
     }
 }
@@ -44,9 +46,7 @@ impl From<&TableSchema> for Schema {
         let fields: Vec<Field> = schema
             .columns
             .iter()
-            .map(|(name, config)| {
-                Field::new(name, DataType::from(&config.dtype), config.nullable)
-            })
+            .map(|(name, config)| Field::new(name, DataType::from(&config.dtype), config.nullable))
             .collect();
         let metadata = HashMap::from([("key".to_string(), schema.key.clone())]);
         Schema::new_with_metadata(fields, metadata)

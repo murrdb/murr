@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use arrow::array::Array;
+use arrow::array::AsArray;
+use arrow::datatypes::{DataType, Float32Type, Float64Type};
 use arrow::record_batch::RecordBatch;
 use log::{debug, info};
 
 use crate::core::{DType, MurrError, TableSchema};
-use crate::io::column::float32::writer::Float32ColumnWriter;
-use crate::io::column::utf8::writer::Utf8ColumnWriter;
 use crate::io::column::{ColumnSegmentBytes, ColumnWriter};
 use crate::io::directory::{Directory, DirectoryWriter};
 use crate::io::info::ColumnInfo;
@@ -38,19 +37,19 @@ impl<D: Directory> TableWriter<D> {
             let col_index = batch.schema().index_of(col_name).map_err(|e| {
                 MurrError::TableError(format!("column '{}' not in batch: {e}", col_name))
             })?;
-            let array = batch.column(col_index).clone();
+            let array = batch.column(col_index);
 
-            let col_info = Arc::new(ColumnInfo {
+            let col_info = ColumnInfo {
                 name: col_name.clone(),
                 dtype: col_schema.dtype.clone(),
                 nullable: col_schema.nullable,
-            });
+            };
 
-            let bytes = write_column(col_info, array).await?;
+            let bytes = write_column(&col_info, array.as_ref())?;
             debug!(
                 "encoded column '{}': {} bytes",
                 col_name,
-                bytes.bytes.len()
+                bytes.byte_len()
             );
             segment_bytes.push(bytes);
         }
@@ -61,18 +60,20 @@ impl<D: Directory> TableWriter<D> {
     }
 }
 
-async fn write_column(
-    col_info: Arc<ColumnInfo>,
-    array: Arc<dyn Array>,
+fn write_column(
+    col_info: &ColumnInfo,
+    array: &dyn arrow::array::Array,
 ) -> Result<ColumnSegmentBytes, MurrError> {
-    match col_info.dtype {
-        DType::Float32 => {
-            let writer = Float32ColumnWriter::new(col_info);
-            writer.write(array).await
+    match (&col_info.dtype, array.data_type()) {
+        (DType::Float32, DataType::Float32) => {
+            array.as_primitive::<Float32Type>().write_column(col_info)
         }
-        DType::Utf8 => {
-            let writer = Utf8ColumnWriter::new(col_info);
-            writer.write(array).await
+        (DType::Float64, DataType::Float64) => {
+            array.as_primitive::<Float64Type>().write_column(col_info)
         }
+        (DType::Utf8, DataType::Utf8) => array.as_string().write_column(col_info),
+        (dtype, arrow_dt) => Err(MurrError::TableError(format!(
+            "dtype mismatch: schema={dtype:?}, array={arrow_dt}"
+        ))),
     }
 }

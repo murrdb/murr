@@ -42,7 +42,7 @@ impl DirectoryReader for MemReader {
         &self.info
     }
 
-    async fn read<T, C: FromBytes<T>>(
+    async fn read<T: FromBytes<T> + Send>(
         &self,
         requests: &[SegmentReadRequest],
     ) -> Result<Vec<T>, MurrError> {
@@ -58,7 +58,7 @@ impl DirectoryReader for MemReader {
             let data = files.get(&name).ok_or_else(|| {
                 MurrError::SegmentError(format!("segment {} not loaded", req.segment))
             })?;
-            let value = C::from_bytes(data, req.read.offset, req.read.size);
+            let value = T::from_bytes(data, req.read.offset, req.read.size);
             results.push(value);
         }
         Ok(results)
@@ -69,7 +69,7 @@ impl DirectoryReader for MemReader {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::ColumnSegmentBytes;
+    use crate::io::column::{ColumnSegmentBytes, PayloadBytes};
     use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
     use crate::io::info::ColumnInfo;
     use crate::io::url::MemUrl;
@@ -94,7 +94,8 @@ mod tests {
                 dtype,
                 nullable: false,
             },
-            payload,
+            vec![PayloadBytes::new(payload)],
+            Vec::new(),
             num_values,
         )
     }
@@ -117,7 +118,7 @@ mod tests {
                 size: 12,
             },
         }];
-        let results: Vec<Vec<u8>> = reader.read::<Vec<u8>, Vec<u8>>(&requests).await.unwrap();
+        let results: Vec<Vec<u8>> = reader.read::<Vec<u8>>(&requests).await.unwrap();
         assert_eq!(results, vec![b"hello world!".to_vec()]);
     }
 
@@ -137,7 +138,7 @@ mod tests {
             segment: 0,
             read: ReadRequest { offset: 0, size: 4 },
         }];
-        let results: Vec<f32> = reader.read::<f32, f32>(&requests).await.unwrap();
+        let results: Vec<f32> = reader.read::<f32>(&requests).await.unwrap();
         assert_eq!(results, vec![42.5_f32]);
     }
 
@@ -166,7 +167,7 @@ mod tests {
                 read: ReadRequest { offset: 0, size: 4 },
             },
         ];
-        let results: Vec<f32> = reader.read::<f32, f32>(&requests).await.unwrap();
+        let results: Vec<f32> = reader.read::<f32>(&requests).await.unwrap();
         assert_eq!(results, vec![10.0_f32, 0.0_f32]);
     }
 
@@ -185,7 +186,7 @@ mod tests {
             segment: 99,
             read: ReadRequest { offset: 0, size: 4 },
         }];
-        let result = reader.read::<f32, f32>(&requests).await;
+        let result = reader.read::<f32>(&requests).await;
         assert!(result.is_err());
     }
 

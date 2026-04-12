@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::{
     core::{MurrError, TableSchema},
     io::{
-        bytes::{FromBytes, StringOffsetPair},
+        bytes::FromBytes,
         column::ColumnSegmentBytes,
         info::TableInfo,
         url::Url,
@@ -41,72 +41,18 @@ pub struct SegmentReadRequest {
     pub read: ReadRequest,
 }
 
-/// Object-safe reader interface used by columns, bitmap, and table reader.
+/// Directory-aware reader with construction and reopen support.
 #[async_trait]
-pub trait Reader: Send + Sync {
-    fn info(&self) -> &TableInfo;
-    async fn reopen(&self) -> Result<Arc<dyn Reader>, MurrError>;
-    async fn read_f32(&self, requests: &[SegmentReadRequest]) -> Result<Vec<f32>, MurrError>;
-    async fn read_u64(&self, requests: &[SegmentReadRequest]) -> Result<Vec<u64>, MurrError>;
-    async fn read_bytes(&self, requests: &[SegmentReadRequest]) -> Result<Vec<Vec<u8>>, MurrError>;
-    async fn read_string(&self, requests: &[SegmentReadRequest]) -> Result<Vec<String>, MurrError>;
-    async fn read_string_offset_pair(
-        &self,
-        requests: &[SegmentReadRequest],
-    ) -> Result<Vec<StringOffsetPair>, MurrError>;
-}
-
-/// Concrete directory-aware reader with construction and reopen support.
-#[async_trait]
-pub trait DirectoryReader: Sized + Send + Sync {
+pub trait DirectoryReader: Sized + Send + Sync + 'static {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     async fn reopen_reader(&self) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
-    async fn read<T: Send, C: FromBytes<T> + Send>(
+    async fn read<T: FromBytes<T> + Send>(
         &self,
         requests: &[SegmentReadRequest],
     ) -> Result<Vec<T>, MurrError>;
-}
-
-/// Blanket impl: every DirectoryReader is automatically a Reader.
-#[async_trait]
-impl<R: DirectoryReader + 'static> Reader for R {
-    fn info(&self) -> &TableInfo {
-        DirectoryReader::info(self)
-    }
-
-    async fn reopen(&self) -> Result<Arc<dyn Reader>, MurrError> {
-        let new = DirectoryReader::reopen_reader(self).await?;
-        Ok(Arc::new(new))
-    }
-
-    async fn read_f32(&self, requests: &[SegmentReadRequest]) -> Result<Vec<f32>, MurrError> {
-        self.read::<f32, f32>(requests).await
-    }
-
-    async fn read_u64(&self, requests: &[SegmentReadRequest]) -> Result<Vec<u64>, MurrError> {
-        self.read::<u64, u64>(requests).await
-    }
-
-    async fn read_bytes(
-        &self,
-        requests: &[SegmentReadRequest],
-    ) -> Result<Vec<Vec<u8>>, MurrError> {
-        self.read::<Vec<u8>, Vec<u8>>(requests).await
-    }
-
-    async fn read_string(&self, requests: &[SegmentReadRequest]) -> Result<Vec<String>, MurrError> {
-        self.read::<String, String>(requests).await
-    }
-
-    async fn read_string_offset_pair(
-        &self,
-        requests: &[SegmentReadRequest],
-    ) -> Result<Vec<StringOffsetPair>, MurrError> {
-        self.read::<StringOffsetPair, StringOffsetPair>(requests).await
-    }
 }
 
 /// Directory-aware writer with construction support.

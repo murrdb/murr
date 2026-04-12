@@ -16,8 +16,6 @@ pub struct MMapDirectory {
     url: LocalUrl,
     index: String,
     schema: TableSchema,
-    page_size: u32,
-    direct: bool,
 }
 
 impl MMapDirectory {
@@ -40,7 +38,7 @@ impl Directory for MMapDirectory {
     type ReaderType = MMapReader;
     type WriterType = MMapWriter;
 
-    fn create(url: &LocalUrl, index: &str, schema: TableSchema, page_size: u32, direct: bool) -> Result<MMapDirectory, MurrError> {
+    fn create(url: &LocalUrl, index: &str, schema: TableSchema, _page_size: u32, _direct: bool) -> Result<MMapDirectory, MurrError> {
         let path = url.path.join(index);
         std::fs::create_dir_all(&path)
             .map_err(|e| MurrError::IoError(format!("creating dir {}: {e}", path.display())))?;
@@ -61,12 +59,10 @@ impl Directory for MMapDirectory {
             url: url.clone(),
             index: index.to_string(),
             schema,
-            page_size,
-            direct,
         })
     }
 
-    fn open(url: &LocalUrl, index: &str, page_size: u32, direct: bool) -> Result<MMapDirectory, MurrError> {
+    fn open(url: &LocalUrl, index: &str, _page_size: u32, _direct: bool) -> Result<MMapDirectory, MurrError> {
         let path = url.path.join(index);
         let metadata_path = path.join(METADATA_JSON);
         let data = std::fs::read(&metadata_path)
@@ -79,8 +75,6 @@ impl Directory for MMapDirectory {
             url: url.clone(),
             index: index.to_string(),
             schema: info.schema,
-            page_size,
-            direct,
         })
     }
 

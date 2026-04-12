@@ -1,6 +1,7 @@
 mod convert;
 mod error;
 mod handlers;
+mod json;
 
 use std::sync::Arc;
 

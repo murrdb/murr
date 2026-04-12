@@ -20,8 +20,9 @@ impl<'a, 'py> FromPyObject<'a, 'py> for PyDType {
         match s.as_str() {
             "utf8" => Ok(PyDType(DType::Utf8)),
             "float32" => Ok(PyDType(DType::Float32)),
+            "float64" => Ok(PyDType(DType::Float64)),
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "invalid dtype: expected 'utf8' or 'float32', got '{other}'"
+                "invalid dtype: expected 'utf8', 'float32' or 'float64', got '{other}'"
             ))),
         }
     }
@@ -36,6 +37,7 @@ impl<'py> IntoPyObject<'py> for PyDType {
         let s = match self.0 {
             DType::Utf8 => "utf8",
             DType::Float32 => "float32",
+            DType::Float64 => "float64",
         };
         Ok(s.into_pyobject(py)?.into_any())
     }
