@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 
 use crate::core::{DType, MurrError, TableSchema};
 use crate::io::column::ColumnReader;
-use crate::io::column::float32::reader::Float32ColumnReader;
+use crate::io::column::float32::Float32ColumnReader;
 use crate::io::column::utf8::reader::Utf8ColumnReader;
 use crate::io::directory::DirectoryReader;
 use crate::io::table::index::KeyIndex;

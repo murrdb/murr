@@ -6,7 +6,7 @@ use arrow::record_batch::RecordBatch;
 use log::{debug, info};
 
 use crate::core::{DType, MurrError, TableSchema};
-use crate::io::column::float32::writer::Float32ColumnWriter;
+use crate::io::column::float32::Float32ColumnWriter;
 use crate::io::column::utf8::writer::Utf8ColumnWriter;
 use crate::io::column::{ColumnSegmentBytes, ColumnWriter};
 use crate::io::directory::{Directory, DirectoryWriter};

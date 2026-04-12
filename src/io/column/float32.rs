@@ -1,8 +1,7 @@
-use crate::io::column::scalar::ScalarCodec;
+use crate::io::column::scalar::{ScalarCodec, ScalarColumnReader, ScalarColumnWriter};
 
-pub mod footer;
-pub mod reader;
-pub mod writer;
+pub type Float32ColumnReader<R> = ScalarColumnReader<R, Float32Codec>;
+pub type Float32ColumnWriter = ScalarColumnWriter<Float32Codec>;
 
 pub struct Float32Codec;
 
