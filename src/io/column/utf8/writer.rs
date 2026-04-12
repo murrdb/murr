@@ -6,8 +6,10 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
-use crate::io::column::utf8::footer::{encode_footer, Utf8ColumnFooter};
-use crate::io::column::{align8_padding, ColumnSegmentBytes, ColumnWriter, OffsetSize};
+use crate::io::column::utf8::footer::Utf8ColumnFooter;
+use crate::io::column::{
+    ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, align8_padding,
+};
 use crate::io::info::ColumnInfo;
 
 pub struct Utf8ColumnWriter {
@@ -86,11 +88,15 @@ impl ColumnWriter for Utf8ColumnWriter {
                 size: bitmap_size,
             },
         };
-        let footer_bytes = encode_footer(&footer);
+        let footer_bytes = footer.encode();
 
-        let total_size =
-            offsets_size + padding1 + payload_size + padding2 + bitmap_size + padding3
-                + footer_bytes.len() as u32;
+        let total_size = offsets_size
+            + padding1
+            + payload_size
+            + padding2
+            + bitmap_size
+            + padding3
+            + footer_bytes.len() as u32;
         let mut buf = Vec::with_capacity(total_size as usize);
         buf.extend_from_slice(offsets_bytes);
         buf.resize(buf.len() + padding1 as usize, 0);

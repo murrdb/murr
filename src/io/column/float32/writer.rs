@@ -6,8 +6,10 @@ use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
-use crate::io::column::float32::footer::{encode_footer, Float32ColumnFooter};
-use crate::io::column::{align8_padding, ColumnSegmentBytes, ColumnWriter, OffsetSize};
+use crate::io::column::float32::footer::Float32ColumnFooter;
+use crate::io::column::{
+    ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, align8_padding,
+};
 use crate::io::info::ColumnInfo;
 
 pub struct Float32ColumnWriter {
@@ -32,7 +34,13 @@ impl ColumnWriter for Float32ColumnWriter {
 
         // Build payload: 0.0 for nulls
         let payload: Vec<f32> = (0..array.len())
-            .map(|i| if array.is_null(i) { 0.0f32 } else { array.value(i) })
+            .map(|i| {
+                if array.is_null(i) {
+                    0.0f32
+                } else {
+                    array.value(i)
+                }
+            })
             .collect();
         let payload_bytes: &[u8] = cast_slice(&payload);
 
@@ -68,7 +76,7 @@ impl ColumnWriter for Float32ColumnWriter {
                 size: bitmap_size,
             },
         };
-        let footer_bytes = encode_footer(&footer);
+        let footer_bytes = footer.encode();
 
         let total_size =
             payload_size + padding1 + bitmap_size + padding2 + footer_bytes.len() as u32;
@@ -93,8 +101,8 @@ impl ColumnWriter for Float32ColumnWriter {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io::column::float32::footer::Float32ColumnFooter;
     use crate::io::column::ColumnFooter;
+    use crate::io::column::float32::footer::Float32ColumnFooter;
     use bytemuck::cast_slice;
 
     fn non_nullable_info() -> Arc<ColumnInfo> {
@@ -125,7 +133,10 @@ mod tests {
     async fn write_non_nullable() {
         let writer = Float32ColumnWriter::new(non_nullable_info());
 
-        let result = writer.write(make_non_null_array(&[1.0, 2.5, 3.0])).await.unwrap();
+        let result = writer
+            .write(make_non_null_array(&[1.0, 2.5, 3.0]))
+            .await
+            .unwrap();
         assert_eq!(result.num_values, 3);
 
         let bytes = &result.bytes;

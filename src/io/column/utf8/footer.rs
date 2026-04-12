@@ -1,5 +1,5 @@
 use crate::core::MurrError;
-use crate::io::column::{read_u32, ColumnFooter, OffsetSize};
+use crate::io::column::{ColumnFooter, OffsetSize, read_u32};
 
 // Footer layout (from end of data):
 //   [offsets_offset:u32][offsets_size:u32][payload_offset:u32][payload_size:u32]
@@ -49,27 +49,23 @@ impl ColumnFooter for Utf8ColumnFooter {
                     size: bitmap_size,
                 }
             } else {
-                OffsetSize {
-                    offset: 0,
-                    size: 0,
-                }
+                OffsetSize { offset: 0, size: 0 }
             },
         })
     }
-}
-
-pub fn encode_footer(footer: &Utf8ColumnFooter) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(FOOTER_TOTAL_SIZE);
-    buf.extend_from_slice(&footer.offsets.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.offsets.size.to_le_bytes());
-    buf.extend_from_slice(&footer.payload.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.payload.size.to_le_bytes());
-    buf.extend_from_slice(&footer.bitmap.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.bitmap.size.to_le_bytes());
-    buf.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
-    let footer_len = (FOOTER_BODY_SIZE + 4) as u32; // body + version
-    buf.extend_from_slice(&footer_len.to_le_bytes());
-    buf
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(FOOTER_TOTAL_SIZE);
+        buf.extend_from_slice(&self.offsets.offset.to_le_bytes());
+        buf.extend_from_slice(&self.offsets.size.to_le_bytes());
+        buf.extend_from_slice(&self.payload.offset.to_le_bytes());
+        buf.extend_from_slice(&self.payload.size.to_le_bytes());
+        buf.extend_from_slice(&self.bitmap.offset.to_le_bytes());
+        buf.extend_from_slice(&self.bitmap.size.to_le_bytes());
+        buf.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
+        let footer_len = (FOOTER_BODY_SIZE + 4) as u32; // body + version
+        buf.extend_from_slice(&footer_len.to_le_bytes());
+        buf
+    }
 }
 
 #[cfg(test)]
@@ -113,10 +109,7 @@ mod tests {
                 offset: 16,
                 size: 30,
             },
-            bitmap: OffsetSize {
-                offset: 0,
-                size: 0,
-            },
+            bitmap: OffsetSize { offset: 0, size: 0 },
         };
         let bytes = encode_footer(&footer);
         let decoded = Utf8ColumnFooter::parse(&bytes, 0).unwrap();

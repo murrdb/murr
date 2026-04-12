@@ -51,6 +51,7 @@ pub struct OffsetSize {
 pub trait ColumnFooter: Clone + Send + Sync {
     fn bitmap(&self) -> &OffsetSize;
     fn parse(data: &[u8], base_offset: u32) -> Result<Self, MurrError>;
+    fn encode(&self) -> Vec<u8>;
 }
 
 #[async_trait]
