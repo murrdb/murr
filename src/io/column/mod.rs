@@ -12,6 +12,7 @@ use crate::{
     },
 };
 
+pub mod scalar;
 pub mod float32;
 pub mod reopen;
 pub mod utf8;
