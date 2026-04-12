@@ -88,7 +88,7 @@ mod tests {
                 size: 8,
             },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(decoded.offsets.offset, 0);
         assert_eq!(decoded.offsets.size, 40);
@@ -111,7 +111,7 @@ mod tests {
             },
             bitmap: OffsetSize { offset: 0, size: 0 },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(decoded.offsets.size, 12);
         assert_eq!(decoded.payload.offset, 16);
@@ -135,7 +135,7 @@ mod tests {
                 size: 8,
             },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 500).unwrap();
         assert_eq!(decoded.offsets.offset, 500);
         assert_eq!(decoded.payload.offset, 540);

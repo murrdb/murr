@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
-use async_trait::async_trait;
 use bytemuck::cast_slice;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
 use crate::io::column::utf8::footer::Utf8ColumnFooter;
-use crate::io::column::{
-    ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, align8_padding,
-};
+use crate::io::column::{ColumnFooter, ColumnSegmentBytes, ColumnWriter, OffsetSize, PayloadBytes};
 use crate::io::info::ColumnInfo;
 
 pub struct Utf8ColumnWriter {
@@ -22,14 +19,8 @@ impl Utf8ColumnWriter {
     }
 }
 
-#[async_trait]
-impl ColumnWriter for Utf8ColumnWriter {
-    async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError> {
-        let array = values
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| MurrError::TableError("expected StringArray".into()))?;
-
+impl ColumnWriter<StringArray> for Utf8ColumnWriter {
+    fn write(&self, array: &StringArray) -> Result<ColumnSegmentBytes, MurrError> {
         let num_values = array.len() as u32;
 
         // Build i32 offset array (num_values + 1 entries) and concatenated payload
@@ -44,35 +35,24 @@ impl ColumnWriter for Utf8ColumnWriter {
         offsets.push(payload.len() as i32);
 
         let offsets_bytes: &[u8] = cast_slice(&offsets);
-        let offsets_size = offsets_bytes.len() as u32;
+        let offsets_buf = PayloadBytes::new(offsets_bytes.to_vec());
+
+        let payload_buf = PayloadBytes::new(payload);
 
         // Build null bitmap
         let bitmap_bytes = if self.column.nullable {
-            NullBitmap::write(values.as_ref())
+            NullBitmap::write(array)
         } else {
             Vec::new()
         };
+        let bitmap_buf = PayloadBytes::new(bitmap_bytes);
 
-        // Layout: [offsets][pad8][payload][pad8][bitmap][pad8][footer]
-        let padding1 = align8_padding(offsets_size);
-
-        let payload_size = payload.len() as u32;
-        let payload_offset = offsets_size + padding1;
-        let padding2 = align8_padding(payload_size);
-
-        let (bitmap_offset, bitmap_size) = if bitmap_bytes.is_empty() {
-            (0u32, 0u32)
-        } else {
-            (
-                payload_offset + payload_size + padding2,
-                bitmap_bytes.len() as u32,
-            )
-        };
-        let padding3 = if bitmap_bytes.is_empty() {
-            0
-        } else {
-            align8_padding(bitmap_size)
-        };
+        // Compute footer offsets from padded buffer sizes
+        let offsets_size = offsets_buf.bytes.len() as u32;
+        let payload_offset = offsets_buf.padded_len();
+        let payload_size = payload_buf.bytes.len() as u32;
+        let bitmap_offset = payload_offset + payload_buf.padded_len();
+        let bitmap_size = bitmap_buf.bytes.len() as u32;
 
         let footer = Utf8ColumnFooter {
             offsets: OffsetSize {
@@ -83,34 +63,21 @@ impl ColumnWriter for Utf8ColumnWriter {
                 offset: payload_offset,
                 size: payload_size,
             },
-            bitmap: OffsetSize {
-                offset: bitmap_offset,
-                size: bitmap_size,
+            bitmap: if bitmap_size > 0 {
+                OffsetSize {
+                    offset: bitmap_offset,
+                    size: bitmap_size,
+                }
+            } else {
+                OffsetSize { offset: 0, size: 0 }
             },
         };
         let footer_bytes = footer.encode();
 
-        let total_size = offsets_size
-            + padding1
-            + payload_size
-            + padding2
-            + bitmap_size
-            + padding3
-            + footer_bytes.len() as u32;
-        let mut buf = Vec::with_capacity(total_size as usize);
-        buf.extend_from_slice(offsets_bytes);
-        buf.resize(buf.len() + padding1 as usize, 0);
-        buf.extend_from_slice(&payload);
-        buf.resize(buf.len() + padding2 as usize, 0);
-        if !bitmap_bytes.is_empty() {
-            buf.extend_from_slice(&bitmap_bytes);
-            buf.resize(buf.len() + padding3 as usize, 0);
-        }
-        buf.extend_from_slice(&footer_bytes);
-
         Ok(ColumnSegmentBytes::new(
             (*self.column).clone(),
-            buf,
+            vec![offsets_buf, payload_buf, bitmap_buf],
+            footer_bytes,
             num_values,
         ))
     }
@@ -140,26 +107,24 @@ mod tests {
         })
     }
 
-    fn make_array(values: &[Option<&str>]) -> Arc<dyn Array> {
-        Arc::new(values.iter().copied().collect::<StringArray>())
+    fn make_array(values: &[Option<&str>]) -> StringArray {
+        values.iter().copied().collect::<StringArray>()
     }
 
-    fn make_non_null_array(values: &[&str]) -> Arc<dyn Array> {
-        Arc::new(StringArray::from(values.to_vec()))
+    fn make_non_null_array(values: &[&str]) -> StringArray {
+        StringArray::from(values.to_vec())
     }
 
-    #[tokio::test]
-    async fn write_non_nullable() {
+    #[test]
+    fn write_non_nullable() {
         let writer = Utf8ColumnWriter::new(non_nullable_info());
+        let array = make_non_null_array(&["hello", "world", "!"]);
 
-        let result = writer
-            .write(make_non_null_array(&["hello", "world", "!"]))
-            .await
-            .unwrap();
+        let result = writer.write(&array).unwrap();
         assert_eq!(result.num_values, 3);
 
-        let bytes = &result.bytes;
-        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
+        let bytes = result.to_bytes();
+        let footer = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(footer.offsets.offset, 0);
         assert_eq!(footer.offsets.size, 16); // (3 + 1) * 4
         assert_eq!(footer.payload.size, 11); // "hello" + "world" + "!"
@@ -174,18 +139,16 @@ mod tests {
         assert_eq!(payload, "helloworld!");
     }
 
-    #[tokio::test]
-    async fn write_nullable_with_nulls() {
+    #[test]
+    fn write_nullable_with_nulls() {
         let writer = Utf8ColumnWriter::new(nullable_info());
+        let array = make_array(&[Some("a"), None, Some("bc"), None]);
 
-        let result = writer
-            .write(make_array(&[Some("a"), None, Some("bc"), None]))
-            .await
-            .unwrap();
+        let result = writer.write(&array).unwrap();
         assert_eq!(result.num_values, 4);
 
-        let bytes = &result.bytes;
-        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
+        let bytes = result.to_bytes();
+        let footer = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(footer.offsets.size, 20); // (4 + 1) * 4
         assert_eq!(footer.payload.size, 3); // "a" + "bc"
         assert!(footer.bitmap.size > 0);
@@ -197,26 +160,25 @@ mod tests {
         assert_eq!(bitmap_words[0], 0b0101);
     }
 
-    #[tokio::test]
-    async fn write_nullable_no_nulls() {
+    #[test]
+    fn write_nullable_no_nulls() {
         let writer = Utf8ColumnWriter::new(nullable_info());
+        let array = make_array(&[Some("x"), Some("y")]);
 
-        let result = writer
-            .write(make_array(&[Some("x"), Some("y")]))
-            .await
-            .unwrap();
+        let result = writer.write(&array).unwrap();
 
-        let bytes = &result.bytes;
-        let footer = Utf8ColumnFooter::parse(bytes, 0).unwrap();
+        let bytes = result.to_bytes();
+        let footer = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(footer.bitmap.offset, 0);
         assert_eq!(footer.bitmap.size, 0);
     }
 
-    #[tokio::test]
-    async fn write_empty() {
+    #[test]
+    fn write_empty() {
         let writer = Utf8ColumnWriter::new(non_nullable_info());
+        let array = make_non_null_array(&[]);
 
-        let result = writer.write(make_non_null_array(&[])).await.unwrap();
+        let result = writer.write(&array).unwrap();
         assert_eq!(result.num_values, 0);
     }
 }

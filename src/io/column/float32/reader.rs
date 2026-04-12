@@ -1,135 +1,7 @@
-use std::sync::Arc;
+use crate::io::codec::Float32Codec;
+use crate::io::column::scalar::ScalarColumnReader;
 
-use arrow::array::{Array, Float32Array};
-use arrow::array::BooleanBufferBuilder;
-use arrow::buffer::{NullBuffer, ScalarBuffer};
-use async_trait::async_trait;
-
-use crate::core::MurrError;
-use crate::io::bitmap::NullBitmap;
-use crate::io::column::float32::footer::Float32ColumnFooter;
-use crate::io::column::reopen::open_segments;
-use crate::io::column::ColumnReader;
-use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
-use crate::io::info::{ColumnInfo, ColumnSegments};
-use crate::io::table::key_offset::KeyOffset;
-
-pub struct Float32ColumnReader<R: DirectoryReader> {
-    reader: Arc<R>,
-    column: ColumnInfo,
-    segments: Vec<Option<Float32ColumnFooter>>,
-    bitmap: NullBitmap,
-}
-
-impl<R: DirectoryReader> Float32ColumnReader<R> {
-    fn footer(&self, segment: u32) -> Result<&Float32ColumnFooter, MurrError> {
-        self.segments
-            .get(segment as usize)
-            .and_then(|opt| opt.as_ref())
-            .ok_or_else(|| {
-                MurrError::SegmentError(format!(
-                    "segment {} not found for column '{}'",
-                    segment, self.column.name
-                ))
-            })
-    }
-}
-
-#[async_trait]
-impl<R: DirectoryReader> ColumnReader<R> for Float32ColumnReader<R> {
-    async fn open(
-        reader: Arc<R>,
-        column: &ColumnSegments,
-        previous: &Option<Self>,
-    ) -> Result<Self, MurrError> {
-        let opened = open_segments::<Float32ColumnFooter, _>(
-            &reader,
-            column,
-            previous.as_ref().map(|p| &p.segments),
-            previous.as_ref().map(|p| &p.bitmap),
-        )
-        .await?;
-        Ok(Float32ColumnReader {
-            reader,
-            column: column.column.clone(),
-            segments: opened.segments,
-            bitmap: opened.bitmap,
-        })
-    }
-
-    async fn reopen(
-        &self,
-        reader: Arc<R>,
-        column: &ColumnSegments,
-    ) -> Result<Arc<dyn ColumnReader<R>>, MurrError> {
-        let prev = Self {
-            reader: self.reader.clone(),
-            column: self.column.clone(),
-            segments: self.segments.clone(),
-            bitmap: self.bitmap.clone(),
-        };
-        Ok(Arc::new(Self::open(reader, column, &Some(prev)).await?))
-    }
-
-    async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
-        let num_keys = keys.len();
-        if num_keys == 0 {
-            return Ok(Arc::new(Float32Array::from(Vec::<f32>::new())));
-        }
-
-        let mut values = vec![0.0f32; num_keys];
-        let mut validity = BooleanBufferBuilder::new(num_keys);
-        validity.append_n(num_keys, true);
-        let mut has_nulls = false;
-
-        // Single pass: build data requests and collect non-missing keys for bitmap
-        let mut data_requests: Vec<SegmentReadRequest> = Vec::with_capacity(num_keys);
-        let mut request_indices: Vec<usize> = Vec::with_capacity(num_keys);
-        let mut non_missing_keys: Vec<KeyOffset> = Vec::with_capacity(num_keys);
-
-        for key in keys {
-            if key.is_missing() {
-                validity.set_bit(key.request_index, false);
-                has_nulls = true;
-            } else {
-                let footer = self.footer(key.segment)?;
-                data_requests.push(SegmentReadRequest {
-                    segment: key.segment,
-                    read: ReadRequest {
-                        offset: footer.payload.offset + key.segment_index * 4,
-                        size: 4,
-                    },
-                });
-                request_indices.push(key.request_index);
-                non_missing_keys.push(*key);
-            }
-        }
-
-        if !data_requests.is_empty() {
-            let data_values: Vec<f32> = self.reader.read(&data_requests).await?;
-
-            for (i, &request_index) in request_indices.iter().enumerate() {
-                values[request_index] = data_values[i];
-            }
-
-            if self.column.nullable {
-                let null_indices = self.bitmap.get_nulls(&*self.reader, &non_missing_keys).await?;
-                for idx in null_indices {
-                    validity.set_bit(idx, false);
-                    has_nulls = true;
-                }
-            }
-        }
-
-        let values_buffer = ScalarBuffer::from(values);
-        if has_nulls {
-            let null_buffer = NullBuffer::new(validity.finish());
-            Ok(Arc::new(Float32Array::new(values_buffer, Some(null_buffer))))
-        } else {
-            Ok(Arc::new(Float32Array::new(values_buffer, None)))
-        }
-    }
-}
+pub type Float32ColumnReader<R> = ScalarColumnReader<R, Float32Codec>;
 
 #[cfg(test)]
 mod tests {
@@ -138,17 +10,37 @@ mod tests {
     use crate::core::{ColumnSchema, TableSchema};
     use crate::io::column::float32::writer::Float32ColumnWriter;
     use crate::io::column::ColumnWriter;
+    use crate::io::column::ColumnReader;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
-    use crate::io::directory::{Directory, DirectoryWriter};
+    use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter};
+    use crate::io::info::ColumnInfo;
+    use crate::io::table::key_offset::KeyOffset;
     use crate::io::url::MemUrl;
+    use arrow::array::{Array, Float32Array};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn test_dir() -> Arc<MemDirectory> {
         let mut columns = HashMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        columns.insert("score".to_string(), ColumnSchema { dtype: DType::Float32, nullable: false });
-        let schema = TableSchema { key: "key".to_string(), columns };
+        columns.insert(
+            "key".to_string(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: false,
+            },
+        );
+        columns.insert(
+            "score".to_string(),
+            ColumnSchema {
+                dtype: DType::Float32,
+                nullable: false,
+            },
+        );
+        let schema = TableSchema {
+            key: "key".to_string(),
+            columns,
+        };
         Arc::new(MemDirectory::create(&MemUrl, "default", schema, 4096, false).unwrap())
     }
 
@@ -168,21 +60,21 @@ mod tests {
         }
     }
 
-    fn make_array(values: &[Option<f32>]) -> Arc<dyn Array> {
-        Arc::new(values.iter().copied().collect::<Float32Array>())
+    fn make_array(values: &[Option<f32>]) -> Float32Array {
+        values.iter().copied().collect::<Float32Array>()
     }
 
-    fn make_non_null_array(values: &[f32]) -> Arc<dyn Array> {
-        Arc::new(Float32Array::from(values.to_vec()))
+    fn make_non_null_array(values: &[f32]) -> Float32Array {
+        Float32Array::from(values.to_vec())
     }
 
     async fn write_segment(
         dir: &Arc<MemDirectory>,
         col_info: &ColumnInfo,
-        values: Arc<dyn Array>,
+        values: &Float32Array,
     ) {
         let writer = Float32ColumnWriter::new(Arc::new(col_info.clone()));
-        let segment_bytes = writer.write(values).await.unwrap();
+        let segment_bytes = writer.write(values).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
     }
@@ -203,7 +95,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&[10.0, 20.0, 30.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[10.0, 20.0, 30.0])).await;
 
         let reader = open_reader(&dir, "score").await;
 
@@ -231,8 +123,8 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&[1.0, 2.0])).await;
-        write_segment(&dir, &col_info, make_non_null_array(&[10.0, 20.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[1.0, 2.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[10.0, 20.0])).await;
 
         let reader = open_reader(&dir, "score").await;
 
@@ -259,7 +151,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&[5.0, 6.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[5.0, 6.0])).await;
 
         let reader = open_reader(&dir, "score").await;
 
@@ -292,7 +184,7 @@ mod tests {
         write_segment(
             &dir,
             &col_info,
-            make_array(&[Some(1.0), None, Some(3.0), None, Some(5.0)]),
+            &make_array(&[Some(1.0), None, Some(3.0), None, Some(5.0)]),
         )
         .await;
 
@@ -324,7 +216,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&[1.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[1.0])).await;
 
         let reader = open_reader(&dir, "score").await;
 

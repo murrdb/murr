@@ -1,27 +1,30 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray};
+use arrow::array::{Array, BooleanBufferBuilder, PrimitiveArray};
+use arrow::buffer::{NullBuffer, ScalarBuffer};
 use async_trait::async_trait;
 
 use crate::core::MurrError;
 use crate::io::bitmap::NullBitmap;
-use crate::io::bytes::StringOffsetPair;
+use crate::io::codec::ScalarCodec;
 use crate::io::column::reopen::open_segments;
-use crate::io::column::utf8::footer::Utf8ColumnFooter;
+use crate::io::column::scalar::footer::ScalarColumnFooter;
 use crate::io::column::ColumnReader;
 use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
 use crate::io::info::{ColumnInfo, ColumnSegments};
 use crate::io::table::key_offset::KeyOffset;
 
-pub struct Utf8ColumnReader<R: DirectoryReader> {
+pub struct ScalarColumnReader<R: DirectoryReader, S: ScalarCodec> {
     reader: Arc<R>,
     column: ColumnInfo,
-    segments: Vec<Option<Utf8ColumnFooter>>,
+    segments: Vec<Option<ScalarColumnFooter>>,
     bitmap: NullBitmap,
+    _codec: PhantomData<S>,
 }
 
-impl<R: DirectoryReader> Utf8ColumnReader<R> {
-    fn footer(&self, segment: u32) -> Result<&Utf8ColumnFooter, MurrError> {
+impl<R: DirectoryReader, S: ScalarCodec> ScalarColumnReader<R, S> {
+    fn footer(&self, segment: u32) -> Result<&ScalarColumnFooter, MurrError> {
         self.segments
             .get(segment as usize)
             .and_then(|opt| opt.as_ref())
@@ -35,24 +38,25 @@ impl<R: DirectoryReader> Utf8ColumnReader<R> {
 }
 
 #[async_trait]
-impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
+impl<R: DirectoryReader, S: ScalarCodec> ColumnReader<R> for ScalarColumnReader<R, S> {
     async fn open(
         reader: Arc<R>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError> {
-        let opened = open_segments::<Utf8ColumnFooter, _>(
+        let opened = open_segments::<ScalarColumnFooter, _>(
             &reader,
             column,
             previous.as_ref().map(|p| &p.segments),
             previous.as_ref().map(|p| &p.bitmap),
         )
         .await?;
-        Ok(Utf8ColumnReader {
+        Ok(ScalarColumnReader {
             reader,
             column: column.column.clone(),
             segments: opened.segments,
             bitmap: opened.bitmap,
+            _codec: PhantomData,
         })
     }
 
@@ -66,6 +70,7 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
             column: self.column.clone(),
             segments: self.segments.clone(),
             bitmap: self.bitmap.clone(),
+            _codec: PhantomData,
         };
         Ok(Arc::new(Self::open(reader, column, &Some(prev)).await?))
     }
@@ -73,148 +78,149 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError> {
         let num_keys = keys.len();
         if num_keys == 0 {
-            return Ok(Arc::new(StringArray::from(Vec::<&str>::new())));
+            let empty = ScalarBuffer::from(Vec::<S::Native>::new());
+            return Ok(Arc::new(PrimitiveArray::<S::ArrowType>::new(empty, None)));
         }
 
-        let mut values: Vec<Option<String>> = vec![None; num_keys];
+        let mut values = vec![S::Native::default(); num_keys];
+        let mut validity = BooleanBufferBuilder::new(num_keys);
+        validity.append_n(num_keys, true);
+        let mut has_nulls = false;
 
-        // Collect non-missing keys
+        let mut data_requests: Vec<SegmentReadRequest> = Vec::with_capacity(num_keys);
+        let mut request_indices: Vec<usize> = Vec::with_capacity(num_keys);
         let mut non_missing_keys: Vec<KeyOffset> = Vec::with_capacity(num_keys);
+
         for key in keys {
-            if !key.is_missing() {
+            if key.is_missing() {
+                validity.set_bit(key.request_index, false);
+                has_nulls = true;
+            } else {
+                let footer = self.footer(key.segment)?;
+                data_requests.push(SegmentReadRequest {
+                    segment: key.segment,
+                    read: ReadRequest {
+                        offset: footer.payload.offset + key.segment_index * S::ELEMENT_SIZE,
+                        size: S::ELEMENT_SIZE,
+                    },
+                });
+                request_indices.push(key.request_index);
                 non_missing_keys.push(*key);
             }
         }
 
-        if !non_missing_keys.is_empty() {
-            let reader = &self.reader;
+        if !data_requests.is_empty() {
+            let data_values: Vec<S::Native> = self.reader.read(&data_requests).await?;
 
-            // Phase 1: Read i32 offset pairs (8 bytes each: offsets[i] and offsets[i+1])
-            let mut offset_requests: Vec<SegmentReadRequest> =
-                Vec::with_capacity(non_missing_keys.len());
-            for key in &non_missing_keys {
-                let footer = self.footer(key.segment)?;
-                offset_requests.push(SegmentReadRequest {
-                    segment: key.segment,
-                    read: ReadRequest {
-                        offset: footer.offsets.offset + key.segment_index * 4,
-                        size: 8,
-                    },
-                });
+            for (i, &request_index) in request_indices.iter().enumerate() {
+                values[request_index] = data_values[i];
             }
 
-            let offset_pairs: Vec<StringOffsetPair> =
-                reader.read(&offset_requests).await?;
-
-            // Phase 2: Read actual string bytes
-            let mut payload_requests: Vec<SegmentReadRequest> =
-                Vec::with_capacity(non_missing_keys.len());
-            let mut payload_indices: Vec<usize> = Vec::with_capacity(non_missing_keys.len());
-
-            for (i, key) in non_missing_keys.iter().enumerate() {
-                let footer = self.footer(key.segment)?;
-                let pair = &offset_pairs[i];
-                let len = (pair.end - pair.start) as u32;
-                // Set empty string as default for non-missing keys
-                values[key.request_index] = Some(String::new());
-                if len > 0 {
-                    payload_requests.push(SegmentReadRequest {
-                        segment: key.segment,
-                        read: ReadRequest {
-                            offset: footer.payload.offset + pair.start as u32,
-                            size: len,
-                        },
-                    });
-                    payload_indices.push(i);
-                }
-            }
-
-            if !payload_requests.is_empty() {
-                let string_values: Vec<String> =
-                    reader.read(&payload_requests).await?;
-
-                for (j, &orig_idx) in payload_indices.iter().enumerate() {
-                    let key = &non_missing_keys[orig_idx];
-                    values[key.request_index] = Some(string_values[j].clone());
-                }
-            }
-
-            // Check null bitmap for nullable columns
             if self.column.nullable {
                 let null_indices = self.bitmap.get_nulls(&*self.reader, &non_missing_keys).await?;
                 for idx in null_indices {
-                    values[idx] = None;
+                    validity.set_bit(idx, false);
+                    has_nulls = true;
                 }
             }
         }
 
-        let array: StringArray = values.iter().map(|v| v.as_deref()).collect();
-        Ok(Arc::new(array))
+        let values_buffer = ScalarBuffer::from(values);
+        if has_nulls {
+            let null_buffer = NullBuffer::new(validity.finish());
+            Ok(Arc::new(PrimitiveArray::<S::ArrowType>::new(
+                values_buffer,
+                Some(null_buffer),
+            )))
+        } else {
+            Ok(Arc::new(PrimitiveArray::<S::ArrowType>::new(
+                values_buffer,
+                None,
+            )))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::utf8::writer::Utf8ColumnWriter;
+    use crate::core::DType;
+    use crate::core::{ColumnSchema, TableSchema};
+    use crate::io::codec::Float32Codec;
     use crate::io::column::ColumnWriter;
+    use crate::io::column::scalar::writer::ScalarColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::url::MemUrl;
+    use arrow::array::Float32Array;
     use std::collections::HashMap;
+
+    type Float32Reader = ScalarColumnReader<MemReader, Float32Codec>;
+    type Float32Writer = ScalarColumnWriter<Float32Codec>;
 
     fn test_dir() -> Arc<MemDirectory> {
         let mut columns = HashMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        columns.insert("name".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        let schema = TableSchema { key: "key".to_string(), columns };
+        columns.insert(
+            "key".to_string(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: false,
+            },
+        );
+        columns.insert(
+            "score".to_string(),
+            ColumnSchema {
+                dtype: DType::Float32,
+                nullable: false,
+            },
+        );
+        let schema = TableSchema {
+            key: "key".to_string(),
+            columns,
+        };
         Arc::new(MemDirectory::create(&MemUrl, "default", schema, 4096, false).unwrap())
     }
 
     fn non_nullable_info() -> ColumnInfo {
         ColumnInfo {
-            name: "name".to_string(),
-            dtype: DType::Utf8,
+            name: "score".to_string(),
+            dtype: DType::Float32,
             nullable: false,
         }
     }
 
     fn nullable_info() -> ColumnInfo {
         ColumnInfo {
-            name: "name".to_string(),
-            dtype: DType::Utf8,
+            name: "score".to_string(),
+            dtype: DType::Float32,
             nullable: true,
         }
     }
 
-    fn make_array(values: &[Option<&str>]) -> StringArray {
-        values.iter().copied().collect::<StringArray>()
+    fn make_array(values: &[Option<f32>]) -> Float32Array {
+        values.iter().copied().collect::<Float32Array>()
     }
 
-    fn make_non_null_array(values: &[&str]) -> StringArray {
-        StringArray::from(values.to_vec())
+    fn make_non_null_array(values: &[f32]) -> Float32Array {
+        Float32Array::from(values.to_vec())
     }
 
     async fn write_segment(
         dir: &Arc<MemDirectory>,
         col_info: &ColumnInfo,
-        values: &StringArray,
+        values: &Float32Array,
     ) {
-        let writer = Utf8ColumnWriter::new(Arc::new(col_info.clone()));
+        let writer = Float32Writer::new(Arc::new(col_info.clone()));
         let segment_bytes = writer.write(values).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
     }
 
-    async fn open_reader(
-        dir: &Arc<MemDirectory>,
-        col_name: &str,
-    ) -> Utf8ColumnReader<MemReader> {
+    async fn open_reader(dir: &Arc<MemDirectory>, col_name: &str) -> Float32Reader {
         let reader: Arc<MemReader> = Arc::new(dir.open_reader().await.unwrap());
         let col_segments = reader.info().columns.get(col_name).unwrap().clone();
-        Utf8ColumnReader::open(reader, &col_segments, &None)
+        Float32Reader::open(reader, &col_segments, &None)
             .await
             .unwrap()
     }
@@ -224,9 +230,9 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, &make_non_null_array(&["hello", "world", "!"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[10.0, 20.0, 30.0])).await;
 
-        let reader = open_reader(&dir, "name").await;
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -241,9 +247,9 @@ mod tests {
             },
         ];
         let result = reader.read(&keys).await.unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(arr.value(0), "!");
-        assert_eq!(arr.value(1), "hello");
+        let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
+        assert_eq!(arr.value(0), 30.0);
+        assert_eq!(arr.value(1), 10.0);
         assert_eq!(arr.null_count(), 0);
     }
 
@@ -252,10 +258,10 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, &make_non_null_array(&["a", "bb"])).await;
-        write_segment(&dir, &col_info, &make_non_null_array(&["ccc", "dddd"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[1.0, 2.0])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[10.0, 20.0])).await;
 
-        let reader = open_reader(&dir, "name").await;
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -270,9 +276,9 @@ mod tests {
             },
         ];
         let result = reader.read(&keys).await.unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(arr.value(0), "ccc");
-        assert_eq!(arr.value(1), "bb");
+        let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
+        assert_eq!(arr.value(0), 10.0);
+        assert_eq!(arr.value(1), 2.0);
     }
 
     #[tokio::test]
@@ -280,9 +286,9 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, &make_non_null_array(&["foo", "bar"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[5.0, 6.0])).await;
 
-        let reader = open_reader(&dir, "name").await;
+        let reader = open_reader(&dir, "score").await;
 
         let keys = vec![
             KeyOffset {
@@ -298,11 +304,11 @@ mod tests {
             },
         ];
         let result = reader.read(&keys).await.unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
         assert_eq!(arr.len(), 3);
-        assert_eq!(arr.value(0), "foo");
+        assert_eq!(arr.value(0), 5.0);
         assert!(arr.is_null(1));
-        assert_eq!(arr.value(2), "bar");
+        assert_eq!(arr.value(2), 6.0);
     }
 
     #[tokio::test]
@@ -313,11 +319,11 @@ mod tests {
         write_segment(
             &dir,
             &col_info,
-            &make_array(&[Some("a"), None, Some("bc"), None, Some("d")]),
+            &make_array(&[Some(1.0), None, Some(3.0), None, Some(5.0)]),
         )
         .await;
 
-        let reader = open_reader(&dir, "name").await;
+        let reader = open_reader(&dir, "score").await;
 
         let keys: Vec<KeyOffset> = (0..5)
             .map(|i| KeyOffset {
@@ -328,16 +334,16 @@ mod tests {
             .collect();
 
         let result = reader.read(&keys).await.unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
         assert_eq!(arr.len(), 5);
         assert!(!arr.is_null(0));
-        assert_eq!(arr.value(0), "a");
+        assert_eq!(arr.value(0), 1.0);
         assert!(arr.is_null(1));
         assert!(!arr.is_null(2));
-        assert_eq!(arr.value(2), "bc");
+        assert_eq!(arr.value(2), 3.0);
         assert!(arr.is_null(3));
         assert!(!arr.is_null(4));
-        assert_eq!(arr.value(4), "d");
+        assert_eq!(arr.value(4), 5.0);
     }
 
     #[tokio::test]
@@ -345,12 +351,12 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, &make_non_null_array(&["x"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&[1.0])).await;
 
-        let reader = open_reader(&dir, "name").await;
+        let reader = open_reader(&dir, "score").await;
 
         let result = reader.read(&[]).await.unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        let arr = result.as_any().downcast_ref::<Float32Array>().unwrap();
         assert_eq!(arr.len(), 0);
     }
 }

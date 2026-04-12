@@ -113,7 +113,7 @@ impl DirectoryReader for MMapReader {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::ColumnSegmentBytes;
+    use crate::io::column::{ColumnSegmentBytes, PayloadBytes};
     use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
     use crate::io::info::ColumnInfo;
     use crate::io::url::LocalUrl;
@@ -143,7 +143,8 @@ mod tests {
                 dtype,
                 nullable: false,
             },
-            payload,
+            vec![PayloadBytes::new(payload)],
+            Vec::new(),
             num_values,
         )
     }

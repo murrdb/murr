@@ -1,13 +1,7 @@
-use crate::{
-    core::MurrError,
-    io::{
-        self, codec::Decoder, codec::Encoder, column::ColumnSegmentBytes,
-        directory::DirectoryReader,
-    },
-};
+pub mod footer;
+pub mod reader;
+pub mod writer;
 
-pub trait ScalarColumnReader<R: DirectoryReader, T: Decoder<T>> {}
-
-pub trait ScalarColumnWriter<T: Encoder<T>> {
-    async fn write(&self, values: &T::A) -> Result<ColumnSegmentBytes, MurrError>;
-}
+pub use footer::ScalarColumnFooter;
+pub use reader::ScalarColumnReader;
+pub use writer::ScalarColumnWriter;

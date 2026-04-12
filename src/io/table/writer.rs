@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use arrow::array::Array;
+use arrow::array::{Array, AsArray};
+use arrow::datatypes::DataType;
 use arrow::record_batch::RecordBatch;
 use log::{debug, info};
 
@@ -38,7 +39,7 @@ impl<D: Directory> TableWriter<D> {
             let col_index = batch.schema().index_of(col_name).map_err(|e| {
                 MurrError::TableError(format!("column '{}' not in batch: {e}", col_name))
             })?;
-            let array = batch.column(col_index).clone();
+            let array = batch.column(col_index);
 
             let col_info = Arc::new(ColumnInfo {
                 name: col_name.clone(),
@@ -46,11 +47,11 @@ impl<D: Directory> TableWriter<D> {
                 nullable: col_schema.nullable,
             });
 
-            let bytes = write_column(col_info, array).await?;
+            let bytes = write_column(col_info, array.as_ref())?;
             debug!(
                 "encoded column '{}': {} bytes",
                 col_name,
-                bytes.bytes.len()
+                bytes.to_bytes().len()
             );
             segment_bytes.push(bytes);
         }
@@ -61,18 +62,21 @@ impl<D: Directory> TableWriter<D> {
     }
 }
 
-async fn write_column(
+fn write_column(
     col_info: Arc<ColumnInfo>,
-    array: Arc<dyn Array>,
+    array: &dyn Array,
 ) -> Result<ColumnSegmentBytes, MurrError> {
-    match col_info.dtype {
-        DType::Float32 => {
+    match (&col_info.dtype, array.data_type()) {
+        (DType::Float32, DataType::Float32) => {
             let writer = Float32ColumnWriter::new(col_info);
-            writer.write(array).await
+            writer.write(array.as_primitive())
         }
-        DType::Utf8 => {
+        (DType::Utf8, DataType::Utf8) => {
             let writer = Utf8ColumnWriter::new(col_info);
-            writer.write(array).await
+            writer.write(array.as_string())
         }
+        (dtype, arrow_dt) => Err(MurrError::TableError(format!(
+            "dtype mismatch: schema={dtype:?}, array={arrow_dt}"
+        ))),
     }
 }

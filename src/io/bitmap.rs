@@ -99,7 +99,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::ColumnSegmentBytes;
+    use crate::io::column::{ColumnSegmentBytes, PayloadBytes};
     use crate::io::directory::mem::directory::MemDirectory;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::info::ColumnInfo;
@@ -121,7 +121,8 @@ mod tests {
                 dtype: DType::Float32,
                 nullable: true,
             },
-            payload,
+            vec![PayloadBytes::new(payload)],
+            Vec::new(),
             num_values,
         )
     }

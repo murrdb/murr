@@ -19,19 +19,58 @@ pub mod utf8;
 
 pub const MAX_COLUMN_HEADER_SIZE: u32 = 4096;
 
+pub struct PayloadBytes {
+    pub bytes: Vec<u8>,
+    pub padding: u32,
+}
+
+impl PayloadBytes {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        let padding = align8_padding(bytes.len() as u32);
+        PayloadBytes { bytes, padding }
+    }
+
+    pub fn padded_len(&self) -> u32 {
+        self.bytes.len() as u32 + self.padding
+    }
+}
+
 pub struct ColumnSegmentBytes {
     pub column: ColumnInfo,
-    pub bytes: Vec<u8>,
+    pub buffers: Vec<PayloadBytes>,
+    pub footer: Vec<u8>,
     pub num_values: u32,
 }
 
 impl ColumnSegmentBytes {
-    pub fn new(column: ColumnInfo, bytes: Vec<u8>, num_values: u32) -> Self {
+    pub fn new(
+        column: ColumnInfo,
+        buffers: Vec<PayloadBytes>,
+        footer: Vec<u8>,
+        num_values: u32,
+    ) -> Self {
         ColumnSegmentBytes {
             column,
-            bytes,
+            buffers,
+            footer,
             num_values,
         }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let total: usize = self
+            .buffers
+            .iter()
+            .map(|b| b.padded_len() as usize)
+            .sum::<usize>()
+            + self.footer.len();
+        let mut buf = Vec::with_capacity(total);
+        for payload in &self.buffers {
+            buf.extend_from_slice(&payload.bytes);
+            buf.resize(buf.len() + payload.padding as usize, 0);
+        }
+        buf.extend_from_slice(&self.footer);
+        buf
     }
 }
 
@@ -72,7 +111,6 @@ pub trait ColumnReader<R: DirectoryReader>: Send + Sync {
     async fn read(&self, keys: &[KeyOffset]) -> Result<Arc<dyn Array>, MurrError>;
 }
 
-#[async_trait]
-pub trait ColumnWriter: Send + Sync {
-    async fn write(&self, values: Arc<dyn Array>) -> Result<ColumnSegmentBytes, MurrError>;
+pub trait ColumnWriter<A: Array>: Send + Sync {
+    fn write(&self, values: &A) -> Result<ColumnSegmentBytes, MurrError>;
 }

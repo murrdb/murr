@@ -58,9 +58,10 @@ impl DirectoryWriter for MemWriter {
         let mut column_infos = Vec::new();
 
         for col in columns {
+            let bytes = col.to_bytes();
             let offset = combined.len() as u32;
-            let length = col.bytes.len() as u32;
-            combined.extend_from_slice(&col.bytes);
+            let length = bytes.len() as u32;
+            combined.extend_from_slice(&bytes);
             column_infos.push((
                 col.column.clone(),
                 SegmentInfo {
@@ -116,6 +117,7 @@ impl DirectoryWriter for MemWriter {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
+    use crate::io::column::PayloadBytes;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::info::ColumnInfo;
     use crate::io::url::MemUrl;
@@ -134,7 +136,8 @@ mod tests {
                 dtype: DType::Float32,
                 nullable: false,
             },
-            payload,
+            vec![PayloadBytes::new(payload)],
+            Vec::new(),
             num_values,
         )
     }
@@ -150,7 +153,7 @@ mod tests {
             .unwrap();
 
         let files = dir.files.read().unwrap();
-        assert_eq!(files.get("00000000.seg").unwrap(), &vec![1, 2, 3, 4]);
+        assert_eq!(files.get("00000000.seg").unwrap(), &vec![1, 2, 3, 4, 0, 0, 0, 0]);
         assert!(files.contains_key("_metadata.json"));
     }
 
@@ -170,7 +173,7 @@ mod tests {
         assert!(files.contains_key("00000000.seg"));
         assert!(files.contains_key("00000001.seg"));
         assert!(files.contains_key("00000002.seg"));
-        assert_eq!(files.get("00000002.seg").unwrap(), &vec![2, 2, 2, 2]);
+        assert_eq!(files.get("00000002.seg").unwrap(), &vec![2, 2, 2, 2, 0, 0, 0, 0]);
     }
 
     #[tokio::test]
