@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 use crate::core::{DType, MurrError, TableSchema};
 use crate::io::column::ColumnReader;
 use crate::io::column::float32::Float32ColumnReader;
+use crate::io::column::float64::Float64ColumnReader;
 use crate::io::column::utf8::reader::Utf8ColumnReader;
 use crate::io::directory::DirectoryReader;
 use crate::io::table::index::KeyIndex;
@@ -276,6 +277,9 @@ async fn open_column_reader<R: DirectoryReader>(
         )),
         DType::Utf8 => Ok(Arc::new(
             Utf8ColumnReader::open(reader, column, &None).await?,
+        )),
+        DType::Float64 => Ok(Arc::new(
+            Float64ColumnReader::open(reader, column, &None).await?,
         )),
     }
 }

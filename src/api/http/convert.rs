@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{Array, Float32Array, StringArray};
+use arrow::array::{Array, Float32Array, Float64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
@@ -12,6 +12,106 @@ use crate::core::{DType, MurrError, TableSchema};
 /// Newtype to implement From<&RecordBatch> (orphan rule prevents impl for serde_json::Value).
 pub struct FetchResponse(pub Value);
 
+trait JsonCodec {
+    type Array: Array + 'static;
+    fn to_json(array: &Self::Array) -> Vec<Value>;
+    fn from_json(values: &[Value]) -> Result<Self::Array, MurrError>;
+}
+
+impl JsonCodec for f32 {
+    type Array = Float32Array;
+
+    fn to_json(array: &Float32Array) -> Vec<Value> {
+        (0..array.len())
+            .map(|i| {
+                if array.is_null(i) {
+                    Value::Null
+                } else {
+                    Value::from(array.value(i))
+                }
+            })
+            .collect()
+    }
+
+    fn from_json(values: &[Value]) -> Result<Float32Array, MurrError> {
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Null => Ok(None),
+                Value::Number(n) => n
+                    .as_f64()
+                    .map(|f| Some(f as f32))
+                    .ok_or_else(|| MurrError::TableError(format!("expected number, got {v}"))),
+                _ => Err(MurrError::TableError(format!("expected number, got {v}"))),
+            })
+            .collect()
+    }
+}
+
+impl JsonCodec for f64 {
+    type Array = Float64Array;
+
+    fn to_json(array: &Float64Array) -> Vec<Value> {
+        (0..array.len())
+            .map(|i| {
+                if array.is_null(i) {
+                    Value::Null
+                } else {
+                    Value::from(array.value(i))
+                }
+            })
+            .collect()
+    }
+
+    fn from_json(values: &[Value]) -> Result<Float64Array, MurrError> {
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Null => Ok(None),
+                Value::Number(n) => n
+                    .as_f64()
+                    .map(Some)
+                    .ok_or_else(|| MurrError::TableError(format!("expected number, got {v}"))),
+                _ => Err(MurrError::TableError(format!("expected number, got {v}"))),
+            })
+            .collect()
+    }
+}
+
+impl JsonCodec for String {
+    type Array = StringArray;
+
+    fn to_json(array: &StringArray) -> Vec<Value> {
+        (0..array.len())
+            .map(|i| {
+                if array.is_null(i) {
+                    Value::Null
+                } else {
+                    Value::String(array.value(i).to_string())
+                }
+            })
+            .collect()
+    }
+
+    fn from_json(values: &[Value]) -> Result<StringArray, MurrError> {
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Null => Ok(None),
+                Value::String(s) => Ok(Some(s.as_str())),
+                _ => Err(MurrError::TableError(format!("expected string, got {v}"))),
+            })
+            .collect()
+    }
+}
+
+fn downcast_array<A: Array + 'static>(array: &dyn Array) -> Result<&A, MurrError> {
+    array
+        .as_any()
+        .downcast_ref::<A>()
+        .ok_or_else(|| MurrError::ArrowError(format!("downcast failed for {:?}", array.data_type())))
+}
+
 impl TryFrom<&RecordBatch> for FetchResponse {
     type Error = MurrError;
 
@@ -20,42 +120,23 @@ impl TryFrom<&RecordBatch> for FetchResponse {
         let mut columns = Map::new();
 
         for (i, field) in schema.fields().iter().enumerate() {
-            let values = array_to_json_values(batch.column(i))?;
+            let column = batch.column(i);
+            let values = match field.data_type() {
+                DataType::Float32 => f32::to_json(downcast_array(column)?),
+                DataType::Float64 => f64::to_json(downcast_array(column)?),
+                DataType::Utf8 => String::to_json(downcast_array(column)?),
+                other => {
+                    return Err(MurrError::ArrowError(format!(
+                        "unsupported array type: {other:?}"
+                    )))
+                }
+            };
             columns.insert(field.name().clone(), Value::Array(values));
         }
 
         let mut outer = Map::new();
         outer.insert("columns".to_string(), Value::Object(columns));
         Ok(FetchResponse(Value::Object(outer)))
-    }
-}
-
-fn array_to_json_values(array: &dyn Array) -> Result<Vec<Value>, MurrError> {
-    if let Some(arr) = array.as_any().downcast_ref::<Float32Array>() {
-        Ok((0..arr.len())
-            .map(|i| {
-                if arr.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::from(arr.value(i))
-                }
-            })
-            .collect())
-    } else if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
-        Ok((0..arr.len())
-            .map(|i| {
-                if arr.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::String(arr.value(i).to_string())
-                }
-            })
-            .collect())
-    } else {
-        Err(MurrError::ArrowError(format!(
-            "unsupported array type: {:?}",
-            array.data_type()
-        )))
     }
 }
 
@@ -74,46 +155,14 @@ impl WriteRequest {
                 MurrError::TableError(format!("missing column '{}' in write payload", name))
             })?;
 
-            match config.dtype {
-                DType::Float32 => {
-                    fields.push(Field::new(name, DataType::Float32, config.nullable));
-                    let arr: Float32Array = values
-                        .iter()
-                        .map(|v| match v {
-                            Value::Null => Ok(None),
-                            Value::Number(n) => n
-                                .as_f64()
-                                .map(|f| Some(f as f32))
-                                .ok_or_else(|| {
-                                    MurrError::TableError(format!(
-                                        "column '{}': expected number, got {}",
-                                        name, v
-                                    ))
-                                }),
-                            _ => Err(MurrError::TableError(format!(
-                                "column '{}': expected number, got {}",
-                                name, v
-                            ))),
-                        })
-                        .collect::<Result<_, _>>()?;
-                    arrays.push(Arc::new(arr));
-                }
-                DType::Utf8 => {
-                    fields.push(Field::new(name, DataType::Utf8, config.nullable));
-                    let arr: StringArray = values
-                        .iter()
-                        .map(|v| match v {
-                            Value::Null => Ok(None),
-                            Value::String(s) => Ok(Some(s.as_str())),
-                            _ => Err(MurrError::TableError(format!(
-                                "column '{}': expected string, got {}",
-                                name, v
-                            ))),
-                        })
-                        .collect::<Result<_, _>>()?;
-                    arrays.push(Arc::new(arr));
-                }
-            }
+            fields.push(Field::new(name, DataType::from(&config.dtype), config.nullable));
+            let wrap = |e| MurrError::TableError(format!("column '{name}': {e}"));
+            let array: Arc<dyn Array> = match config.dtype {
+                DType::Float32 => Arc::new(f32::from_json(values).map_err(wrap)?),
+                DType::Float64 => Arc::new(f64::from_json(values).map_err(wrap)?),
+                DType::Utf8 => Arc::new(String::from_json(values).map_err(wrap)?),
+            };
+            arrays.push(array);
         }
 
         let arrow_schema = Arc::new(Schema::new(fields));
@@ -142,6 +191,13 @@ mod tests {
                 nullable: true,
             },
         );
+        columns.insert(
+            "weight".to_string(),
+            ColumnSchema {
+                dtype: DType::Float64,
+                nullable: true,
+            },
+        );
         TableSchema {
             key: "name".to_string(),
             columns,
@@ -152,10 +208,16 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("score", DataType::Float32, true),
+            Field::new("weight", DataType::Float64, true),
         ]));
         let names: StringArray = vec![Some("alice"), Some("bob")].into_iter().collect();
         let scores: Float32Array = vec![Some(1.5), None].into_iter().collect();
-        RecordBatch::try_new(schema, vec![Arc::new(names), Arc::new(scores)]).unwrap()
+        let weights: Float64Array = vec![Some(3.14), Some(2.72)].into_iter().collect();
+        RecordBatch::try_new(
+            schema,
+            vec![Arc::new(names), Arc::new(scores), Arc::new(weights)],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -171,6 +233,10 @@ mod tests {
         let score_vals = cols.get("score").unwrap().as_array().unwrap();
         assert_eq!(score_vals[0], Value::from(1.5f32));
         assert!(score_vals[1].is_null());
+
+        let weight_vals = cols.get("weight").unwrap().as_array().unwrap();
+        assert_eq!(weight_vals[0], Value::from(3.14f64));
+        assert_eq!(weight_vals[1], Value::from(2.72f64));
     }
 
     #[test]
@@ -180,16 +246,14 @@ mod tests {
             "name".to_string(),
             vec![Value::String("alice".into()), Value::String("bob".into())],
         );
-        columns.insert(
-            "score".to_string(),
-            vec![Value::from(1.5), Value::Null],
-        );
+        columns.insert("score".to_string(), vec![Value::from(1.5), Value::Null]);
+        columns.insert("weight".to_string(), vec![Value::from(3.14), Value::from(2.72)]);
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
         let batch = write.into_record_batch(&schema).unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 2);
+        assert_eq!(batch.num_columns(), 3);
 
         let names = batch
             .column_by_name("name")
@@ -208,6 +272,15 @@ mod tests {
             .unwrap();
         assert_eq!(scores.value(0), 1.5);
         assert!(scores.is_null(1));
+
+        let weights = batch
+            .column_by_name("weight")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(weights.value(0), 3.14);
+        assert_eq!(weights.value(1), 2.72);
     }
 
     #[test]
@@ -227,8 +300,16 @@ mod tests {
         let orig_names = original.column_by_name("name").unwrap();
         let rest_names = restored.column_by_name("name").unwrap();
         assert_eq!(
-            orig_names.as_any().downcast_ref::<StringArray>().unwrap().value(0),
-            rest_names.as_any().downcast_ref::<StringArray>().unwrap().value(0),
+            orig_names
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .value(0),
+            rest_names
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .value(0),
         );
 
         let orig_scores = original.column_by_name("score").unwrap();
@@ -238,6 +319,13 @@ mod tests {
         assert_eq!(orig_f.value(0), rest_f.value(0));
         assert!(orig_f.is_null(1));
         assert!(rest_f.is_null(1));
+
+        let orig_weights = original.column_by_name("weight").unwrap();
+        let rest_weights = restored.column_by_name("weight").unwrap();
+        let orig_w = orig_weights.as_any().downcast_ref::<Float64Array>().unwrap();
+        let rest_w = rest_weights.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(orig_w.value(0), rest_w.value(0));
+        assert_eq!(orig_w.value(1), rest_w.value(1));
     }
 
     #[test]
@@ -247,10 +335,8 @@ mod tests {
             "name".to_string(),
             vec![Value::String("x".into()), Value::String("y".into())],
         );
-        columns.insert(
-            "score".to_string(),
-            vec![Value::from(2.72), Value::Null],
-        );
+        columns.insert("score".to_string(), vec![Value::from(2.72), Value::Null]);
+        columns.insert("weight".to_string(), vec![Value::from(9.81), Value::Null]);
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
@@ -270,5 +356,9 @@ mod tests {
         let v = score_vals[0].as_f64().unwrap() as f32;
         assert!((v - 2.72f32).abs() < 1e-6);
         assert!(score_vals[1].is_null());
+
+        let weight_vals = cols.get("weight").unwrap().as_array().unwrap();
+        assert_eq!(weight_vals[0], Value::from(9.81));
+        assert!(weight_vals[1].is_null());
     }
 }

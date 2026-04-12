@@ -12,9 +12,10 @@ use crate::{
     },
 };
 
-pub mod scalar;
 pub mod float32;
+pub mod float64;
 pub mod reopen;
+pub mod scalar;
 pub mod utf8;
 
 pub const MAX_COLUMN_HEADER_SIZE: u32 = 4096;

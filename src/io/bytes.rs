@@ -9,6 +9,13 @@ impl FromBytes<f32> for f32 {
     }
 }
 
+impl FromBytes<f64> for f64 {
+    fn from_bytes(page: &[u8], page_offset: u32, _size: u32) -> f64 {
+        let off = page_offset as usize;
+        f64::from_le_bytes(page[off..off + 8].try_into().unwrap())
+    }
+}
+
 impl FromBytes<String> for String {
     fn from_bytes(page: &[u8], page_offset: u32, size: u32) -> String {
         let start = page_offset as usize;
