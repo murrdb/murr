@@ -104,9 +104,10 @@ impl DirectoryWriter for MMapWriter {
         let mut column_infos = Vec::new();
 
         for col in columns {
+            let bytes = col.to_bytes();
             let offset = combined.len() as u32;
-            let length = col.bytes.len() as u32;
-            combined.extend_from_slice(&col.bytes);
+            let length = bytes.len() as u32;
+            combined.extend_from_slice(&bytes);
             column_infos.push((
                 col.column.clone(),
                 SegmentInfo {
@@ -156,6 +157,7 @@ impl DirectoryWriter for MMapWriter {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
+    use crate::io::column::PayloadBytes;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::info::ColumnInfo;
     use crate::io::url::LocalUrl;
@@ -181,7 +183,8 @@ mod tests {
                 dtype: DType::Float32,
                 nullable: false,
             },
-            payload,
+            vec![PayloadBytes::new(payload)],
+            Vec::new(),
             num_values,
         )
     }
@@ -200,7 +203,7 @@ mod tests {
         let idx = tmp.path().join("default");
         let seg_path = idx.join("00000000.seg");
         assert!(seg_path.exists());
-        assert_eq!(std::fs::read(&seg_path).unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(std::fs::read(&seg_path).unwrap(), vec![1, 2, 3, 4, 0, 0, 0, 0]);
         assert!(idx.join("_metadata.json").exists());
     }
 
@@ -223,7 +226,7 @@ mod tests {
         assert!(idx.join("00000002.seg").exists());
         assert_eq!(
             std::fs::read(idx.join("00000002.seg")).unwrap(),
-            vec![2, 2, 2, 2]
+            vec![2, 2, 2, 2, 0, 0, 0, 0]
         );
     }
 

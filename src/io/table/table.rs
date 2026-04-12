@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::core::{MurrError, TableSchema};
-use crate::io::directory::{Directory, Reader};
+use crate::io::directory::Directory;
 use crate::io::table::reader::TableReader;
 use crate::io::table::writer::TableWriter;
 
@@ -18,8 +18,8 @@ impl<D: Directory> Table<D> {
         self.dir.schema()
     }
 
-    pub async fn open_reader(self: &Arc<Self>) -> Result<TableReader, MurrError> {
-        let reader: Arc<dyn Reader> = Arc::new(self.dir.open_reader().await?);
+    pub async fn open_reader(self: &Arc<Self>) -> Result<TableReader<D::ReaderType>, MurrError> {
+        let reader = Arc::new(self.dir.open_reader().await?);
         TableReader::open(self.dir.schema().clone(), reader).await
     }
 

@@ -1,7 +1,6 @@
 mod state;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
@@ -19,16 +18,14 @@ use state::TableState;
 
 pub struct MurrService {
     tables: RwLock<HashMap<String, TableState>>,
-    data_dir: PathBuf,
     url: LocalUrl,
     config: Config,
 }
 
 impl MurrService {
     pub async fn new(config: Config) -> Result<Self, MurrError> {
-        let data_dir = config.storage.cache_dir.clone();
         let url = LocalUrl {
-            path: data_dir.clone(),
+            path: config.storage.cache_dir.clone(),
         };
         let mut tables = HashMap::new();
 
@@ -63,7 +60,6 @@ impl MurrService {
 
         Ok(Self {
             tables: RwLock::new(tables),
-            data_dir,
             url,
             config,
         })

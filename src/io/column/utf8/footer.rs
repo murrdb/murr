@@ -1,5 +1,5 @@
 use crate::core::MurrError;
-use crate::io::column::{read_u32, ColumnFooter, OffsetSize};
+use crate::io::column::{ColumnFooter, OffsetSize, read_u32};
 
 // Footer layout (from end of data):
 //   [offsets_offset:u32][offsets_size:u32][payload_offset:u32][payload_size:u32]
@@ -10,17 +10,12 @@ const FOOTER_TOTAL_SIZE: usize = FOOTER_BODY_SIZE + 4 + 4; // body + version + f
 
 #[derive(Debug, Clone)]
 pub struct Utf8ColumnFooter {
-    pub base_offset: u32,
     pub offsets: OffsetSize,
     pub payload: OffsetSize,
     pub bitmap: OffsetSize,
 }
 
 impl ColumnFooter for Utf8ColumnFooter {
-    fn base_offset(&self) -> u32 {
-        self.base_offset
-    }
-
     fn bitmap(&self) -> &OffsetSize {
         &self.bitmap
     }
@@ -40,7 +35,6 @@ impl ColumnFooter for Utf8ColumnFooter {
         let bitmap_size = read_u32(data, body_start + 20);
 
         Ok(Utf8ColumnFooter {
-            base_offset,
             offsets: OffsetSize {
                 offset: offsets_offset + base_offset,
                 size: offsets_size,
@@ -55,27 +49,23 @@ impl ColumnFooter for Utf8ColumnFooter {
                     size: bitmap_size,
                 }
             } else {
-                OffsetSize {
-                    offset: 0,
-                    size: 0,
-                }
+                OffsetSize { offset: 0, size: 0 }
             },
         })
     }
-}
-
-pub fn encode_footer(footer: &Utf8ColumnFooter) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(FOOTER_TOTAL_SIZE);
-    buf.extend_from_slice(&footer.offsets.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.offsets.size.to_le_bytes());
-    buf.extend_from_slice(&footer.payload.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.payload.size.to_le_bytes());
-    buf.extend_from_slice(&footer.bitmap.offset.to_le_bytes());
-    buf.extend_from_slice(&footer.bitmap.size.to_le_bytes());
-    buf.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
-    let footer_len = (FOOTER_BODY_SIZE + 4) as u32; // body + version
-    buf.extend_from_slice(&footer_len.to_le_bytes());
-    buf
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(FOOTER_TOTAL_SIZE);
+        buf.extend_from_slice(&self.offsets.offset.to_le_bytes());
+        buf.extend_from_slice(&self.offsets.size.to_le_bytes());
+        buf.extend_from_slice(&self.payload.offset.to_le_bytes());
+        buf.extend_from_slice(&self.payload.size.to_le_bytes());
+        buf.extend_from_slice(&self.bitmap.offset.to_le_bytes());
+        buf.extend_from_slice(&self.bitmap.size.to_le_bytes());
+        buf.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
+        let footer_len = (FOOTER_BODY_SIZE + 4) as u32; // body + version
+        buf.extend_from_slice(&footer_len.to_le_bytes());
+        buf
+    }
 }
 
 #[cfg(test)]
@@ -85,7 +75,6 @@ mod tests {
     #[test]
     fn footer_roundtrip() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 40,
@@ -99,7 +88,7 @@ mod tests {
                 size: 8,
             },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(decoded.offsets.offset, 0);
         assert_eq!(decoded.offsets.size, 40);
@@ -112,7 +101,6 @@ mod tests {
     #[test]
     fn footer_roundtrip_no_bitmap() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 12,
@@ -121,12 +109,9 @@ mod tests {
                 offset: 16,
                 size: 30,
             },
-            bitmap: OffsetSize {
-                offset: 0,
-                size: 0,
-            },
+            bitmap: OffsetSize { offset: 0, size: 0 },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 0).unwrap();
         assert_eq!(decoded.offsets.size, 12);
         assert_eq!(decoded.payload.offset, 16);
@@ -137,7 +122,6 @@ mod tests {
     #[test]
     fn footer_roundtrip_with_base_offset() {
         let footer = Utf8ColumnFooter {
-            base_offset: 0,
             offsets: OffsetSize {
                 offset: 0,
                 size: 40,
@@ -151,9 +135,8 @@ mod tests {
                 size: 8,
             },
         };
-        let bytes = encode_footer(&footer);
+        let bytes = footer.encode();
         let decoded = Utf8ColumnFooter::parse(&bytes, 500).unwrap();
-        assert_eq!(decoded.base_offset, 500);
         assert_eq!(decoded.offsets.offset, 500);
         assert_eq!(decoded.payload.offset, 540);
         assert_eq!(decoded.bitmap.offset, 740);

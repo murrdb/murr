@@ -9,18 +9,18 @@ use crate::io::bytes::StringOffsetPair;
 use crate::io::column::reopen::open_segments;
 use crate::io::column::utf8::footer::Utf8ColumnFooter;
 use crate::io::column::ColumnReader;
-use crate::io::directory::{ReadRequest, Reader, SegmentReadRequest};
+use crate::io::directory::{DirectoryReader, ReadRequest, SegmentReadRequest};
 use crate::io::info::{ColumnInfo, ColumnSegments};
 use crate::io::table::key_offset::KeyOffset;
 
-pub struct Utf8ColumnReader {
-    reader: Arc<dyn Reader>,
+pub struct Utf8ColumnReader<R: DirectoryReader> {
+    reader: Arc<R>,
     column: ColumnInfo,
     segments: Vec<Option<Utf8ColumnFooter>>,
     bitmap: NullBitmap,
 }
 
-impl Utf8ColumnReader {
+impl<R: DirectoryReader> Utf8ColumnReader<R> {
     fn footer(&self, segment: u32) -> Result<&Utf8ColumnFooter, MurrError> {
         self.segments
             .get(segment as usize)
@@ -35,13 +35,13 @@ impl Utf8ColumnReader {
 }
 
 #[async_trait]
-impl ColumnReader for Utf8ColumnReader {
+impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
     async fn open(
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
         previous: &Option<Self>,
     ) -> Result<Self, MurrError> {
-        let opened = open_segments::<Utf8ColumnFooter>(
+        let opened = open_segments::<Utf8ColumnFooter, _>(
             &reader,
             column,
             previous.as_ref().map(|p| &p.segments),
@@ -58,9 +58,9 @@ impl ColumnReader for Utf8ColumnReader {
 
     async fn reopen(
         &self,
-        reader: Arc<dyn Reader>,
+        reader: Arc<R>,
         column: &ColumnSegments,
-    ) -> Result<Arc<dyn ColumnReader>, MurrError> {
+    ) -> Result<Arc<dyn ColumnReader<R>>, MurrError> {
         let prev = Self {
             reader: self.reader.clone(),
             column: self.column.clone(),
@@ -104,7 +104,7 @@ impl ColumnReader for Utf8ColumnReader {
             }
 
             let offset_pairs: Vec<StringOffsetPair> =
-                reader.read_string_offset_pair(&offset_requests).await?;
+                reader.read(&offset_requests).await?;
 
             // Phase 2: Read actual string bytes
             let mut payload_requests: Vec<SegmentReadRequest> =
@@ -131,7 +131,7 @@ impl ColumnReader for Utf8ColumnReader {
 
             if !payload_requests.is_empty() {
                 let string_values: Vec<String> =
-                    reader.read_string(&payload_requests).await?;
+                    reader.read(&payload_requests).await?;
 
                 for (j, &orig_idx) in payload_indices.iter().enumerate() {
                     let key = &non_missing_keys[orig_idx];
@@ -141,7 +141,7 @@ impl ColumnReader for Utf8ColumnReader {
 
             // Check null bitmap for nullable columns
             if self.column.nullable {
-                let null_indices = self.bitmap.get_nulls(&non_missing_keys).await?;
+                let null_indices = self.bitmap.get_nulls(&*self.reader, &non_missing_keys).await?;
                 for idx in null_indices {
                     values[idx] = None;
                 }
@@ -157,9 +157,9 @@ impl ColumnReader for Utf8ColumnReader {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::utf8::writer::Utf8ColumnWriter;
     use crate::io::column::ColumnWriter;
     use crate::io::directory::mem::directory::MemDirectory;
+    use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::url::MemUrl;
     use std::collections::HashMap;
@@ -188,21 +188,20 @@ mod tests {
         }
     }
 
-    fn make_array(values: &[Option<&str>]) -> Arc<dyn Array> {
-        Arc::new(values.iter().copied().collect::<StringArray>())
+    fn make_array(values: &[Option<&str>]) -> StringArray {
+        values.iter().copied().collect::<StringArray>()
     }
 
-    fn make_non_null_array(values: &[&str]) -> Arc<dyn Array> {
-        Arc::new(StringArray::from(values.to_vec()))
+    fn make_non_null_array(values: &[&str]) -> StringArray {
+        StringArray::from(values.to_vec())
     }
 
     async fn write_segment(
         dir: &Arc<MemDirectory>,
         col_info: &ColumnInfo,
-        values: Arc<dyn Array>,
+        values: &StringArray,
     ) {
-        let writer = Utf8ColumnWriter::new(Arc::new(col_info.clone()));
-        let segment_bytes = writer.write(values).await.unwrap();
+        let segment_bytes = values.write_column(col_info).unwrap();
         let dir_writer = dir.open_writer().await.unwrap();
         dir_writer.write(&[segment_bytes]).await.unwrap();
     }
@@ -210,8 +209,8 @@ mod tests {
     async fn open_reader(
         dir: &Arc<MemDirectory>,
         col_name: &str,
-    ) -> Utf8ColumnReader {
-        let reader: Arc<dyn Reader> = Arc::new(dir.open_reader().await.unwrap());
+    ) -> Utf8ColumnReader<MemReader> {
+        let reader: Arc<MemReader> = Arc::new(dir.open_reader().await.unwrap());
         let col_segments = reader.info().columns.get(col_name).unwrap().clone();
         Utf8ColumnReader::open(reader, &col_segments, &None)
             .await
@@ -223,7 +222,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&["hello", "world", "!"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&["hello", "world", "!"])).await;
 
         let reader = open_reader(&dir, "name").await;
 
@@ -251,8 +250,8 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&["a", "bb"])).await;
-        write_segment(&dir, &col_info, make_non_null_array(&["ccc", "dddd"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&["a", "bb"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&["ccc", "dddd"])).await;
 
         let reader = open_reader(&dir, "name").await;
 
@@ -279,7 +278,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&["foo", "bar"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&["foo", "bar"])).await;
 
         let reader = open_reader(&dir, "name").await;
 
@@ -312,7 +311,7 @@ mod tests {
         write_segment(
             &dir,
             &col_info,
-            make_array(&[Some("a"), None, Some("bc"), None, Some("d")]),
+            &make_array(&[Some("a"), None, Some("bc"), None, Some("d")]),
         )
         .await;
 
@@ -344,7 +343,7 @@ mod tests {
         let dir = test_dir();
         let col_info = non_nullable_info();
 
-        write_segment(&dir, &col_info, make_non_null_array(&["x"])).await;
+        write_segment(&dir, &col_info, &make_non_null_array(&["x"])).await;
 
         let reader = open_reader(&dir, "name").await;
 
