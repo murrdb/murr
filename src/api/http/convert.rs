@@ -114,7 +114,7 @@ mod tests {
         ]));
         let names: StringArray = vec![Some("alice"), Some("bob")].into_iter().collect();
         let scores: Float32Array = vec![Some(1.5), None].into_iter().collect();
-        let weights: Float64Array = vec![Some(3.14), Some(2.72)].into_iter().collect();
+        let weights: Float64Array = vec![Some(3.15), Some(2.72)].into_iter().collect();
         RecordBatch::try_new(
             schema,
             vec![Arc::new(names), Arc::new(scores), Arc::new(weights)],
@@ -137,7 +137,7 @@ mod tests {
         assert!(score_vals[1].is_null());
 
         let weight_vals = cols.get("weight").unwrap().as_array().unwrap();
-        assert_eq!(weight_vals[0], Value::from(3.14f64));
+        assert_eq!(weight_vals[0], Value::from(3.15f64));
         assert_eq!(weight_vals[1], Value::from(2.72f64));
     }
 
@@ -149,7 +149,7 @@ mod tests {
             vec![Value::String("alice".into()), Value::String("bob".into())],
         );
         columns.insert("score".to_string(), vec![Value::from(1.5), Value::Null]);
-        columns.insert("weight".to_string(), vec![Value::from(3.14), Value::from(2.72)]);
+        columns.insert("weight".to_string(), vec![Value::from(3.15), Value::from(2.72)]);
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
@@ -181,7 +181,7 @@ mod tests {
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_eq!(weights.value(0), 3.14);
+        assert_eq!(weights.value(0), 3.15);
         assert_eq!(weights.value(1), 2.72);
     }
 

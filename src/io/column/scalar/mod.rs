@@ -4,7 +4,6 @@ pub mod writer;
 
 use arrow::{array::ArrowPrimitiveType, datatypes::ArrowNativeType};
 use bytemuck::Pod;
-pub use footer::ScalarColumnFooter;
 pub use reader::ScalarColumnReader;
 pub use writer::ScalarColumnWriter;
 
@@ -15,5 +14,4 @@ pub trait ScalarCodec: Send + Sync + 'static {
     type Native: Pod + Default + ArrowNativeType + FromBytes<Self::Native> + Send + Sync;
     const ELEMENT_SIZE: u32;
     const ZERO: Self::Native;
-    const NAME: &'static str;
 }

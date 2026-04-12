@@ -10,5 +10,4 @@ impl ScalarCodec for Float64Codec {
     type Native = f64;
     const ELEMENT_SIZE: u32 = 8;
     const ZERO: f64 = 0.0;
-    const NAME: &'static str = "Float64";
 }

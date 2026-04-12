@@ -14,6 +14,12 @@ pub struct KeyIndex {
     map: HashMap<LeanString, SegmentOffset, FxBuildHasher>,
 }
 
+impl Default for KeyIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyIndex {
     pub fn new() -> Self {
         KeyIndex {

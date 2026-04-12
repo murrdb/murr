@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_f64_round_trip() {
-        let original: Float64Array = vec![Some(3.14), None, Some(2.72)].into_iter().collect();
+        let original: Float64Array = vec![Some(3.15), None, Some(2.72)].into_iter().collect();
         let json = f64::to_json(&original);
         let restored = f64::from_json(&json).unwrap();
         assert_eq!(original, restored);
