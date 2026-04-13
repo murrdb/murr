@@ -23,16 +23,17 @@ where
     F: ColumnFooter,
     R: DirectoryReader,
 {
+    let max_seg_id = match column.segments.keys().copied().max() {
+        None => {
+            debug!("column '{}': no segments to open", column.column.name);
+            return Ok(OpenedSegments {
+                segments: Vec::new(),
+                bitmap: NullBitmap::new(Vec::new()),
+            });
+        }
+        Some(id) => id as usize,
+    };
     let all_segment_ids: Vec<u32> = column.segments.keys().copied().collect();
-    if all_segment_ids.is_empty() {
-        debug!("column '{}': no segments to open", column.column.name);
-        return Ok(OpenedSegments {
-            segments: Vec::new(),
-            bitmap: NullBitmap::new(Vec::new()),
-        });
-    }
-
-    let max_seg_id = *all_segment_ids.iter().max().unwrap() as usize;
     let mut segments: Vec<Option<F>> = vec![None; max_seg_id + 1];
     let mut bitmap_segments: Vec<Option<OffsetSize>> = vec![None; max_seg_id + 1];
 
