@@ -112,8 +112,8 @@ impl<R: DirectoryReader, S: ScalarCodec> ColumnReader<R> for ScalarColumnReader<
         if !data_requests.is_empty() {
             let data_values: Vec<S::Native> = self.reader.read(&data_requests).await?;
 
-            for (i, &request_index) in request_indices.iter().enumerate() {
-                values[request_index] = data_values[i];
+            for (&request_index, &value) in request_indices.iter().zip(data_values.iter()) {
+                values[request_index] = value;
             }
 
             if self.column.nullable {
