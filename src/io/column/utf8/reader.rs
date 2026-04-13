@@ -115,8 +115,6 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
                 let footer = self.footer(key.segment)?;
                 let pair = &offset_pairs[i];
                 let len = (pair.end - pair.start) as u32;
-                // Set empty string as default for non-missing keys
-                values[key.request_index] = Some(String::new());
                 if len > 0 {
                     payload_requests.push(SegmentReadRequest {
                         segment: key.segment,
@@ -126,6 +124,8 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
                         },
                     });
                     payload_indices.push(i);
+                } else {
+                    values[key.request_index] = Some(String::new());
                 }
             }
 
@@ -133,9 +133,9 @@ impl<R: DirectoryReader> ColumnReader<R> for Utf8ColumnReader<R> {
                 let string_values: Vec<String> =
                     reader.read(&payload_requests).await?;
 
-                for (j, &orig_idx) in payload_indices.iter().enumerate() {
+                for (value, &orig_idx) in string_values.into_iter().zip(payload_indices.iter()) {
                     let key = &non_missing_keys[orig_idx];
-                    values[key.request_index] = Some(string_values[j].clone());
+                    values[key.request_index] = Some(value);
                 }
             }
 
