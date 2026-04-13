@@ -2,11 +2,11 @@ mod convert;
 mod error;
 mod handlers;
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
+use axum::serve::ListenerExt;
 use axum::Router;
 
 use crate::core::MurrError;
@@ -38,35 +38,10 @@ impl MurrHttpService {
 
     pub async fn serve(self) -> Result<(), MurrError> {
         let addr = self.service.config().server.http.addr();
-        let socket_addr: SocketAddr = addr
-            .parse()
-            .map_err(|e| MurrError::IoError(format!("parsing addr {addr}: {e}")))?;
-
-        let socket = socket2::Socket::new(
-            socket2::Domain::for_address(socket_addr),
-            socket2::Type::STREAM,
-            None,
-        )
-        .map_err(|e| MurrError::IoError(format!("creating socket: {e}")))?;
-        socket
-            .set_nodelay(true)
-            .map_err(|e| MurrError::IoError(format!("set_nodelay: {e}")))?;
-        socket
-            .set_reuse_address(true)
-            .map_err(|e| MurrError::IoError(format!("set_reuse_address: {e}")))?;
-        socket
-            .set_nonblocking(true)
-            .map_err(|e| MurrError::IoError(format!("set_nonblocking: {e}")))?;
-        socket
-            .bind(&socket_addr.into())
-            .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?;
-        socket
-            .listen(1024)
-            .map_err(|e| MurrError::IoError(format!("listen: {e}")))?;
-
-        let listener = tokio::net::TcpListener::from_std(socket.into())
-            .map_err(|e| MurrError::IoError(format!("from_std listener: {e}")))?;
-
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?
+            .tap_io(|stream| { stream.set_nodelay(true).ok(); });
         axum::serve(listener, self.router())
             .await
             .map_err(|e| MurrError::IoError(format!("serving: {e}")))?;
