@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
+use axum::serve::ListenerExt;
 use axum::Router;
 
 use crate::core::MurrError;
@@ -40,7 +41,8 @@ impl MurrHttpService {
         let addr = self.service.config().server.http.addr();
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
-            .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?;
+            .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?
+            .tap_io(|stream| { stream.set_nodelay(true).ok(); });
         axum::serve(listener, self.router())
             .await
             .map_err(|e| MurrError::IoError(format!("serving: {e}")))?;

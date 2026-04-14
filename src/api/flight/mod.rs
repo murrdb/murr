@@ -41,6 +41,7 @@ impl MurrFlightService {
             .map_err(|e| MurrError::ConfigParsingError(format!("invalid address: {e}")))?;
 
         Server::builder()
+            .tcp_nodelay(true)
             .add_service(FlightServiceServer::new(self))
             .serve(addr)
             .await
