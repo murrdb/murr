@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pyarrow as pa
 
 from murr._base import parse_table_schemas, validate_and_convert_batch
@@ -41,30 +39,23 @@ class Murr:
     @classmethod
     def start_local(
         cls,
-        cache_dir: str | os.PathLike[str] | None = None,
-        http_port: int | None = None,
         config: Config | None = None,
         serve_http: bool | None = None,
     ) -> MurrLocalSync:
         """Start an embedded local Murr instance backed by on-disk segment files.
 
-        Two calling conventions:
+        Pass a `murr.config.Config` (Pydantic) to override server listen
+        addresses, HTTP payload cap, or cache dir. Omit it and every
+        knob falls back to the Rust defaults (HTTP 0.0.0.0:8080, gRPC
+        0.0.0.0:8081, `cache_dir` auto-resolved).
 
-          1. `Murr.start_local(cache_dir="/tmp/cache")` — legacy shorthand.
-             Optionally pass `http_port=N` to also spawn the HTTP API on
-             `127.0.0.1:N`.
-
-          2. `Murr.start_local(config=Config(...))` — pass a full
-             `murr.config.Config` (Pydantic) for every server and storage
-             knob. Pass `serve_http=True` to additionally spawn the HTTP
-             API on `config.server.http.host:port`.
-
-        `cache_dir` and `config` are mutually exclusive; passing both
-        raises `ValueError`. `http_port` belongs to the legacy path; to
-        pick a port via `config`, set `config.server.http.port`.
+        Pass `serve_http=True` to also spawn the HTTP API on
+        `config.server.http.host:port`; by default the embedded instance
+        does not open a listening socket.
         """
-        dir_arg = str(cache_dir) if cache_dir is not None else None
-        return MurrLocalSync(_MurrLocalSync(dir_arg, http_port, config, serve_http))
+        if config is None:
+            config = Config()
+        return MurrLocalSync(_MurrLocalSync(config, serve_http))
 
     @classmethod
     def connect(cls, endpoint: str) -> MurrClientSync:

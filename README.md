@@ -48,9 +48,10 @@ uv pip install murrdb
 ```
 and then
 ```python
+from murr import Config, StorageConfig
 from murr.sync import Murr
 
-db = Murr.start_local(cache_dir="/tmp/murr")  # embedded local instance
+db = Murr.start_local(config=Config(storage=StorageConfig(cache_dir="/tmp/murr")))  # embedded local instance
 
 # fetch columns for a batch of document keys
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
@@ -94,10 +95,10 @@ Murr is not a general-purpose database:
 ```python
 import pandas as pd
 import pyarrow as pa
-from murr import TableSchema, ColumnSchema, DType
+from murr import Config, StorageConfig, TableSchema, ColumnSchema, DType
 from murr.sync import Murr
 
-db = Murr.start_local(cache_dir="/tmp/murr")
+db = Murr.start_local(config=Config(storage=StorageConfig(cache_dir="/tmp/murr")))
 
 # define table schema
 schema = TableSchema(

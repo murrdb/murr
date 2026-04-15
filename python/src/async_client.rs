@@ -10,7 +10,7 @@ use murr::service::MurrService;
 
 use crate::config::PyConfig;
 use crate::error::into_py_err;
-use crate::init::{resolve_config, spawn_http_server};
+use crate::init::spawn_http_server;
 use crate::schema::PyTableSchema;
 
 #[pyclass(name = "MurrLocalAsync")]
@@ -21,22 +21,19 @@ pub struct PyMurrLocalAsync {
 #[pymethods]
 impl PyMurrLocalAsync {
     #[staticmethod]
-    #[pyo3(signature = (cache_dir=None, http_port=None, config=None, serve_http=None))]
+    #[pyo3(signature = (config, serve_http=None))]
     fn create(
         py: Python<'_>,
-        cache_dir: Option<String>,
-        http_port: Option<u16>,
-        config: Option<PyConfig>,
+        config: PyConfig,
         serve_http: Option<bool>,
     ) -> PyResult<Bound<'_, PyAny>> {
-        let resolved = resolve_config(cache_dir, http_port, config, serve_http)?;
+        let cfg = config.0;
+        let spawn = serve_http.unwrap_or(false);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let service = MurrService::new(resolved.config)
-                .await
-                .map_err(into_py_err)?;
+            let service = MurrService::new(cfg).await.map_err(into_py_err)?;
             let service = Arc::new(service);
 
-            if resolved.serve_http {
+            if spawn {
                 spawn_http_server(&service, &tokio::runtime::Handle::current());
             }
 

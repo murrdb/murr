@@ -1,8 +1,9 @@
-"""Tests for the Config-based `Murr.start_local` path.
+"""Tests for the `Config`-based `Murr.start_local` API.
 
-These cover the behaviours called out in issue #95 — the Python client
-should accept a full `Config` (Pydantic) mirroring `murr::conf::Config`,
-not just `cache_dir` and `http_port`.
+The Python client accepts a full `Config` (Pydantic) mirroring
+`murr::conf::Config`. It no longer exposes `cache_dir`/`http_port`
+shortcut kwargs -- callers set the same values on `Config.storage` /
+`Config.server.http` instead.
 """
 
 from __future__ import annotations
@@ -40,8 +41,7 @@ def _user_schema() -> TableSchema:
 
 
 def test_start_local_accepts_full_config(tmp_path):
-    """A fully-specified Config should work end-to-end without any
-    `cache_dir` argument — issue #95's main ask."""
+    """A fully-specified Config should work end-to-end."""
     config = Config(storage=StorageConfig(cache_dir=str(tmp_path)))
     murr = SyncMurr.start_local(config=config)
     try:
@@ -63,8 +63,8 @@ def test_start_local_accepts_full_config(tmp_path):
 
 
 def test_config_exposes_http_port_and_serves_http(tmp_path):
-    """`config.server.http.port` is the config-mode equivalent of the
-    legacy `http_port=` arg. `serve_http=True` opts in to spawning."""
+    """`config.server.http.port` drives the HTTP listen port.
+    `serve_http=True` opts in to spawning the server."""
     port = free_port()
     config = Config(
         server=ServerConfig(http=HttpConfig(host="127.0.0.1", port=port)),
@@ -84,8 +84,7 @@ def test_config_exposes_http_port_and_serves_http(tmp_path):
 
 
 def test_config_does_not_serve_http_by_default(tmp_path):
-    """A Config without `serve_http=True` should NOT spawn the HTTP
-    server — embedded callers don't need it."""
+    """Without `serve_http=True`, no HTTP server should be spawned."""
     port = free_port()
     config = Config(
         server=ServerConfig(http=HttpConfig(host="127.0.0.1", port=port)),
@@ -94,7 +93,6 @@ def test_config_does_not_serve_http_by_default(tmp_path):
     server = SyncMurr.start_local(config=config)
     try:
         time.sleep(0.2)
-        # Without serve_http=True, nothing should be listening.
         import socket
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -105,27 +103,10 @@ def test_config_does_not_serve_http_by_default(tmp_path):
         del server
 
 
-def test_cache_dir_and_config_are_mutually_exclusive(tmp_path):
-    config = Config(storage=StorageConfig(cache_dir=str(tmp_path)))
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        SyncMurr.start_local(cache_dir=str(tmp_path), config=config)
-
-
-def test_http_port_with_config_rejected(tmp_path):
-    config = Config(storage=StorageConfig(cache_dir=str(tmp_path)))
-    with pytest.raises(ValueError, match="http_port cannot be combined with config"):
-        SyncMurr.start_local(config=config, http_port=12345)
-
-
-def test_missing_both_cache_dir_and_config_rejected():
-    with pytest.raises(ValueError, match="either cache_dir or config"):
-        SyncMurr.start_local()
-
-
-def test_legacy_cache_dir_path_still_works(tmp_path):
-    """Backward compat: the old `cache_dir=...` call shape must still
-    produce a functional embedded client."""
-    murr = SyncMurr.start_local(cache_dir=str(tmp_path))
+def test_start_local_no_args_uses_defaults():
+    """`Murr.start_local()` with no arguments should construct a client
+    using the Rust defaults (auto-resolved cache_dir, no HTTP server)."""
+    murr = SyncMurr.start_local()
     try:
         murr.create_table("users", _user_schema())
         assert "users" in murr.list_tables()
@@ -146,10 +127,14 @@ async def test_async_start_local_with_config(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_async_cache_dir_and_config_mutually_exclusive(tmp_path):
-    config = Config(storage=StorageConfig(cache_dir=str(tmp_path)))
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        await AsyncMurr.start_local(cache_dir=str(tmp_path), config=config)
+async def test_async_start_local_no_args():
+    murr = await AsyncMurr.start_local()
+    try:
+        await murr.create_table("users", _user_schema())
+        tables = await murr.list_tables()
+        assert "users" in tables
+    finally:
+        del murr
 
 
 def test_config_defaults_match_rust():
@@ -165,8 +150,7 @@ def test_config_defaults_match_rust():
 
 
 def test_grpc_config_exposed(tmp_path):
-    """gRPC host/port are now configurable from Python (previously they
-    were hard-coded to the Rust defaults)."""
+    """gRPC host/port are configurable from Python."""
     config = Config(
         server=ServerConfig(grpc=GrpcConfig(host="127.0.0.1", port=18081)),
         storage=StorageConfig(cache_dir=str(tmp_path)),
