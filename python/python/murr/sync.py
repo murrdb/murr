@@ -5,6 +5,7 @@ import os
 import pyarrow as pa
 
 from murr._base import parse_table_schemas, validate_and_convert_batch
+from murr.config import Config
 from murr.libmurr import MurrLocalSync as _MurrLocalSync
 from murr.schema import TableSchema
 
@@ -39,15 +40,31 @@ class Murr:
 
     @classmethod
     def start_local(
-        cls, cache_dir: str | os.PathLike[str], http_port: int | None = None
+        cls,
+        cache_dir: str | os.PathLike[str] | None = None,
+        http_port: int | None = None,
+        config: Config | None = None,
+        serve_http: bool | None = None,
     ) -> MurrLocalSync:
         """Start an embedded local Murr instance backed by on-disk segment files.
 
-        Args:
-            cache_dir: Path to the on-disk cache directory.
-            http_port: If set, starts the HTTP API on this port (bound to 127.0.0.1).
+        Two calling conventions:
+
+          1. `Murr.start_local(cache_dir="/tmp/cache")` — legacy shorthand.
+             Optionally pass `http_port=N` to also spawn the HTTP API on
+             `127.0.0.1:N`.
+
+          2. `Murr.start_local(config=Config(...))` — pass a full
+             `murr.config.Config` (Pydantic) for every server and storage
+             knob. Pass `serve_http=True` to additionally spawn the HTTP
+             API on `config.server.http.host:port`.
+
+        `cache_dir` and `config` are mutually exclusive; passing both
+        raises `ValueError`. `http_port` belongs to the legacy path; to
+        pick a port via `config`, set `config.server.http.port`.
         """
-        return MurrLocalSync(_MurrLocalSync(str(cache_dir), http_port))
+        dir_arg = str(cache_dir) if cache_dir is not None else None
+        return MurrLocalSync(_MurrLocalSync(dir_arg, http_port, config, serve_http))
 
     @classmethod
     def connect(cls, endpoint: str) -> MurrClientSync:

@@ -8,8 +8,9 @@ use pyo3::types::PyAny;
 
 use murr::service::MurrService;
 
+use crate::config::PyConfig;
 use crate::error::into_py_err;
-use crate::init::{build_config, spawn_http_server};
+use crate::init::{resolve_config, spawn_http_server};
 use crate::schema::PyTableSchema;
 
 #[pyclass(name = "MurrLocalSync")]
@@ -21,20 +22,24 @@ pub struct PyMurrLocalSync {
 #[pymethods]
 impl PyMurrLocalSync {
     #[new]
-    #[pyo3(signature = (cache_dir, http_port=None))]
-    fn new(cache_dir: String, http_port: Option<u16>) -> PyResult<Self> {
+    #[pyo3(signature = (cache_dir=None, http_port=None, config=None, serve_http=None))]
+    fn new(
+        cache_dir: Option<String>,
+        http_port: Option<u16>,
+        config: Option<PyConfig>,
+        serve_http: Option<bool>,
+    ) -> PyResult<Self> {
+        let resolved = resolve_config(cache_dir, http_port, config, serve_http)?;
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let config = build_config(cache_dir, http_port);
-
         let service = runtime
-            .block_on(MurrService::new(config))
+            .block_on(MurrService::new(resolved.config))
             .map_err(into_py_err)?;
 
         let service = Arc::new(service);
 
-        if http_port.is_some() {
+        if resolved.serve_http {
             spawn_http_server(&service, runtime.handle());
         }
 
