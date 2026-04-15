@@ -53,6 +53,7 @@ rand = "0.10"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
+csv = "1"
 
 [[bench]]
 name = "multi_segment_index_bench"
