@@ -58,6 +58,10 @@ tower = { version = "0.5", features = ["util"] }
 name = "multi_segment_index_bench"
 harness = false
 
+[[bench]]
+name = "row_vs_columnar_bench"
+harness = false
+
 [profile.bench]
 debug = 1         # line tables + symbols (good enough for perf)
 lto = false       # optional: makes disasm easier to read
