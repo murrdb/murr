@@ -8,8 +8,9 @@ use pyo3::types::PyAny;
 
 use murr::service::MurrService;
 
+use crate::config::PyConfig;
 use crate::error::into_py_err;
-use crate::init::{build_config, spawn_http_server};
+use crate::init::spawn_http_server;
 use crate::schema::PyTableSchema;
 
 #[pyclass(name = "MurrLocalAsync")]
@@ -20,21 +21,23 @@ pub struct PyMurrLocalAsync {
 #[pymethods]
 impl PyMurrLocalAsync {
     #[staticmethod]
-    #[pyo3(signature = (cache_dir, http_port=None))]
-    fn create(py: Python<'_>, cache_dir: String, http_port: Option<u16>) -> PyResult<Bound<'_, PyAny>> {
+    #[pyo3(signature = (config, serve_http=None))]
+    fn create(
+        py: Python<'_>,
+        config: PyConfig,
+        serve_http: Option<bool>,
+    ) -> PyResult<Bound<'_, PyAny>> {
+        let cfg = config.0;
+        let spawn = serve_http.unwrap_or(false);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let config = build_config(cache_dir, http_port);
-
-            let service = MurrService::new(config).await.map_err(into_py_err)?;
+            let service = MurrService::new(cfg).await.map_err(into_py_err)?;
             let service = Arc::new(service);
 
-            if http_port.is_some() {
+            if spawn {
                 spawn_http_server(&service, &tokio::runtime::Handle::current());
             }
 
-            Ok(PyMurrLocalAsync {
-                service,
-            })
+            Ok(PyMurrLocalAsync { service })
         })
     }
 
@@ -101,17 +104,10 @@ impl PyMurrLocalAsync {
         })
     }
 
-    fn get_schema<'py>(
-        &self,
-        py: Python<'py>,
-        table_name: String,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn get_schema<'py>(&self, py: Python<'py>, table_name: String) -> PyResult<Bound<'py, PyAny>> {
         let service = self.service.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let schema = service
-                .get_schema(&table_name)
-                .await
-                .map_err(into_py_err)?;
+            let schema = service.get_schema(&table_name).await.map_err(into_py_err)?;
             Ok(PyTableSchema(schema))
         })
     }

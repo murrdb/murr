@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
-
 import pyarrow as pa
 
 from murr._base import parse_table_schemas, validate_and_convert_batch
+from murr.config import Config
 from murr.libmurr import MurrLocalAsync as _MurrLocalAsync
 from murr.schema import TableSchema
 
@@ -41,15 +40,24 @@ class Murr:
 
     @classmethod
     async def start_local(
-        cls, cache_dir: str | os.PathLike[str], http_port: int | None = None
+        cls,
+        config: Config | None = None,
+        serve_http: bool | None = None,
     ) -> MurrLocalAsync:
         """Start an embedded local Murr instance backed by on-disk segment files.
 
-        Args:
-            cache_dir: Path to the on-disk cache directory.
-            http_port: If set, starts the HTTP API on this port (bound to 127.0.0.1).
+        Pass a `murr.config.Config` (Pydantic) to override server listen
+        addresses, HTTP payload cap, or cache dir. Omit it and every
+        knob falls back to the Rust defaults (HTTP 0.0.0.0:8080, gRPC
+        0.0.0.0:8081, `cache_dir` auto-resolved).
+
+        Pass `serve_http=True` to also spawn the HTTP API on
+        `config.server.http.host:port`; by default the embedded instance
+        does not open a listening socket.
         """
-        inner = await _MurrLocalAsync.create(str(cache_dir), http_port)
+        if config is None:
+            config = Config()
+        inner = await _MurrLocalAsync.create(config, serve_http)
         return MurrLocalAsync(inner)
 
     @classmethod

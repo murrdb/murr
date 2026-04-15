@@ -1,4 +1,5 @@
 mod async_client;
+mod config;
 mod error;
 mod init;
 mod schema;
@@ -15,9 +16,6 @@ fn libmurr(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMurrLocalSync>()?;
     m.add_class::<PyMurrLocalAsync>()?;
     m.add("MurrTableError", m.py().get_type::<MurrTableError>())?;
-    m.add(
-        "MurrSegmentError",
-        m.py().get_type::<MurrSegmentError>(),
-    )?;
+    m.add("MurrSegmentError", m.py().get_type::<MurrSegmentError>())?;
     Ok(())
 }
