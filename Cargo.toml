@@ -45,6 +45,8 @@ async-trait = "0.1"
 hashbrown = "0.17.0"
 lean_string = "0.6"
 rustc-hash = "2"
+prost = "0.14"
+prost-types = "0.14"
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
@@ -54,8 +56,15 @@ http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
+[build-dependencies]
+prost-build = "0.14"
+
 [[bench]]
 name = "multi_segment_index_bench"
+harness = false
+
+[[bench]]
+name = "row_vs_col_bench"
 harness = false
 
 [profile.bench]

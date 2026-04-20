@@ -5,6 +5,8 @@ mod api;
 mod conf;
 mod core;
 mod io;
+mod io3;
+mod proto;
 mod service;
 
 use std::sync::Arc;
