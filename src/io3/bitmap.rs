@@ -1,6 +1,6 @@
 use arrow::array::RecordBatch;
 
-use crate::proto::model::SegmentColumnSchema;
+use crate::io3::model::SegmentColumnSchema;
 
 pub struct Bitset<'a> {
     pub size: u8, // so 256*8=2048 max columns in bitmap

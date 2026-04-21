@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     core::{MurrError, TableSchema},
-    io3::{info::TableInfo, row::Row, url::Url},
-    proto::model::SegmentSchema,
+    io3::{info::TableInfo, model::SegmentSchema, row::Row, url::Url},
 };
 
 use async_trait::async_trait;

@@ -3,12 +3,22 @@ use std::collections::HashMap;
 use arrow::datatypes::{DataType, Field, Schema};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum DType {
     Utf8,
     Float32,
     Float64,
+}
+
+impl DType {
+    pub fn size(&self) -> usize {
+        match self {
+            DType::Utf8 => 4,
+            DType::Float32 => 4,
+            DType::Float64 => 8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

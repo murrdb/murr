@@ -15,7 +15,7 @@
 
 use crate::{
     core::MurrError,
-    proto::model::{DType, SegmentColumnSchema, SegmentSchema},
+    io3::model::{SegmentColumnSchema, SegmentSchema},
 };
 use arrow::{
     array::{Array, PrimitiveArray, StringArray},
@@ -37,7 +37,7 @@ impl TryFrom<ColumnBatch> for RowBatch {
             match array.data_type() {
                 DataType::Float32 => f32::encode_to(column, array.as_ref(), &mut row_batch)?,
                 DataType::Float64 => f64::encode_to(column, array.as_ref(), &mut row_batch)?,
-                DataType::Utf8 => Utf8Encoder::encode_to(column, array.as_ref(), &mut row_batch)?,
+                DataType::Utf8 => String::encode_to(column, array.as_ref(), &mut row_batch)?,
                 dt => {
                     return Err(MurrError::SegmentError(format!("unsupported dtype {dt:?}")));
                 }
@@ -50,18 +50,22 @@ impl TryFrom<ColumnBatch> for RowBatch {
 pub struct RowBatch {
     pub schema: SegmentSchema,
     pub rows: Vec<Row>,
-    pub bitset_size: usize,
 }
 
 impl RowBatch {
-    fn new(columns: &SegmentSchema, rows: usize) -> Self {
-        todo!()
+    fn new(schema: &SegmentSchema, rows: usize) -> Self {
+        RowBatch {
+            schema: schema.clone(),
+            rows: (0..rows).map(|_| Row::new(schema)).collect(),
+        }
     }
 }
 
 impl TryFrom<RowBatch> for ColumnBatch {
     type Error = MurrError;
-    fn try_from(value: RowBatch) -> Result<Self, Self::Error> {}
+    fn try_from(value: RowBatch) -> Result<Self, Self::Error> {
+        todo!()
+    }
 }
 
 pub trait ArrayEncoder {
@@ -100,12 +104,12 @@ impl<T: PrimitiveArrayEncoder> ArrayEncoder for T {
                 ))
             })?;
 
-        let bitset_size = rows.bitset_size;
+        let bitset_size = rows.schema.bitset_size;
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {
                 None => row.set_null(column.index as usize),
-                Some(v) => T::set_primitive(row, bitset_size, column.offset as usize, &v),
+                Some(v) => T::set_primitive(row, bitset_size as usize, column.offset as usize, &v),
             }
         }
         Ok(())
@@ -126,9 +130,7 @@ impl PrimitiveArrayEncoder for f64 {
     }
 }
 
-pub struct Utf8Encoder;
-
-impl ArrayEncoder for Utf8Encoder {
+impl ArrayEncoder for String {
     fn encode_to(
         column: &SegmentColumnSchema,
         array: &dyn Array,
@@ -141,12 +143,16 @@ impl ArrayEncoder for Utf8Encoder {
                 MurrError::SegmentError(format!("expected Utf8, got {:?}", array.data_type()))
             })?;
 
-        let bitset_size = rows.bitset_size;
+        let bitset_size = rows.schema.bitset_size;
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {
                 None => row.set_null(column.index as usize),
-                Some(s) => row.set_dynamic_value(bitset_size, column.offset as usize, s.as_bytes()),
+                Some(s) => row.set_dynamic_value(
+                    bitset_size as usize,
+                    column.offset as usize,
+                    s.as_bytes(),
+                ),
             }
         }
         Ok(())
@@ -158,6 +164,12 @@ pub struct Row {
 }
 
 impl Row {
+    fn new(schema: &SegmentSchema) -> Self {
+        let row_size = schema.bitset_size as usize + schema.capacity as usize;
+        let mut bytes = vec![0u8; row_size];
+        bytes[0] = schema.bitset_size;
+        Row { bytes }
+    }
     fn set_null(&mut self, column_index: usize) {
         // bit 0 - non-null, 1 - null; bitset lives at bytes[1..bitset_size]
         let byte = 1 + column_index / 8;
