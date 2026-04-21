@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     core::{MurrError, TableSchema},
-    io3::{info::TableInfo, row::Row, url::Url}, proto::model::SegmentSchema,
+    io3::{info::TableInfo, row::Row, url::Url},
+    proto::model::SegmentSchema,
 };
 
 use async_trait::async_trait;
@@ -65,8 +66,5 @@ pub trait DirectoryWriter: Sized + Send + Sync {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
-    async fn write(
-        &self,
-        chunks: impl Iterator<Item = ColumnWriteRequest>,
-    ) -> Result<(), MurrError>;
+    async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError>;
 }

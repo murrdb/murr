@@ -6,14 +6,14 @@ use rustc_hash::FxBuildHasher;
 use crate::io::table::key_offset::KeyOffset;
 
 //Value payload from the index. 
-struct SegmentRowOffset {
+struct RowLocation {
     segment_id: u32,
     offset: u32,
     size: u32
 }
 
 pub struct KeyIndex {
-    map: HashMap<LeanString, SegmentRowOffset, FxBuildHasher>,
+    map: HashMap<LeanString, RowLocation, FxBuildHasher>,
 }
 
 impl Default for KeyIndex {
@@ -37,7 +37,7 @@ impl KeyIndex {
             let key = unsafe { LeanString::from(values.value_unchecked(i)) };
             self.map.insert(
                 key,
-                SegmentRowOffset {
+                RowLocation {
                     segment_id,
                     segment_offset: i as u32,
                 },

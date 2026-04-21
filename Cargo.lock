@@ -1542,6 +1542,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytemuck",
+ "bytes",
  "clap",
  "config",
  "criterion",
