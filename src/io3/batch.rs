@@ -1,14 +1,46 @@
-use arrow::{array::Array, datatypes::DataType};
+use std::sync::Arc;
+
+use arrow::{
+    array::{ArrayRef, RecordBatch},
+    datatypes::DataType,
+};
 
 use crate::{
     core::{DType, MurrError},
     io3::column::{ArrayDecoder, ArrayEncoder},
-    io3::{model::SegmentSchema, row::Row},
+    io3::{
+        model::{SegmentColumnSchema, SegmentSchema},
+        row::Row,
+    },
 };
 pub struct ColumnBatch {
     pub schema: SegmentSchema,
-    pub columns: Vec<Box<dyn Array>>,
+    pub columns: Vec<ArrayRef>,
     pub row_count: usize,
+}
+
+impl ColumnBatch {
+    pub fn new(batch: RecordBatch) -> Result<ColumnBatch, MurrError> {
+        let fields = batch.schema().fields().clone();
+        let mut columns = Vec::with_capacity(fields.len());
+        let mut offset: u32 = 0;
+        for (i, field) in fields.iter().enumerate() {
+            let dtype = DType::try_from(field.data_type())?;
+            columns.push(SegmentColumnSchema {
+                index: i as u32,
+                dtype,
+                name: field.name().clone(),
+                offset,
+            });
+            offset += dtype.size() as u32;
+        }
+        let schema = SegmentSchema::new(&columns);
+        Ok(ColumnBatch {
+            schema,
+            columns: batch.columns().to_vec(),
+            row_count: batch.num_rows(),
+        })
+    }
 }
 
 impl TryFrom<ColumnBatch> for RowBatch {
@@ -48,12 +80,12 @@ impl TryFrom<RowBatch> for ColumnBatch {
     type Error = MurrError;
     fn try_from(value: RowBatch) -> Result<Self, Self::Error> {
         let row_count = value.rows.len();
-        let mut columns: Vec<Box<dyn Array>> = Vec::with_capacity(value.schema.columns.len());
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(value.schema.columns.len());
         for column in &value.schema.columns {
-            let array: Box<dyn Array> = match column.dtype {
-                DType::Float32 => Box::new(f32::decode_to(column, &value)?),
-                DType::Float64 => Box::new(f64::decode_to(column, &value)?),
-                DType::Utf8 => Box::new(String::decode_to(column, &value)?),
+            let array: ArrayRef = match column.dtype {
+                DType::Float32 => Arc::new(f32::decode_to(column, &value)?),
+                DType::Float64 => Arc::new(f64::decode_to(column, &value)?),
+                DType::Utf8 => Arc::new(String::decode_to(column, &value)?),
             };
             columns.push(array);
         }

@@ -89,6 +89,8 @@ impl Row {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{core::DType, io3::{batch::{ColumnBatch, RowBatch}, model::SegmentColumnSchema}};
 
     use super::*;
@@ -115,7 +117,7 @@ mod tests {
         let s = StringArray::from(vec![Some("hello"), Some("world"), None]);
         let batch = ColumnBatch {
             schema: schema.clone(),
-            columns: vec![Box::new(f.clone()), Box::new(s.clone())],
+            columns: vec![Arc::new(f.clone()), Arc::new(s.clone())],
             row_count: 3,
         };
         let rows: RowBatch = batch.try_into().unwrap();

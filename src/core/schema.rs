@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use arrow::datatypes::{DataType, Field, Schema};
 use serde::{Deserialize, Serialize};
 
+use crate::core::MurrError;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum DType {
@@ -47,6 +49,20 @@ impl From<&DType> for DataType {
             DType::Utf8 => DataType::Utf8,
             DType::Float32 => DataType::Float32,
             DType::Float64 => DataType::Float64,
+        }
+    }
+}
+
+impl TryFrom<&DataType> for DType {
+    type Error = MurrError;
+    fn try_from(dt: &DataType) -> Result<Self, Self::Error> {
+        match dt {
+            DataType::Float32 => Ok(DType::Float32),
+            DataType::Float64 => Ok(DType::Float64),
+            DataType::Utf8 => Ok(DType::Utf8),
+            other => Err(MurrError::SegmentError(format!(
+                "unsupported dtype {other:?}"
+            ))),
         }
     }
 }

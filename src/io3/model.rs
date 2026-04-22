@@ -1,11 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::core::DType;
+use crate::io::directory::ReadRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OffsetSize {
     pub offset: u32,
     pub size: u32,
+}
+
+impl Into<ReadRequest> for OffsetSize {
+    fn into(self) -> ReadRequest {
+        ReadRequest {
+            offset: self.offset,
+            size: self.size,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -32,13 +42,4 @@ impl SegmentSchema {
             columns: columns.clone(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SegmentFooter {
-    pub version: u32,
-    pub name: u32,
-    pub schema: SegmentSchema,
-    pub keys: OffsetSize,
-    pub rows: OffsetSize,
 }
