@@ -20,10 +20,10 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn new(schema: &SegmentSchema) -> Self {
-        let row_size = schema.bitset_size as usize + schema.capacity as usize;
+    pub fn new(schema: &SegmentSchema, bitset_size: usize, capacity: usize) -> Self {
+        let row_size = bitset_size + capacity;
         let mut bytes = vec![0u8; row_size];
-        bytes[0] = schema.bitset_size;
+        bytes[0] = bitset_size as u8;
         Row { bytes }
     }
     // bit 0 - non-null, 1 - null; bitset lives at bytes[1..bitset_size]
@@ -91,7 +91,13 @@ impl Row {
 mod tests {
     use std::sync::Arc;
 
-    use crate::{core::DType, io3::{batch::{ColumnBatch, RowBatch}, model::SegmentColumnSchema}};
+    use crate::{
+        core::DType,
+        io3::{
+            batch::{ColumnBatch, RowBatch},
+            model::SegmentColumnSchema,
+        },
+    };
 
     use super::*;
     use arrow::array::{Float32Array, StringArray};

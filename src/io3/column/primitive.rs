@@ -3,7 +3,10 @@ use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use crate::{
     core::MurrError,
     io3::{
-        batch::RowBatch, column::{ArrayDecoder, ArrayEncoder}, model::SegmentColumnSchema, row::Row
+        batch::RowBatch,
+        column::{ArrayDecoder, ArrayEncoder},
+        model::SegmentColumnSchema,
+        row::Row,
     },
 };
 
@@ -35,7 +38,7 @@ impl<T: PrimitiveArrayEncoder> ArrayEncoder for T {
                 ))
             })?;
 
-        let bitset_size = rows.schema.bitset_size;
+        let bitset_size = rows.schema.bitset_size();
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {
@@ -61,7 +64,7 @@ impl<T: PrimitiveArrayDecoder> ArrayDecoder for T {
     type A = PrimitiveArray<T::ArrowType>;
 
     fn decode_to(column: &SegmentColumnSchema, rows: &RowBatch) -> Result<Self::A, MurrError> {
-        let bitset_size = rows.schema.bitset_size as usize;
+        let bitset_size = rows.schema.bitset_size();
         let offset = column.offset as usize;
         let col_index = column.index as usize;
         let array = rows

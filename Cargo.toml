@@ -45,6 +45,7 @@ async-trait = "0.1"
 hashbrown = "0.17.0"
 lean_string = "0.6"
 rustc-hash = "2"
+bincode = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }

@@ -12,7 +12,7 @@ use crate::{
 impl ArrayDecoder for String {
     type A = StringArray;
     fn decode_to(column: &SegmentColumnSchema, rows: &RowBatch) -> Result<Self::A, MurrError> {
-        let bitset_size = rows.schema.bitset_size as usize;
+        let bitset_size = rows.schema.bitset_size();
         let offset = column.offset as usize;
         let col_index = column.index as usize;
         let mut values: Vec<Option<&str>> = Vec::with_capacity(rows.rows.len());
@@ -39,7 +39,7 @@ impl ArrayEncoder for String {
                 MurrError::SegmentError(format!("expected Utf8, got {:?}", array.data_type()))
             })?;
 
-        let bitset_size = rows.schema.bitset_size;
+        let bitset_size = rows.schema.bitset_size();
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {

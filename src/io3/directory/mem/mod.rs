@@ -1,4 +1,3 @@
-pub mod index;
+pub mod directory;
 pub mod reader;
-pub mod segment;
 pub mod writer;
