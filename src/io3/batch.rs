@@ -7,7 +7,7 @@ use arrow::{
 
 use crate::{
     core::{DType, MurrError},
-    io3::column::{ArrayDecoder, ArrayEncoder},
+    io3::column::codec_for,
     io3::{
         model::{SegmentColumnSchema, SegmentSchema},
         row::Row,
@@ -64,13 +64,10 @@ impl TryFrom<RowBatch> for ColumnBatch {
     type Error = MurrError;
     fn try_from(value: RowBatch) -> Result<Self, Self::Error> {
         let row_count = value.rows.len();
+        let bitset_size = value.schema.bitset_size;
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(value.schema.columns.len());
         for column in &value.schema.columns {
-            let array: ArrayRef = match column.dtype {
-                DType::Float32 => Arc::new(f32::decode_to(column, &value)?),
-                DType::Float64 => Arc::new(f64::decode_to(column, &value)?),
-                DType::Utf8 => Arc::new(String::decode_to(column, &value)?),
-            };
+            let array = codec_for(column.dtype).decode(column, bitset_size, &value.rows)?;
             columns.push(array);
         }
         Ok(ColumnBatch {
@@ -102,15 +99,14 @@ impl TryFrom<ColumnBatch> for RowBatch {
 
     fn try_from(batch: ColumnBatch) -> Result<Self, Self::Error> {
         let mut row_batch = RowBatch::new(&batch.schema, batch.row_count);
+        let bitset_size = row_batch.schema.bitset_size;
         for (column, array) in batch.schema.columns.iter().zip(batch.columns.iter()) {
-            match array.data_type() {
-                DataType::Float32 => f32::encode_to(column, array.as_ref(), &mut row_batch)?,
-                DataType::Float64 => f64::encode_to(column, array.as_ref(), &mut row_batch)?,
-                DataType::Utf8 => String::encode_to(column, array.as_ref(), &mut row_batch)?,
-                dt => {
-                    return Err(MurrError::SegmentError(format!("unsupported dtype {dt:?}")));
-                }
-            }
+            codec_for(column.dtype).encode(
+                column,
+                bitset_size,
+                array.as_ref(),
+                &mut row_batch.rows,
+            )?;
         }
         Ok(row_batch)
     }

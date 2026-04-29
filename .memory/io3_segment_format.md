@@ -41,7 +41,9 @@ Two batched directory reads on `open` (one footer batch, one keys batch) and a t
 
 Footer reads use a fixed-size tail (last `min(size_bytes, 64 KiB)` per segment) instead of a two-phase trailer-then-footer dance. Bincode-encoded `SegmentFooterV1` for realistic schemas is well under that bound; if an outlier ever exceeds it, the reader returns `SegmentError`.
 
-Schema is **immutable per table**. The reader derives a canonical `SegmentSchema` from `TableSchema` at construction time (HashMap iteration order, no sort), and validates each loaded segment's footer schema against it via `PartialEq`. Schema migration is deliberately not supported — recreate the table to change schema. Segment writers must produce footers in the same canonical column order; today this falls on the caller (writer is still a stub) by deriving the Arrow Schema via `Schema::from(&TableSchema)`.
+Schema is **immutable per table**. The reader derives a canonical `SegmentSchema` from `TableSchema` at construction time (IndexMap insertion order, no sort), and validates each loaded segment's footer schema against it via `PartialEq`. Schema migration is deliberately not supported — recreate the table to change schema. `TableWriter::write` canonicalizes the input `RecordBatch` column order by projecting it to match `Schema::from(&self.schema)` before calling `Segment::write`, ensuring footer schemas always match what the reader expects.
+
+`TableSchema::columns` uses `IndexMap<String, ColumnSchema>` (insertion-order-preserving) instead of `HashMap`. This makes column ordering deterministic: writer and reader derive the same canonical `SegmentSchema` from the same schema without any sort step.
 
 `reopen` deletion path:
 1. Walk `self.segments` against the new info's id set; clear slots whose id no longer exists.
@@ -52,6 +54,22 @@ Tombstone-as-deletion (a row whose every column is null) was considered and reje
 
 Missing keys in `read()` materialize as an `all_null` row (built by `Row::all_null` which bulk-fills the bitset bytes with `0xFF` instead of looping per-column), which then decodes to nulls in the output `RecordBatch`. The `RecordBatch` is built via the new `TryFrom<ColumnBatch> for RecordBatch` and projected to the requested columns via `RecordBatch::project`.
 
+## Column codec layer (`src/io3/column/`)
+
+`ColumnCodec` is the single dtype-dispatch boundary for `RowBatch ↔ ColumnBatch` serde. One trait, two methods (`encode` / `decode`), one registry (`codec_for(DType) -> &'static dyn ColumnCodec`). `batch.rs` no longer matches on dtype — it just iterates schema columns and calls into the codec. Adding a primitive dtype = one line in `codec_for`; adding a non-primitive dtype = one new file + one line.
+
+`PrimitiveCodec<T: ArrowPrimitiveType>` covers any arrow primitive whose `Native: bytemuck::Pod`. Encode does `bytemuck::bytes_of(&native)`; decode does `bytemuck::pod_read_unaligned::<T::Native>(slice)`. **Host-endian on disk** — cross-endian segment portability is explicitly not a goal (x86_64 and aarch64 are both LE). The previous explicit-LE design was dropped because it required either per-type adapters or `num_traits` + `generic_const_exprs` for marginal benefit.
+
+`PhantomData<fn() -> T>` (not `PhantomData<T>`) so the codec is `Send + Sync` regardless of `T`'s auto-traits.
+
+`Row` static-cell API is typed: `write_static::<T: NoUninit>(.., value: T)` and `read_static::<T: Pod>(..) -> T` encapsulate `bytes_of` / `pod_read_unaligned` so codecs don't construct intermediate `&[u8]`. Dynamic payloads use byte-level `set_dynamic_value` / `get_dynamic_bytes` since the payload size isn't known to the type system. Utf8 validation lives in `Utf8Codec`, not in `Row` — keeps the dynamic helpers reusable for future `Binary`/`List` codecs without parallel methods.
+
+`Utf8Codec` validates utf8 once per row at decode and bubbles up `MurrError::SegmentError` on invalid bytes.
+
 ## Open items
 
 - `SegmentFooterV1.id` is hardcoded to `0` in `Segment::write` with a TODO. Real IDs will be assigned externally by the segment registry / `KeyIndex` when it learns to add segments.
+
+## io3 TableWriter (`src/io3/table/writer.rs`)
+
+`TableWriter<D: Directory>` wraps a `D::WriterType` (obtained via `dir.open_writer()`) and a `TableSchema`. `write(&RecordBatch)` projects the batch to canonical column order via `Schema::from(&self.schema)` (IndexMap iteration order = insertion order), then calls `Segment::write()` and `DirectoryWriter::write()`. No segment ID assignment here — IDs come from the directory (position in the segments vec).

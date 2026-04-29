@@ -48,10 +48,21 @@ impl Row {
         (self.bytes[byte] >> bit) & 1 == 1
     }
 
-    pub fn set_static_value(&mut self, bitset_size: usize, byte_offset: usize, value: &[u8]) {
+    pub fn write_static<T: bytemuck::NoUninit>(
+        &mut self,
+        bitset_size: usize,
+        byte_offset: usize,
+        value: T,
+    ) {
         let start = bitset_size + byte_offset;
-        let end = start + value.len();
-        self.bytes[start..end].copy_from_slice(value);
+        let end = start + std::mem::size_of::<T>();
+        self.bytes[start..end].copy_from_slice(bytemuck::bytes_of(&value));
+    }
+
+    pub fn read_static<T: bytemuck::Pod>(&self, bitset_size: usize, byte_offset: usize) -> T {
+        let start = bitset_size + byte_offset;
+        let end = start + std::mem::size_of::<T>();
+        bytemuck::pod_read_unaligned(&self.bytes[start..end])
     }
 
     pub fn set_dynamic_value(&mut self, bitset_size: usize, byte_offset: usize, value: &[u8]) {
@@ -76,21 +87,19 @@ impl Row {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    pub fn get_dynamic_value(
+    pub fn get_dynamic_bytes(
         &self,
         bitset_size: usize,
         byte_offset: usize,
-    ) -> Result<&str, MurrError> {
+    ) -> Result<&[u8], MurrError> {
         let payload_offset = self.read_u32_le(bitset_size + byte_offset)? as usize;
         let len = self.read_u32_le(payload_offset)? as usize;
         let body_start = payload_offset + 4;
-        let body = self
-            .bytes
+        self.bytes
             .get(body_start..body_start + len)
             .ok_or_else(|| {
                 MurrError::SegmentError(format!("row too short to read payload of {len} bytes"))
-            })?;
-        std::str::from_utf8(body).map_err(|e| MurrError::SegmentError(format!("invalid utf8: {e}")))
+            })
     }
 }
 

@@ -1,3 +1,4 @@
+pub mod mmap;
 pub mod mem;
 
 use std::sync::Arc;
