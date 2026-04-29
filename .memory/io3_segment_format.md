@@ -23,6 +23,18 @@ Each `Row` pre-allocates its byte buffer in `Row::new` (row.rs:23-28), so `row.b
 
 `SegmentFooterV1` and `SegmentSchema` already carry `serde::{Serialize, Deserialize}` for the existing JSON `_metadata.json` use. Using bincode's `serde` feature lets us reuse those derives — single source of truth for what the type's wire shape looks like.
 
+## io3 MemDirectory (`src/io3/directory/mem/`)
+
+`MemDirectory { metadata: RwLock<TableInfo>, segments: RwLock<Vec<Option<Vec<u8>>>> }` — segments indexed by id (vec position), not a HashMap keyed by formatted name. Avoids format!() on every read.
+
+Writer holds both write locks simultaneously (segments first, then metadata) so id assignment and vec push are atomic. Id = `segments.len()` at write time.
+
+Reader snapshots `TableInfo` at open/reopen time; `info()` returns the cached snapshot without locking. `read()` takes a read lock on segments and slice-copies requested bytes. Bounds-checked (returns `SegmentError` on out-of-range).
+
+`create()` initializes with empty `TableInfo { schema, segments: [] }`. `open()` returns an error (no persistent storage). `list_indexes()` returns `[]`.
+
+No `_metadata.json` file in mem — the `METADATA_JSON` trait const exists but mem uses in-memory structs directly, matching the semantics without unnecessary JSON serialization.
+
 ## Open items
 
 - `SegmentFooterV1.id` is hardcoded to `0` in `Segment::write` with a TODO. Real IDs will be assigned externally by the segment registry / `KeyIndex` when it learns to add segments.
