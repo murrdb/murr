@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow::{
     array::{ArrayRef, RecordBatch},
-    datatypes::DataType,
+    datatypes::{DataType, Field, Schema},
 };
 
 use crate::{
@@ -51,12 +51,10 @@ pub struct RowBatch {
 
 impl RowBatch {
     fn new(schema: &SegmentSchema, rows: usize) -> Self {
-        let bitset_size = schema.bitset_size();
-        let capacity = schema.capacity();
         RowBatch {
             schema: schema.clone(),
             rows: (0..rows)
-                .map(|_| Row::new(schema, bitset_size, capacity))
+                .map(|_| Row::new(schema, schema.bitset_size, schema.capacity))
                 .collect(),
         }
     }
@@ -80,6 +78,22 @@ impl TryFrom<RowBatch> for ColumnBatch {
             columns,
             row_count,
         })
+    }
+}
+
+impl TryFrom<ColumnBatch> for RecordBatch {
+    type Error = MurrError;
+
+    fn try_from(batch: ColumnBatch) -> Result<Self, Self::Error> {
+        let fields: Vec<Field> = batch
+            .schema
+            .columns
+            .iter()
+            .map(|c| Field::new(&c.name, DataType::from(&c.dtype), true))
+            .collect();
+        let schema = Arc::new(Schema::new(fields));
+        RecordBatch::try_new(schema, batch.columns)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))
     }
 }
 

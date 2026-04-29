@@ -163,7 +163,7 @@ mod tests {
     use crate::io::url::LocalUrl;
 
     fn test_schema() -> TableSchema {
-        let mut columns = std::collections::HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         columns.insert("score".to_string(), ColumnSchema { dtype: DType::Float32, nullable: false });
         TableSchema { key: "key".to_string(), columns }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ const SEGMENT_COUNTS: &[usize] = &[1, 32, 128];
 
 fn make_schema() -> (TableSchema, Arc<Schema>) {
     let col_names = bench_column_names();
-    let mut columns = HashMap::new();
+    let mut columns = IndexMap::new();
     columns.insert(
         "key".to_string(),
         ColumnSchema {

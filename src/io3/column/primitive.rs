@@ -38,12 +38,13 @@ impl<T: PrimitiveArrayEncoder> ArrayEncoder for T {
                 ))
             })?;
 
-        let bitset_size = rows.schema.bitset_size();
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {
                 None => row.set_null(column.index as usize),
-                Some(v) => T::set_primitive(row, bitset_size as usize, column.offset as usize, &v),
+                Some(v) => {
+                    T::set_primitive(row, rows.schema.bitset_size, column.offset as usize, &v)
+                }
             }
         }
         Ok(())
@@ -64,7 +65,6 @@ impl<T: PrimitiveArrayDecoder> ArrayDecoder for T {
     type A = PrimitiveArray<T::ArrowType>;
 
     fn decode_to(column: &SegmentColumnSchema, rows: &RowBatch) -> Result<Self::A, MurrError> {
-        let bitset_size = rows.schema.bitset_size();
         let offset = column.offset as usize;
         let col_index = column.index as usize;
         let array = rows
@@ -74,7 +74,7 @@ impl<T: PrimitiveArrayDecoder> ArrayDecoder for T {
                 if row.is_null(col_index) {
                     None
                 } else {
-                    Some(T::get_primitive(row, bitset_size, offset))
+                    Some(T::get_primitive(row, rows.schema.bitset_size, offset))
                 }
             })
             .collect::<PrimitiveArray<T::ArrowType>>();

@@ -1558,6 +1558,7 @@ dependencies = [
  "futures",
  "hashbrown 0.17.0",
  "http-body-util",
+ "indexmap",
  "lean_string",
  "log",
  "memmap2",

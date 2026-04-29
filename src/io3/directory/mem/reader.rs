@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use log::debug;
 
 use crate::core::MurrError;
-use crate::io3::directory::{DirectoryReader, SegmentReadRequest};
 use crate::io3::directory::mem::directory::MemDirectory;
+use crate::io3::directory::{DirectoryReader, SegmentReadRequest, SegmentReadResponse};
 use crate::io3::info::TableInfo;
 
 pub struct MemReader {
@@ -34,7 +34,10 @@ impl DirectoryReader for MemReader {
         &self.info
     }
 
-    async fn read(&self, requests: &[SegmentReadRequest]) -> Result<Vec<Vec<u8>>, MurrError> {
+    async fn read(
+        &self,
+        requests: &[SegmentReadRequest],
+    ) -> Result<Vec<SegmentReadResponse>, MurrError> {
         debug!("mem read: {} requests", requests.len());
         let segments = self
             .dir
@@ -42,15 +45,12 @@ impl DirectoryReader for MemReader {
             .read()
             .map_err(|e| MurrError::IoError(format!("segments lock poisoned: {e}")))?;
 
-        let mut results = Vec::with_capacity(requests.len());
+        let mut results: Vec<SegmentReadResponse> = Vec::with_capacity(requests.len());
         for req in requests {
             let idx = req.segment as usize;
-            let data = segments
-                .get(idx)
-                .and_then(|s| s.as_ref())
-                .ok_or_else(|| {
-                    MurrError::SegmentError(format!("segment {} not found", req.segment))
-                })?;
+            let data = segments.get(idx).and_then(|s| s.as_ref()).ok_or_else(|| {
+                MurrError::SegmentError(format!("segment {} not found", req.segment))
+            })?;
             let start = req.read.offset as usize;
             let end = start + req.read.size as usize;
             let slice = data.get(start..end).ok_or_else(|| {
@@ -62,7 +62,11 @@ impl DirectoryReader for MemReader {
                     data.len()
                 ))
             })?;
-            results.push(slice.to_vec());
+            let result = SegmentReadResponse {
+                request: req.clone(),
+                bytes: slice.to_vec(),
+            };
+            results.push(result);
         }
         Ok(results)
     }

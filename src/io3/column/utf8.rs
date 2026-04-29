@@ -12,14 +12,15 @@ use crate::{
 impl ArrayDecoder for String {
     type A = StringArray;
     fn decode_to(column: &SegmentColumnSchema, rows: &RowBatch) -> Result<Self::A, MurrError> {
-        let bitset_size = rows.schema.bitset_size();
         let offset = column.offset as usize;
         let col_index = column.index as usize;
         let mut values: Vec<Option<&str>> = Vec::with_capacity(rows.rows.len());
         for row in &rows.rows {
             match row.is_null(col_index) {
                 true => values.push(None),
-                false => values.push(Some(row.get_dynamic_value(bitset_size, offset)?)),
+                false => values.push(Some(
+                    row.get_dynamic_value(rows.schema.bitset_size, offset)?,
+                )),
             }
         }
         Ok(StringArray::from(values))
@@ -39,13 +40,12 @@ impl ArrayEncoder for String {
                 MurrError::SegmentError(format!("expected Utf8, got {:?}", array.data_type()))
             })?;
 
-        let bitset_size = rows.schema.bitset_size();
         for (index, value) in data.iter().enumerate() {
             let row = &mut rows.rows[index];
             match value {
                 None => row.set_null(column.index as usize),
                 Some(s) => row.set_dynamic_value(
-                    bitset_size as usize,
+                    rows.schema.bitset_size,
                     column.offset as usize,
                     s.as_bytes(),
                 ),

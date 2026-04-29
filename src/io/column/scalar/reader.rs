@@ -156,12 +156,10 @@ mod tests {
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::url::MemUrl;
     use arrow::array::Float32Array;
-    use std::collections::HashMap;
-
     type Float32Reader = ScalarColumnReader<MemReader, Float32Codec>;
 
     fn test_dir() -> Arc<MemDirectory> {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
             ColumnSchema {

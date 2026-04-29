@@ -38,6 +38,10 @@ impl Segment {
         Ok(Segment { footer })
     }
 
+    pub fn footer(&self) -> &SegmentFooterV1 {
+        &self.footer
+    }
+
     pub fn write(batch: RecordBatch, schema: &TableSchema) -> Result<SegmentBytes, MurrError> {
         let key_col_idx = batch.schema().index_of(&schema.key).map_err(|_| {
             MurrError::SegmentError(format!("key column '{}' not in record batch", schema.key))
@@ -106,7 +110,7 @@ mod tests {
     use crate::io3::table::segment::trailer::SegmentTrailer;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
     use std::sync::Arc;
 
     #[test]
@@ -120,7 +124,7 @@ mod tests {
         let batch =
             RecordBatch::try_new(arrow_schema, vec![Arc::new(ids), Arc::new(scores)]).unwrap();
 
-        let mut columns = HashMap::new();
+        let mut columns = IndexMap::new();
         columns.insert(
             "id".into(),
             ColumnSchema {
@@ -151,7 +155,7 @@ mod tests {
         let trailer = SegmentTrailer::from_tail(&bytes).unwrap();
         assert_eq!(trailer.version, SegmentFooterV1::SEGMENT_FOOTER_VERSION);
 
-        let by_name: HashMap<&str, DType> = f
+        let by_name: std::collections::HashMap<&str, DType> = f
             .schema
             .columns
             .iter()

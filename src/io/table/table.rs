@@ -31,7 +31,6 @@ impl<D: Directory> Table<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use arrow::array::{Array, Float32Array, StringArray};
@@ -48,7 +47,7 @@ mod tests {
     }
 
     fn test_schema() -> TableSchema {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
             ColumnSchema {

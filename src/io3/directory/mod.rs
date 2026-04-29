@@ -31,15 +31,20 @@ pub trait Directory: Sized + Send + Sync + 'static {
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadRequest {
     pub offset: u32,
     pub size: u32,
 }
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegmentReadRequest {
     pub segment: u32,
     pub read: ReadRequest,
+}
+#[derive(PartialEq, Eq, Debug)]
+pub struct SegmentReadResponse {
+    pub request: SegmentReadRequest,
+    pub bytes: Vec<u8>,
 }
 
 pub trait DirectoryConfig: Sized + Send + Sync {}
@@ -52,7 +57,10 @@ pub trait DirectoryReader: Sized + Send + Sync + 'static {
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     async fn reopen_reader(&self) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
-    async fn read(&self, requests: &[SegmentReadRequest]) -> Result<Vec<Vec<u8>>, MurrError>;
+    async fn read(
+        &self,
+        requests: &[SegmentReadRequest],
+    ) -> Result<Vec<SegmentReadResponse>, MurrError>;
 }
 
 // Directory-aware writer with construction support.

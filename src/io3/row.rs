@@ -21,10 +21,17 @@ pub struct Row {
 
 impl Row {
     pub fn new(schema: &SegmentSchema, bitset_size: usize, capacity: usize) -> Self {
+        let _ = schema;
         let row_size = bitset_size + capacity;
         let mut bytes = vec![0u8; row_size];
         bytes[0] = bitset_size as u8;
         Row { bytes }
+    }
+
+    pub fn all_null(schema: &SegmentSchema) -> Self {
+        let mut row = Row::new(schema, schema.bitset_size, schema.capacity);
+        row.bytes[1..schema.bitset_size].fill(0xFF);
+        row
     }
     // bit 0 - non-null, 1 - null; bitset lives at bytes[1..bitset_size]
     fn null_bit(column_index: usize) -> (usize, u8) {

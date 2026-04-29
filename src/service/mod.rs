@@ -169,7 +169,7 @@ mod tests {
     }
 
     fn test_schema() -> TableSchema {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
             ColumnSchema {

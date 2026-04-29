@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use arrow::datatypes::{DataType, Field, Schema};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::core::MurrError;
@@ -40,7 +41,7 @@ impl ColumnSchema {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
     pub key: String,
-    pub columns: HashMap<String, ColumnSchema>,
+    pub columns: IndexMap<String, ColumnSchema>,
 }
 
 impl From<&DType> for DataType {

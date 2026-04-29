@@ -104,10 +104,8 @@ mod tests {
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::info::ColumnInfo;
     use crate::io::url::MemUrl;
-    use std::collections::HashMap;
-
     fn test_dir() -> Arc<MemDirectory> {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         columns.insert("bitmap".to_string(), ColumnSchema { dtype: DType::Float32, nullable: true });
         let schema = TableSchema { key: "key".to_string(), columns };

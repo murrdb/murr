@@ -4,23 +4,40 @@ pub mod writer;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use crate::core::{ColumnSchema, DType, TableSchema};
     use crate::io3::directory::mem::directory::{MemConfig, MemDirectory};
-    use crate::io3::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest, SegmentReadRequest};
+    use crate::io3::directory::{
+        Directory, DirectoryReader, DirectoryWriter, ReadRequest, SegmentReadRequest,
+    };
     use crate::io3::table::segment::{Segment, SegmentBytes};
     use crate::io3::url::MemUrl;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
+    use indexmap::IndexMap;
 
     fn test_schema() -> TableSchema {
-        let mut columns = HashMap::new();
-        columns.insert("id".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        columns.insert("score".to_string(), ColumnSchema { dtype: DType::Float32, nullable: true });
-        TableSchema { key: "id".to_string(), columns }
+        let mut columns = IndexMap::new();
+        columns.insert(
+            "id".to_string(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: false,
+            },
+        );
+        columns.insert(
+            "score".to_string(),
+            ColumnSchema {
+                dtype: DType::Float32,
+                nullable: true,
+            },
+        );
+        TableSchema {
+            key: "id".to_string(),
+            columns,
+        }
     }
 
     fn test_dir() -> Arc<MemDirectory> {
@@ -34,11 +51,8 @@ mod tests {
         ]));
         let ids = StringArray::from(keys.to_vec());
         let scores_arr = Float32Array::from(scores.to_vec());
-        let batch = RecordBatch::try_new(
-            arrow_schema,
-            vec![Arc::new(ids), Arc::new(scores_arr)],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(arrow_schema, vec![Arc::new(ids), Arc::new(scores_arr)]).unwrap();
         Segment::write(batch, &test_schema()).unwrap()
     }
 
@@ -55,11 +69,14 @@ mod tests {
 
         let reader = dir.open_reader().await.unwrap();
         let result = reader
-            .read(&[SegmentReadRequest { segment: 0, read: ReadRequest { offset: 0, size } }])
+            .read(&[SegmentReadRequest {
+                segment: 0,
+                read: ReadRequest { offset: 0, size },
+            }])
             .await
             .unwrap();
 
-        assert_eq!(result[0], expected);
+        assert_eq!(result[0].bytes, expected);
     }
 
     #[tokio::test]
@@ -79,14 +96,26 @@ mod tests {
 
         let results = reader
             .read(&[
-                SegmentReadRequest { segment: 0, read: ReadRequest { offset: 0, size: bytes0.len() as u32 } },
-                SegmentReadRequest { segment: 1, read: ReadRequest { offset: 0, size: bytes1.len() as u32 } },
+                SegmentReadRequest {
+                    segment: 0,
+                    read: ReadRequest {
+                        offset: 0,
+                        size: bytes0.len() as u32,
+                    },
+                },
+                SegmentReadRequest {
+                    segment: 1,
+                    read: ReadRequest {
+                        offset: 0,
+                        size: bytes1.len() as u32,
+                    },
+                },
             ])
             .await
             .unwrap();
 
-        assert_eq!(results[0], bytes0);
-        assert_eq!(results[1], bytes1);
+        assert_eq!(results[0].bytes, bytes0);
+        assert_eq!(results[1].bytes, bytes1);
     }
 
     #[tokio::test]
@@ -97,17 +126,23 @@ mod tests {
         let reader_v1 = dir.open_reader().await.unwrap();
         assert_eq!(reader_v1.info().segments.len(), 0);
 
-        writer.write(&make_segment(&["a"], &[Some(1.0)])).await.unwrap();
+        writer
+            .write(&make_segment(&["a"], &[Some(1.0)]))
+            .await
+            .unwrap();
 
         let reader_v2 = reader_v1.reopen_reader().await.unwrap();
         assert_eq!(reader_v2.info().segments.len(), 1);
 
         let size = reader_v2.info().segments[0].size_bytes;
         let result = reader_v2
-            .read(&[SegmentReadRequest { segment: 0, read: ReadRequest { offset: 0, size } }])
+            .read(&[SegmentReadRequest {
+                segment: 0,
+                read: ReadRequest { offset: 0, size },
+            }])
             .await
             .unwrap();
-        assert_eq!(result[0].len(), size as usize);
+        assert_eq!(result[0].bytes.len(), size as usize);
     }
 
     #[tokio::test]
@@ -122,10 +157,13 @@ mod tests {
 
         let reader = dir.open_reader().await.unwrap();
         let result = reader
-            .read(&[SegmentReadRequest { segment: 0, read: ReadRequest { offset: 4, size: 8 } }])
+            .read(&[SegmentReadRequest {
+                segment: 0,
+                read: ReadRequest { offset: 4, size: 8 },
+            }])
             .await
             .unwrap();
 
-        assert_eq!(result[0], full_bytes[4..12]);
+        assert_eq!(result[0].bytes, full_bytes[4..12]);
     }
 }

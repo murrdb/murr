@@ -123,7 +123,7 @@ mod tests {
     use crate::io::url::MemUrl;
 
     fn test_dir() -> Arc<MemDirectory> {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         let schema = TableSchema { key: "key".to_string(), columns };
         Arc::new(MemDirectory::create(&MemUrl, "default", schema, 4096, false).unwrap())

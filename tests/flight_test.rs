@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, Float32Array, StringArray};
@@ -40,7 +40,7 @@ async fn setup() -> TestHarness {
     // Create and populate a table
     let schema = TableSchema {
         key: "id".to_string(),
-        columns: HashMap::from([
+        columns: IndexMap::from([
             (
                 "id".to_string(),
                 ColumnSchema {

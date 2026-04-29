@@ -35,7 +35,23 @@ Reader snapshots `TableInfo` at open/reopen time; `info()` returns the cached sn
 
 No `_metadata.json` file in mem — the `METADATA_JSON` trait const exists but mem uses in-memory structs directly, matching the semantics without unnecessary JSON serialization.
 
+## TableReader (io3) read path
+
+Two batched directory reads on `open` (one footer batch, one keys batch) and a third batch on `read()` for row payloads. Reason: the directory's `read()` is request-batched, so we pay one round trip per logical phase rather than per segment.
+
+Footer reads use a fixed-size tail (last `min(size_bytes, 64 KiB)` per segment) instead of a two-phase trailer-then-footer dance. Bincode-encoded `SegmentFooterV1` for realistic schemas is well under that bound; if an outlier ever exceeds it, the reader returns `SegmentError`.
+
+Schema is **immutable per table**. The reader derives a canonical `SegmentSchema` from `TableSchema` at construction time (HashMap iteration order, no sort), and validates each loaded segment's footer schema against it via `PartialEq`. Schema migration is deliberately not supported — recreate the table to change schema. Segment writers must produce footers in the same canonical column order; today this falls on the caller (writer is still a stub) by deriving the Arrow Schema via `Schema::from(&TableSchema)`.
+
+`reopen` deletion path:
+1. Walk `self.segments` against the new info's id set; clear slots whose id no longer exists.
+2. `KeyIndex::prune_segments(&removed_ids)` drops index entries pointing to dropped segments.
+3. Run `open`'s footer + keys batches across only the new segments and `KeyIndex::add_segment` them.
+
+Tombstone-as-deletion (a row whose every column is null) was considered and rejected — deletion is a segment-level concept. Open and reopen never read the rows section.
+
+Missing keys in `read()` materialize as an `all_null` row (built by `Row::all_null` which bulk-fills the bitset bytes with `0xFF` instead of looping per-column), which then decodes to nulls in the output `RecordBatch`. The `RecordBatch` is built via the new `TryFrom<ColumnBatch> for RecordBatch` and projected to the requested columns via `RecordBatch::project`.
+
 ## Open items
 
 - `SegmentFooterV1.id` is hardcoded to `0` in `Segment::write` with a TODO. Real IDs will be assigned externally by the segment registry / `KeyIndex` when it learns to add segments.
-- `Segment::footer` is currently private; the in-module test reads it directly. Promote to `pub(crate)` when `KeyIndex::add_segments` (currently `todo!()`) needs it.

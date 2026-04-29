@@ -162,10 +162,8 @@ mod tests {
     use crate::io::directory::mem::reader::MemReader;
     use crate::io::directory::{Directory, DirectoryWriter};
     use crate::io::url::MemUrl;
-    use std::collections::HashMap;
-
     fn test_dir() -> Arc<MemDirectory> {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         columns.insert("name".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         let schema = TableSchema { key: "key".to_string(), columns };

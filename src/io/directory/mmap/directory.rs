@@ -110,7 +110,7 @@ mod tests {
     use crate::core::{ColumnSchema, DType};
 
     fn test_schema() -> TableSchema {
-        let mut columns = std::collections::HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
         TableSchema { key: "key".to_string(), columns }
     }
