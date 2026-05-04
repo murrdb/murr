@@ -134,7 +134,7 @@ mod tests {
         let score = Float32Array::from(vec![Some(1.5), Some(-2.25), None, Some(0.0), Some(42.5)]);
         let weight = Float64Array::from(vec![
             None,
-            Some(3.14159),
+            Some(1.0),
             Some(-1e10),
             Some(0.0),
             Some(f64::NAN),

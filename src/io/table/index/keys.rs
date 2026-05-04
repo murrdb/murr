@@ -30,7 +30,7 @@ impl SegmentKeyBytes {
         self.bytes.extend_from_slice(&offset.to_le_bytes());
         self.bytes.extend_from_slice(&size.to_le_bytes());
     }
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
 }

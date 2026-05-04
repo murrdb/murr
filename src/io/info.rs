@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
-use crate::core::{DType, TableSchema};
+use crate::core::TableSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {

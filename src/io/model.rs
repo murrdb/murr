@@ -10,11 +10,11 @@ pub struct OffsetSize {
     pub size: u32,
 }
 
-impl Into<ReadRequest> for OffsetSize {
-    fn into(self) -> ReadRequest {
+impl From<OffsetSize> for ReadRequest {
+    fn from(val: OffsetSize) -> Self {
         ReadRequest {
-            offset: self.offset,
-            size: self.size,
+            offset: val.offset,
+            size: val.size,
         }
     }
 }
@@ -35,11 +35,11 @@ pub struct SegmentSchema {
 }
 
 impl SegmentSchema {
-    pub fn new(columns: &Vec<SegmentColumnSchema>) -> Self {
+    pub fn new(columns: &[SegmentColumnSchema]) -> Self {
         SegmentSchema {
-            columns: columns.clone(),
+            columns: columns.to_vec(),
             capacity: columns.iter().map(|c| c.dtype.size()).sum::<usize>(),
-            bitset_size: (1 + columns.len().div_ceil(8)) as usize,
+            bitset_size: 1 + columns.len().div_ceil(8),
         }
     }
 }

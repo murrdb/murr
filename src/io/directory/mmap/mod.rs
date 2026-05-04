@@ -151,7 +151,7 @@ mod tests {
         let cfg = MMapConfig::new(tmp.path().to_path_buf());
 
         let dir = Arc::new(MMapDirectory::create("idx", test_schema(), cfg.clone()).unwrap());
-        let seg = make_segment(&["x"], &[Some(3.14)]);
+        let seg = make_segment(&["x"], &[Some(1.0)]);
         let expected = seg.to_bytes().unwrap();
         let size = expected.len() as u32;
         dir.open_writer().await.unwrap().write(&seg).await.unwrap();

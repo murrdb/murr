@@ -63,7 +63,7 @@ impl DirectoryReader for MemReader {
                 ))
             })?;
             let result = SegmentReadResponse {
-                request: req.clone(),
+                request: *req,
                 bytes: slice.to_vec(),
             };
             results.push(result);

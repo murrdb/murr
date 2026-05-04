@@ -131,7 +131,7 @@ impl<R: DirectoryReader> TableReader<R> {
 
         if !requests.is_empty() {
             let responses = self.reader.read(&requests).await?;
-            for (response, key_idx) in responses.into_iter().zip(request_to_key_idx.into_iter()) {
+            for (response, key_idx) in responses.into_iter().zip(request_to_key_idx) {
                 rows[key_idx] = Row {
                     bytes: response.bytes,
                 };
@@ -182,9 +182,9 @@ impl<R: DirectoryReader> TableReader<R> {
         if max_id >= self.segments.len() {
             self.segments.resize_with(max_id + 1, || None);
         }
-        for (info, response) in infos.iter().zip(footer_responses.into_iter()) {
+        for (info, response) in infos.iter().zip(footer_responses) {
             let segment = Segment::load(&response.bytes)?;
-            if &segment.footer().schema != &self.segment_schema {
+            if segment.footer().schema != self.segment_schema {
                 return Err(MurrError::SegmentError(format!(
                     "segment {} schema does not match table schema",
                     info.id
@@ -219,7 +219,7 @@ impl<R: DirectoryReader> TableReader<R> {
             })
             .collect();
         let responses = self.reader.read(&requests).await?;
-        for (info, response) in infos.iter().zip(responses.into_iter()) {
+        for (info, response) in infos.iter().zip(responses) {
             let key_bytes = SegmentKeyBytes {
                 bytes: response.bytes,
             };

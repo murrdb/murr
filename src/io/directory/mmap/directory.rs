@@ -107,7 +107,7 @@ impl MMapDirectory {
     }
 
     pub fn metadata_path(&self) -> PathBuf {
-        self.path().join("_metadata.json")
+        self.path().join(Self::METADATA_JSON)
     }
 }
 
@@ -125,7 +125,7 @@ impl Directory for MMapDirectory {
         let info = TableInfo { schema: schema.clone(), segments: Vec::new() };
         let data = serde_json::to_vec_pretty(&info)
             .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
-        let metadata_path = path.join("_metadata.json");
+        let metadata_path = path.join(Self::METADATA_JSON);
         std::fs::write(&metadata_path, &data)
             .map_err(|e| MurrError::IoError(format!("writing {}: {e}", metadata_path.display())))?;
 
@@ -134,7 +134,7 @@ impl Directory for MMapDirectory {
     }
 
     fn open(index: &str, config: MMapConfig) -> Result<Self, MurrError> {
-        let metadata_path = config.cache_dir.join(index).join("_metadata.json");
+        let metadata_path = config.cache_dir.join(index).join(Self::METADATA_JSON);
         let data = std::fs::read(&metadata_path)
             .map_err(|e| MurrError::IoError(format!("reading {}: {e}", metadata_path.display())))?;
         let info: TableInfo = serde_json::from_slice(&data)

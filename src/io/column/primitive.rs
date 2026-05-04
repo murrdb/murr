@@ -68,7 +68,7 @@ mod tests {
     use crate::{core::DType, io::model::SegmentSchema};
 
     fn single_col_schema(dtype: DType) -> SegmentSchema {
-        SegmentSchema::new(&vec![SegmentColumnSchema {
+        SegmentSchema::new(&[SegmentColumnSchema {
             index: 0,
             dtype,
             name: "v".into(),
@@ -120,7 +120,7 @@ mod tests {
     fn f64_roundtrip() {
         let schema = single_col_schema(DType::Float64);
         let codec = PrimitiveCodec::<Float64Type>(PhantomData);
-        let array = Float64Array::from(vec![Some(3.14159), Some(-1e10), None, Some(0.0)]);
+        let array = Float64Array::from(vec![Some(1.0), Some(-1e10), None, Some(0.0)]);
         let mut rows = fresh_rows(&schema, array.len());
         codec
             .encode(&schema.columns[0], schema.bitset_size, &array, &mut rows)

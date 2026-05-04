@@ -1,5 +1,4 @@
 pub mod batch;
-pub mod bitmap;
 pub mod column;
 pub mod directory;
 pub mod info;

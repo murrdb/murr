@@ -28,7 +28,7 @@ impl SegmentBytes {
         buf.extend_from_slice(&self.rows);
         buf.extend_from_slice(&self.keys.bytes);
         buf.extend_from_slice(&self.footer.to_bytes()?);
-        return Ok(buf);
+        Ok(buf)
     }
 }
 

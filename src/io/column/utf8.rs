@@ -63,7 +63,7 @@ mod tests {
     use crate::{core::DType, io::model::SegmentSchema};
 
     fn schema() -> SegmentSchema {
-        SegmentSchema::new(&vec![SegmentColumnSchema {
+        SegmentSchema::new(&[SegmentColumnSchema {
             index: 0,
             dtype: DType::Utf8,
             name: "s".into(),
