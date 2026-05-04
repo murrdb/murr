@@ -13,6 +13,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
+use crate::io3::directory::Directory;
 use crate::service::MurrService;
 
 use super::convert::{FetchResponse, WriteRequest};
@@ -34,20 +35,22 @@ pub async fn health() -> &'static str {
     "OK"
 }
 
-pub async fn list_tables(State(service): State<Arc<MurrService>>) -> impl IntoResponse {
+pub async fn list_tables<D: Directory + 'static>(
+    State(service): State<Arc<MurrService<D>>>,
+) -> impl IntoResponse {
     Json(service.list_tables().await)
 }
 
-pub async fn get_schema(
-    State(service): State<Arc<MurrService>>,
+pub async fn get_schema<D: Directory + 'static>(
+    State(service): State<Arc<MurrService<D>>>,
     Path(name): Path<String>,
 ) -> Result<Json<TableSchema>, ApiError> {
     let schema = service.get_schema(&name).await?;
     Ok(Json(schema))
 }
 
-pub async fn create_table(
-    State(service): State<Arc<MurrService>>,
+pub async fn create_table<D: Directory + 'static>(
+    State(service): State<Arc<MurrService<D>>>,
     Path(name): Path<String>,
     Json(schema): Json<TableSchema>,
 ) -> Result<StatusCode, ApiError> {
@@ -61,8 +64,8 @@ pub struct FetchRequest {
     pub columns: Vec<String>,
 }
 
-pub async fn fetch(
-    State(service): State<Arc<MurrService>>,
+pub async fn fetch<D: Directory + 'static>(
+    State(service): State<Arc<MurrService<D>>>,
     Path(name): Path<String>,
     headers: HeaderMap,
     Json(req): Json<FetchRequest>,
@@ -92,8 +95,8 @@ pub async fn fetch(
     }
 }
 
-pub async fn write_table(
-    State(service): State<Arc<MurrService>>,
+pub async fn write_table<D: Directory + 'static>(
+    State(service): State<Arc<MurrService<D>>>,
     Path(name): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -134,4 +137,3 @@ pub async fn write_table(
     service.write(&name, &batch).await?;
     Ok(StatusCode::OK)
 }
-

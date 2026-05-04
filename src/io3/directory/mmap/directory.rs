@@ -11,6 +11,7 @@ use crate::io3::directory::{Directory, DirectoryConfig, DirectoryReader, Directo
 use crate::io3::info::TableInfo;
 use crate::io3::url::LocalUrl;
 
+#[derive(Default)]
 pub struct MMapConfig;
 
 impl DirectoryConfig for MMapConfig {}
@@ -83,6 +84,10 @@ impl Directory for MMapDirectory {
             index: index.to_string(),
             schema: info.schema,
         })
+    }
+
+    fn schema(&self) -> &TableSchema {
+        &self.schema
     }
 
     fn list_indexes(url: &LocalUrl) -> Vec<String> {

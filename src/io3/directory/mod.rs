@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use crate::{
     core::{MurrError, TableSchema},
-    io3::{
-        info::TableInfo, model::SegmentSchema, row::Row, table::segment::SegmentBytes, url::Url,
-    },
+    io3::{info::TableInfo, table::segment::SegmentBytes, url::Url},
 };
 
 use async_trait::async_trait;
@@ -29,6 +27,7 @@ pub trait Directory: Sized + Send + Sync + 'static {
     fn open(url: &Self::Location, index: &str, config: Self::ConfigType)
     -> Result<Self, MurrError>;
     fn list_indexes(url: &Self::Location) -> Vec<String>;
+    fn schema(&self) -> &TableSchema;
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
@@ -48,7 +47,7 @@ pub struct SegmentReadResponse {
     pub bytes: Vec<u8>,
 }
 
-pub trait DirectoryConfig: Sized + Send + Sync {}
+pub trait DirectoryConfig: Sized + Send + Sync + Default {}
 
 // Directory-aware reader with construction and reopen support.
 #[async_trait]

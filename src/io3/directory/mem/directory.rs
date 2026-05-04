@@ -10,11 +10,13 @@ use crate::io3::directory::{Directory, DirectoryConfig, DirectoryReader, Directo
 use crate::io3::info::TableInfo;
 use crate::io3::url::MemUrl;
 
+#[derive(Default)]
 pub struct MemConfig;
 
 impl DirectoryConfig for MemConfig {}
 
 pub struct MemDirectory {
+    pub(crate) schema: TableSchema,
     pub(crate) metadata: RwLock<TableInfo>,
     pub(crate) segments: RwLock<Vec<Option<Vec<u8>>>>,
 }
@@ -34,10 +36,8 @@ impl Directory for MemDirectory {
     ) -> Result<MemDirectory, MurrError> {
         info!("mem directory created");
         Ok(MemDirectory {
-            metadata: RwLock::new(TableInfo {
-                schema,
-                segments: Vec::new(),
-            }),
+            schema: schema.clone(),
+            metadata: RwLock::new(TableInfo { schema, segments: Vec::new() }),
             segments: RwLock::new(Vec::new()),
         })
     }
@@ -46,6 +46,10 @@ impl Directory for MemDirectory {
         Err(MurrError::IoError(
             "mem directory has no persistent storage; use create()".to_string(),
         ))
+    }
+
+    fn schema(&self) -> &TableSchema {
+        &self.schema
     }
 
     fn list_indexes(_url: &MemUrl) -> Vec<String> {

@@ -14,6 +14,8 @@ use tonic::transport::{Channel, Server};
 
 use murr::conf::{Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::io3::directory::mmap::directory::MMapDirectory;
+use murr::io3::url::LocalUrl;
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.
@@ -35,7 +37,8 @@ async fn setup() -> TestHarness {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).await.unwrap());
+    let location = LocalUrl { path: dir.path().to_path_buf() };
+    let service = Arc::new(MurrService::<MMapDirectory>::new(config, location).await.unwrap());
 
     // Create and populate a table
     let schema = TableSchema {

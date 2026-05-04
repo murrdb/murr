@@ -10,6 +10,8 @@ use tokio::runtime::Runtime;
 use murr::conf::Config;
 use murr::conf::StorageConfig;
 use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::io3::directory::mmap::directory::MMapDirectory;
+use murr::io3::url::LocalUrl;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 
@@ -70,7 +72,8 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                             },
                             ..Config::default()
                         };
-                        let svc = MurrService::new(config).await.unwrap();
+                        let location = LocalUrl { path: dir.path().to_path_buf() };
+                        let svc = MurrService::<MMapDirectory>::new(config, location).await.unwrap();
                         svc.create("bench", schema).await.unwrap();
                         for _ in 0..n {
                             svc.write("bench", &batch).await.unwrap();

@@ -17,16 +17,17 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::core::MurrError;
+use crate::io3::directory::Directory;
 use crate::service::MurrService;
 
 use ticket::FetchTicket;
 
-pub struct MurrFlightService {
-    service: Arc<MurrService>,
+pub struct MurrFlightService<D: Directory> {
+    service: Arc<MurrService<D>>,
 }
 
-impl MurrFlightService {
-    pub fn new(service: Arc<MurrService>) -> Self {
+impl<D: Directory> MurrFlightService<D> {
+    pub fn new(service: Arc<MurrService<D>>) -> Self {
         Self { service }
     }
 
@@ -54,7 +55,7 @@ impl MurrFlightService {
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
 #[tonic::async_trait]
-impl FlightService for MurrFlightService {
+impl<D: Directory> FlightService for MurrFlightService<D> {
     type HandshakeStream = BoxStream<HandshakeResponse>;
     type ListFlightsStream = BoxStream<FlightInfo>;
     type DoGetStream = BoxStream<FlightData>;

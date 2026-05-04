@@ -11,14 +11,15 @@ use axum::serve::ListenerExt;
 use axum::Router;
 
 use crate::core::MurrError;
+use crate::io3::directory::Directory;
 use crate::service::MurrService;
 
-pub struct MurrHttpService {
-    service: Arc<MurrService>,
+pub struct MurrHttpService<D: Directory> {
+    service: Arc<MurrService<D>>,
 }
 
-impl MurrHttpService {
-    pub fn new(service: Arc<MurrService>) -> Self {
+impl<D: Directory + 'static> MurrHttpService<D> {
+    pub fn new(service: Arc<MurrService<D>>) -> Self {
         Self { service }
     }
 
@@ -26,11 +27,11 @@ impl MurrHttpService {
         Router::new()
             .route("/openapi.json", get(handlers::openapi))
             .route("/health", get(handlers::health))
-            .route("/api/v1/table", get(handlers::list_tables))
-            .route("/api/v1/table/{name}/schema", get(handlers::get_schema))
-            .route("/api/v1/table/{name}", put(handlers::create_table))
-            .route("/api/v1/table/{name}/fetch", post(handlers::fetch))
-            .route("/api/v1/table/{name}/write", put(handlers::write_table))
+            .route("/api/v1/table", get(handlers::list_tables::<D>))
+            .route("/api/v1/table/{name}/schema", get(handlers::get_schema::<D>))
+            .route("/api/v1/table/{name}", put(handlers::create_table::<D>))
+            .route("/api/v1/table/{name}/fetch", post(handlers::fetch::<D>))
+            .route("/api/v1/table/{name}/write", put(handlers::write_table::<D>))
             .layer(DefaultBodyLimit::max(
                 self.service.config().server.http.max_payload_size,
             ))

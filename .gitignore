@@ -4,3 +4,4 @@ stackcollapse-perf.pl
 __pycache__/
 *.so
 *.egg-info/
+.pi

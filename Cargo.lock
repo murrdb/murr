@@ -1583,6 +1583,7 @@ name = "murr-python"
 version = "0.2.0-rc1"
 dependencies = [
  "arrow",
+ "indexmap",
  "murr",
  "pyo3",
  "pyo3-async-runtimes",
