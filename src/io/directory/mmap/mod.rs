@@ -10,7 +10,6 @@ mod tests {
     use crate::io::directory::mmap::directory::{MMapConfig, MMapDirectory};
     use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest, SegmentReadRequest};
     use crate::io::table::segment::Segment;
-    use crate::io::url::LocalUrl;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
@@ -30,8 +29,8 @@ mod tests {
     }
 
     fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
-        Arc::new(MMapDirectory::create(&url, "default", test_schema(), MMapConfig).unwrap())
+        let cfg = MMapConfig::new(tmp.path().to_path_buf());
+        Arc::new(MMapDirectory::create("default", test_schema(), cfg).unwrap())
     }
 
     fn make_segment(keys: &[&str], scores: &[Option<f32>]) -> crate::io::table::segment::SegmentBytes {
@@ -149,15 +148,15 @@ mod tests {
     #[tokio::test]
     async fn open_reads_segments_written_by_prior_instance() {
         let tmp = tempfile::tempdir().unwrap();
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
+        let cfg = MMapConfig::new(tmp.path().to_path_buf());
 
-        let dir = Arc::new(MMapDirectory::create(&url, "idx", test_schema(), MMapConfig).unwrap());
+        let dir = Arc::new(MMapDirectory::create("idx", test_schema(), cfg.clone()).unwrap());
         let seg = make_segment(&["x"], &[Some(3.14)]);
         let expected = seg.to_bytes().unwrap();
         let size = expected.len() as u32;
         dir.open_writer().await.unwrap().write(&seg).await.unwrap();
 
-        let dir2 = Arc::new(MMapDirectory::open(&url, "idx", MMapConfig).unwrap());
+        let dir2 = Arc::new(MMapDirectory::open("idx", cfg).unwrap());
         let reader = dir2.open_reader().await.unwrap();
         assert_eq!(reader.info().segments.len(), 1);
         let result = reader
@@ -173,10 +172,10 @@ mod tests {
     #[test]
     fn list_indexes_returns_index_names() {
         let tmp = tempfile::tempdir().unwrap();
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
-        MMapDirectory::create(&url, "alpha", test_schema(), MMapConfig).unwrap();
-        MMapDirectory::create(&url, "beta", test_schema(), MMapConfig).unwrap();
-        let mut indexes = MMapDirectory::list_indexes(&url);
+        let cfg = MMapConfig::new(tmp.path().to_path_buf());
+        MMapDirectory::create("alpha", test_schema(), cfg.clone()).unwrap();
+        MMapDirectory::create("beta", test_schema(), cfg.clone()).unwrap();
+        let mut indexes = MMapDirectory::list_indexes(&cfg);
         indexes.sort();
         assert_eq!(indexes, vec!["alpha", "beta"]);
     }

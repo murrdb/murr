@@ -15,8 +15,6 @@ use murr::util::logo::ASCII_LOGO;
 use crate::api::{MurrFlightService, MurrHttpService};
 use crate::conf::Config;
 use crate::core::{CliArgs, setup_logging};
-use crate::io::directory::mmap::directory::MMapDirectory;
-use crate::io::url::LocalUrl;
 use crate::service::MurrService;
 use log::info;
 
@@ -28,11 +26,11 @@ async fn main() {
     info!("Starting murr with config: {config:?}");
     info!("{ASCII_LOGO}");
 
-    let location = LocalUrl { path: config.storage.cache_dir.clone() };
-    let service = MurrService::<MMapDirectory>::new(config, location)
-        .await
-        .expect("failed to load tables");
-    let service = Arc::new(service);
+    let service = Arc::new(
+        MurrService::new(config)
+            .await
+            .expect("failed to load tables"),
+    );
 
     let http = MurrHttpService::new(service.clone());
     let flight = MurrFlightService::new(service.clone());

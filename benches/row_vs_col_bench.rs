@@ -63,15 +63,12 @@ fn bench_io(c: &mut Criterion) {
         tmp.path().join("io").display()
     );
     let io_reader = rt.block_on(async {
-        let url = io::url::LocalUrl {
-            path: tmp.path().join("io"),
-        };
+        let cfg = io::directory::mmap::directory::MMapConfig::new(tmp.path().join("io"));
         let dir = Arc::new(
             io::directory::mmap::directory::MMapDirectory::create(
-                &url,
                 "bench",
                 table_schema.clone(),
-                io::directory::mmap::directory::MMapConfig,
+                cfg,
             )
             .unwrap(),
         );

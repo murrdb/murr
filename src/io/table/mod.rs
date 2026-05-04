@@ -3,6 +3,84 @@ pub mod reader;
 pub mod segment;
 pub mod writer;
 
+use std::sync::Arc;
+
+use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+
+use crate::core::{MurrError, TableSchema};
+use crate::io::directory::{Directory, DirectoryReader};
+use crate::io::table::reader::TableReader;
+use crate::io::table::writer::TableWriter;
+
+pub struct Table<D: Directory> {
+    dir: Arc<D>,
+    reader: Option<TableReader<D::ReaderType>>,
+}
+
+impl<D: Directory> Table<D> {
+    pub async fn create(
+        index: &str,
+        schema: TableSchema,
+        config: D::ConfigType,
+    ) -> Result<Self, MurrError> {
+        let dir = Arc::new(D::create(index, schema, config)?);
+        Ok(Table { dir, reader: None })
+    }
+
+    pub async fn open(index: &str, config: D::ConfigType) -> Result<Self, MurrError> {
+        let dir = Arc::new(D::open(index, config)?);
+        let reader = if !dir.schema().columns.is_empty() {
+            let r = dir.open_reader().await?;
+            if r.info().segments.is_empty() {
+                None
+            } else {
+                Some(TableReader::open(dir.schema().clone(), Arc::new(r)).await?)
+            }
+        } else {
+            None
+        };
+        Ok(Table { dir, reader })
+    }
+}
+
+#[async_trait]
+pub trait TableOps: Send + Sync {
+    fn schema(&self) -> &TableSchema;
+    async fn read(&self, keys: &[&str], cols: &[&str]) -> Result<RecordBatch, MurrError>;
+    async fn write(&mut self, batch: &RecordBatch) -> Result<(), MurrError>;
+}
+
+#[async_trait]
+impl<D: Directory> TableOps for Table<D> {
+    fn schema(&self) -> &TableSchema {
+        self.dir.schema()
+    }
+
+    async fn read(&self, keys: &[&str], cols: &[&str]) -> Result<RecordBatch, MurrError> {
+        let reader = self
+            .reader
+            .as_ref()
+            .ok_or_else(|| MurrError::TableError("table has no data".to_string()))?;
+        reader.read(keys, cols).await
+    }
+
+    async fn write(&mut self, batch: &RecordBatch) -> Result<(), MurrError> {
+        let writer = TableWriter::open(self.dir.schema().clone(), self.dir.clone()).await?;
+        writer.write(batch).await?;
+
+        let reader = match self.reader.take() {
+            Some(existing) => existing.reopen().await?,
+            None => {
+                let r = Arc::new(self.dir.open_reader().await?);
+                TableReader::open(self.dir.schema().clone(), r).await?
+            }
+        };
+        self.reader = Some(reader);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -17,7 +95,6 @@ mod tests {
     use crate::io::directory::Directory;
     use crate::io::table::reader::TableReader;
     use crate::io::table::writer::TableWriter;
-    use crate::io::url::MemUrl;
 
     fn test_schema() -> TableSchema {
         let mut columns = IndexMap::new();
@@ -42,7 +119,7 @@ mod tests {
     }
 
     fn test_dir(schema: TableSchema) -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::create(&MemUrl, "default", schema, MemConfig).unwrap())
+        Arc::new(MemDirectory::create("default", schema, MemConfig).unwrap())
     }
 
     fn make_batch(ids: &[&str], scores: &[Option<f32>]) -> RecordBatch {

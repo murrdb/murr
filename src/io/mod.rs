@@ -6,4 +6,3 @@ pub mod info;
 pub mod model;
 pub mod row;
 pub mod table;
-pub mod url;

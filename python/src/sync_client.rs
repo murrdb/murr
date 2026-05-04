@@ -6,8 +6,6 @@ use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use murr::io::directory::mmap::directory::MMapDirectory;
-use murr::io::url::LocalUrl;
 use murr::service::MurrService;
 
 use crate::error::into_py_err;
@@ -16,7 +14,7 @@ use crate::schema::PyTableSchema;
 
 #[pyclass(name = "MurrLocalSync")]
 pub struct PyMurrLocalSync {
-    service: Arc<MurrService<MMapDirectory>>,
+    service: Arc<MurrService>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -28,11 +26,10 @@ impl PyMurrLocalSync {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let config = build_config(cache_dir.clone(), http_port);
-        let location = LocalUrl { path: cache_dir.into() };
+        let config = build_config(cache_dir, http_port);
 
         let service = runtime
-            .block_on(MurrService::<MMapDirectory>::new(config, location))
+            .block_on(MurrService::new(config))
             .map_err(into_py_err)?;
 
         let service = Arc::new(service);

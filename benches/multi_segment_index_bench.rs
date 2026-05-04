@@ -7,11 +7,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use murr::conf::Config;
-use murr::conf::StorageConfig;
+use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io::directory::mmap::directory::MMapDirectory;
-use murr::io::url::LocalUrl;
+use murr::io::directory::mmap::directory::MMapConfig;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 
@@ -68,12 +66,11 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                         let dir = TempDir::new().unwrap();
                         let config = Config {
                             storage: StorageConfig {
-                                cache_dir: dir.path().to_path_buf(),
+                                backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
                             },
                             ..Config::default()
                         };
-                        let location = LocalUrl { path: dir.path().to_path_buf() };
-                        let svc = MurrService::<MMapDirectory>::new(config, location).await.unwrap();
+                        let svc = MurrService::new(config).await.unwrap();
                         svc.create("bench", schema).await.unwrap();
                         for _ in 0..n {
                             svc.write("bench", &batch).await.unwrap();

@@ -2,15 +2,15 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use log::info;
+use serde::{Deserialize, Serialize};
 
 use crate::core::{MurrError, TableSchema};
 use crate::io::directory::mem::reader::MemReader;
 use crate::io::directory::mem::writer::MemWriter;
 use crate::io::directory::{Directory, DirectoryConfig, DirectoryReader, DirectoryWriter};
 use crate::io::info::TableInfo;
-use crate::io::url::MemUrl;
 
-#[derive(Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MemConfig;
 
 impl DirectoryConfig for MemConfig {}
@@ -23,17 +23,11 @@ pub struct MemDirectory {
 
 #[async_trait]
 impl Directory for MemDirectory {
-    type Location = MemUrl;
     type ReaderType = MemReader;
     type WriterType = MemWriter;
     type ConfigType = MemConfig;
 
-    fn create(
-        _url: &MemUrl,
-        _index: &str,
-        schema: TableSchema,
-        _config: MemConfig,
-    ) -> Result<MemDirectory, MurrError> {
+    fn create(_index: &str, schema: TableSchema, _config: MemConfig) -> Result<Self, MurrError> {
         info!("mem directory created");
         Ok(MemDirectory {
             schema: schema.clone(),
@@ -42,7 +36,7 @@ impl Directory for MemDirectory {
         })
     }
 
-    fn open(_url: &MemUrl, _index: &str, _config: MemConfig) -> Result<MemDirectory, MurrError> {
+    fn open(_index: &str, _config: MemConfig) -> Result<Self, MurrError> {
         Err(MurrError::IoError(
             "mem directory has no persistent storage; use create()".to_string(),
         ))
@@ -52,7 +46,7 @@ impl Directory for MemDirectory {
         &self.schema
     }
 
-    fn list_indexes(_url: &MemUrl) -> Vec<String> {
+    fn list_indexes(_config: &MemConfig) -> Vec<String> {
         Vec::new()
     }
 

@@ -12,7 +12,6 @@ mod tests {
         Directory, DirectoryReader, DirectoryWriter, ReadRequest, SegmentReadRequest,
     };
     use crate::io::table::segment::{Segment, SegmentBytes};
-    use crate::io::url::MemUrl;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
@@ -41,7 +40,7 @@ mod tests {
     }
 
     fn test_dir() -> Arc<MemDirectory> {
-        Arc::new(MemDirectory::create(&MemUrl, "default", test_schema(), MemConfig).unwrap())
+        Arc::new(MemDirectory::create("default", test_schema(), MemConfig).unwrap())
     }
 
     fn make_segment(keys: &[&str], scores: &[Option<f32>]) -> SegmentBytes {
