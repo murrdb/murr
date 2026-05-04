@@ -14,7 +14,7 @@ use murr::io;
 use murr::io::directory::Directory as IoDirectory;
 use murr::testutil::{bench_column_names, generate_batch};
 
-const NUM_ROWS: usize = 50_000_000;
+const NUM_ROWS: usize = 5_000_000;
 const KEY_COUNTS: &[usize] = &[100, 1000];
 
 fn make_schema() -> (TableSchema, Arc<Schema>) {
