@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, Float32Array, StringArray};
@@ -12,8 +12,9 @@ use futures::TryStreamExt;
 use tempfile::TempDir;
 use tonic::transport::{Channel, Server};
 
-use murr::conf::{Config, StorageConfig};
+use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::io::directory::mmap::directory::MMapConfig;
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.
@@ -31,7 +32,7 @@ async fn setup() -> TestHarness {
     let dir = TempDir::new().unwrap();
     let config = Config {
         storage: StorageConfig {
-            cache_dir: dir.path().to_path_buf(),
+            backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
         },
         ..Config::default()
     };
@@ -40,7 +41,7 @@ async fn setup() -> TestHarness {
     // Create and populate a table
     let schema = TableSchema {
         key: "id".to_string(),
-        columns: HashMap::from([
+        columns: IndexMap::from([
             (
                 "id".to_string(),
                 ColumnSchema {

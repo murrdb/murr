@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,9 +7,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use murr::conf::Config;
-use murr::conf::StorageConfig;
+use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::io::directory::mmap::directory::MMapConfig;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 
@@ -18,7 +18,7 @@ const SEGMENT_COUNTS: &[usize] = &[1, 32, 128];
 
 fn make_schema() -> (TableSchema, Arc<Schema>) {
     let col_names = bench_column_names();
-    let mut columns = HashMap::new();
+    let mut columns = IndexMap::new();
     columns.insert(
         "key".to_string(),
         ColumnSchema {
@@ -66,7 +66,7 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                         let dir = TempDir::new().unwrap();
                         let config = Config {
                             storage: StorageConfig {
-                                cache_dir: dir.path().to_path_buf(),
+                                backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
                             },
                             ..Config::default()
                         };

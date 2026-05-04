@@ -78,7 +78,7 @@ mod tests {
     use crate::core::{ColumnSchema, DType};
 
     fn test_table_schema() -> TableSchema {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "name".to_string(),
             ColumnSchema {

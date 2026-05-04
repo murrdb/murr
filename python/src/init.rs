@@ -2,13 +2,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use murr::api::MurrHttpService;
-use murr::conf::{Config, StorageConfig};
+use murr::conf::{BackendConfig, Config, StorageConfig};
+use murr::io::directory::mmap::directory::MMapConfig;
 use murr::service::MurrService;
 
 pub fn build_config(cache_dir: String, http_port: Option<u16>) -> Config {
     let mut config = Config {
         storage: StorageConfig {
-            cache_dir: PathBuf::from(cache_dir),
+            backend: BackendConfig::Mmap(MMapConfig::new(PathBuf::from(cache_dir))),
         },
         ..Config::default()
     };

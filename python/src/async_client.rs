@@ -24,7 +24,6 @@ impl PyMurrLocalAsync {
     fn create(py: Python<'_>, cache_dir: String, http_port: Option<u16>) -> PyResult<Bound<'_, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let config = build_config(cache_dir, http_port);
-
             let service = MurrService::new(config).await.map_err(into_py_err)?;
             let service = Arc::new(service);
 

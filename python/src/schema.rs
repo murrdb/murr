@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -98,7 +96,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for PyTableSchema {
             .or_else(|_| ob.get_item("columns"))?;
 
         let columns_dict: &Bound<'_, PyDict> = columns_obj.cast()?;
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::<String, _>::new();
         for (k, v) in columns_dict.iter() {
             let name: String = k.extract()?;
             let col: PyColumnSchema = v.extract()?;

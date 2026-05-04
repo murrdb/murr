@@ -7,12 +7,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project uses .memory directory as an append-only log of architectural decisions made while developing:
 * before doing planning, read the .memory directory for relevant topics discussed/implemented in the past
 * when a plan has an architectural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
-* update .memory only for important bits of information.
+* update .memory only for important bits of information. also change-remove obsolete sections if the impl drifts too far from the original design.
+
+### Tests
+
+* prefer functional tests using the public module API, avoid testing internal implementation
+* always test happy path
+* for potential failure paths consider the possibility of such failure to happen. If the failure is highly unlikely, it's ok not to make test for it.
+* do not test for obvious things.
 
 ### Build notes
 
 * when you change dependencies, do a `cargo clean` to purge old cache to save on disk space.
 * we have also benches which are excluded from `cargo check`, so always do `cargo check --all-targets` to validate that the codebase is clean
+* if you see a potentially pre-existing issue, never mess with git history, do not do `git stash` unless explicitly asked to.
 
 ## Project Overview
 
