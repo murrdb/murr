@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
-use arrow::array::AsArray;
-use arrow::datatypes::{DataType, Float32Type, Float64Type};
-use arrow::record_batch::RecordBatch;
-use log::{debug, info};
+use arrow::array::RecordBatch;
+use arrow::datatypes::Schema;
 
-use crate::core::{DType, MurrError, TableSchema};
-use crate::io::column::{ColumnSegmentBytes, ColumnWriter};
-use crate::io::directory::{Directory, DirectoryWriter};
-use crate::io::info::ColumnInfo;
+use crate::{
+    core::{MurrError, TableSchema},
+    io::{
+        directory::{Directory, DirectoryWriter},
+        table::segment::Segment,
+    },
+};
 
 pub struct TableWriter<D: Directory> {
     schema: TableSchema,
@@ -18,62 +19,27 @@ pub struct TableWriter<D: Directory> {
 impl<D: Directory> TableWriter<D> {
     pub async fn open(schema: TableSchema, dir: Arc<D>) -> Result<Self, MurrError> {
         let writer = dir.open_writer().await?;
-        info!(
-            "table writer opened: {} columns in schema",
-            schema.columns.len()
-        );
         Ok(TableWriter { schema, writer })
     }
 
     pub async fn write(&self, batch: &RecordBatch) -> Result<(), MurrError> {
-        info!(
-            "writing batch: {} rows, {} columns",
-            batch.num_rows(),
-            batch.num_columns()
-        );
-        let mut segment_bytes: Vec<ColumnSegmentBytes> = Vec::new();
-
-        for (col_name, col_schema) in &self.schema.columns {
-            let col_index = batch.schema().index_of(col_name).map_err(|e| {
-                MurrError::TableError(format!("column '{}' not in batch: {e}", col_name))
-            })?;
-            let array = batch.column(col_index);
-
-            let col_info = ColumnInfo {
-                name: col_name.clone(),
-                dtype: col_schema.dtype.clone(),
-                nullable: col_schema.nullable,
-            };
-
-            let bytes = write_column(&col_info, array.as_ref())?;
-            debug!(
-                "encoded column '{}': {} bytes",
-                col_name,
-                bytes.byte_len()
-            );
-            segment_bytes.push(bytes);
-        }
-
-        self.writer.write(&segment_bytes).await?;
-        info!("segment written successfully");
-        Ok(())
-    }
-}
-
-fn write_column(
-    col_info: &ColumnInfo,
-    array: &dyn arrow::array::Array,
-) -> Result<ColumnSegmentBytes, MurrError> {
-    match (&col_info.dtype, array.data_type()) {
-        (DType::Float32, DataType::Float32) => {
-            array.as_primitive::<Float32Type>().write_column(col_info)
-        }
-        (DType::Float64, DataType::Float64) => {
-            array.as_primitive::<Float64Type>().write_column(col_info)
-        }
-        (DType::Utf8, DataType::Utf8) => array.as_string().write_column(col_info),
-        (dtype, arrow_dt) => Err(MurrError::TableError(format!(
-            "dtype mismatch: schema={dtype:?}, array={arrow_dt}"
-        ))),
+        // Project to canonical column order so the SegmentSchema in the footer
+        // matches what TableReader derives from the same TableSchema.
+        let canonical: Schema = (&self.schema).into();
+        let indices: Vec<usize> = canonical
+            .fields()
+            .iter()
+            .map(|f| {
+                batch
+                    .schema()
+                    .index_of(f.name())
+                    .map_err(|e| MurrError::ArrowError(e.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+        let ordered = batch
+            .project(&indices)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))?;
+        let segment = Segment::write(ordered, &self.schema)?;
+        self.writer.write(&segment).await
     }
 }

@@ -34,7 +34,9 @@ pub async fn health() -> &'static str {
     "OK"
 }
 
-pub async fn list_tables(State(service): State<Arc<MurrService>>) -> impl IntoResponse {
+pub async fn list_tables(
+    State(service): State<Arc<MurrService>>,
+) -> impl IntoResponse {
     Json(service.list_tables().await)
 }
 
@@ -134,4 +136,3 @@ pub async fn write_table(
     service.write(&name, &batch).await?;
     Ok(StatusCode::OK)
 }
-

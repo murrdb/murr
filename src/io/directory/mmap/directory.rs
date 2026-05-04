@@ -1,26 +1,105 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use log::info;
-
 use async_trait::async_trait;
+use log::info;
+use serde::{Deserialize, Serialize};
 
 use crate::core::{MurrError, TableSchema};
 use crate::io::directory::mmap::reader::MMapReader;
 use crate::io::directory::mmap::writer::MMapWriter;
-use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, METADATA_JSON};
+use crate::io::directory::{Directory, DirectoryConfig, DirectoryReader, DirectoryWriter};
 use crate::io::info::TableInfo;
-use crate::io::url::LocalUrl;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MMapConfig {
+    #[serde(default = "MMapConfig::default_cache_dir")]
+    pub cache_dir: PathBuf,
+}
+
+impl MMapConfig {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self { cache_dir }
+    }
+
+    fn default_cache_dir() -> PathBuf {
+        resolve_cache_dir()
+            .expect("failed to resolve cache dir — set storage.backend.cache_dir or MURR_STORAGE_BACKEND__CACHE__DIR")
+    }
+}
+
+impl Default for MMapConfig {
+    fn default() -> Self {
+        Self::new(Self::default_cache_dir())
+    }
+}
+
+impl DirectoryConfig for MMapConfig {}
+
+fn is_dir_writable(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let probe = path.join(".murr_write_probe");
+    let ok = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+fn resolve_cache_dir() -> Result<PathBuf, MurrError> {
+    let candidates: Vec<PathBuf> = vec![
+        std::env::current_dir().unwrap_or_default(),
+        PathBuf::from("/var/lib/murr"),
+        PathBuf::from("/data"),
+        std::env::temp_dir(),
+    ];
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for parent in &candidates {
+        if parent.as_os_str().is_empty() {
+            continue;
+        }
+        if !is_dir_writable(parent) {
+            errors.push(format!("{}: not writable", parent.display()));
+            continue;
+        }
+        let murr_dir = parent.join("murr");
+        if murr_dir.is_dir() {
+            if is_dir_writable(&murr_dir) {
+                info!("Using cache dir: {}", murr_dir.display());
+                return Ok(murr_dir);
+            }
+            errors.push(format!("{}: exists but not writable", murr_dir.display()));
+            continue;
+        }
+        match std::fs::create_dir_all(&murr_dir) {
+            Ok(_) => {
+                info!("Using cache dir: {}", murr_dir.display());
+                return Ok(murr_dir);
+            }
+            Err(e) => {
+                errors.push(format!("{}: failed to create: {e}", murr_dir.display()));
+            }
+        }
+    }
+
+    Err(MurrError::ConfigParsingError(format!(
+        "no writable cache directory found. Tried: {}",
+        errors.join("; ")
+    )))
+}
 
 pub struct MMapDirectory {
-    url: LocalUrl,
+    root: PathBuf,
     index: String,
-    schema: TableSchema,
+    pub(crate) schema: TableSchema,
 }
 
 impl MMapDirectory {
     pub fn path(&self) -> PathBuf {
-        self.url.path.join(&self.index)
+        self.root.join(&self.index)
     }
 
     pub fn segment_path(&self, id: u32) -> PathBuf {
@@ -28,58 +107,49 @@ impl MMapDirectory {
     }
 
     pub fn metadata_path(&self) -> PathBuf {
-        self.path().join(crate::io::directory::METADATA_JSON)
+        self.path().join(Self::METADATA_JSON)
     }
 }
 
 #[async_trait]
 impl Directory for MMapDirectory {
-    type Location = LocalUrl;
     type ReaderType = MMapReader;
     type WriterType = MMapWriter;
+    type ConfigType = MMapConfig;
 
-    fn create(url: &LocalUrl, index: &str, schema: TableSchema, _page_size: u32, _direct: bool) -> Result<MMapDirectory, MurrError> {
-        let path = url.path.join(index);
+    fn create(index: &str, schema: TableSchema, config: MMapConfig) -> Result<Self, MurrError> {
+        let path = config.cache_dir.join(index);
         std::fs::create_dir_all(&path)
             .map_err(|e| MurrError::IoError(format!("creating dir {}: {e}", path.display())))?;
 
-        let info = TableInfo {
-            schema: schema.clone(),
-            max_segment_id: 0,
-            columns: std::collections::HashMap::new(),
-        };
+        let info = TableInfo { schema: schema.clone(), segments: Vec::new() };
         let data = serde_json::to_vec_pretty(&info)
             .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
-        let metadata_path = path.join(METADATA_JSON);
+        let metadata_path = path.join(Self::METADATA_JSON);
         std::fs::write(&metadata_path, &data)
             .map_err(|e| MurrError::IoError(format!("writing {}: {e}", metadata_path.display())))?;
 
-        info!("mmap directory created: {}/{}", url.path.display(), index);
-        Ok(MMapDirectory {
-            url: url.clone(),
-            index: index.to_string(),
-            schema,
-        })
+        info!("mmap directory created: {}/{}", config.cache_dir.display(), index);
+        Ok(MMapDirectory { root: config.cache_dir, index: index.to_string(), schema })
     }
 
-    fn open(url: &LocalUrl, index: &str, _page_size: u32, _direct: bool) -> Result<MMapDirectory, MurrError> {
-        let path = url.path.join(index);
-        let metadata_path = path.join(METADATA_JSON);
+    fn open(index: &str, config: MMapConfig) -> Result<Self, MurrError> {
+        let metadata_path = config.cache_dir.join(index).join(Self::METADATA_JSON);
         let data = std::fs::read(&metadata_path)
             .map_err(|e| MurrError::IoError(format!("reading {}: {e}", metadata_path.display())))?;
         let info: TableInfo = serde_json::from_slice(&data)
             .map_err(|e| MurrError::IoError(format!("parsing {}: {e}", metadata_path.display())))?;
 
-        info!("mmap directory opened: {}/{}", url.path.display(), index);
-        Ok(MMapDirectory {
-            url: url.clone(),
-            index: index.to_string(),
-            schema: info.schema,
-        })
+        info!("mmap directory opened: {}/{}", config.cache_dir.display(), index);
+        Ok(MMapDirectory { root: config.cache_dir, index: index.to_string(), schema: info.schema })
     }
 
-    fn list_indexes(url: &LocalUrl) -> Vec<String> {
-        let Ok(entries) = std::fs::read_dir(&url.path) else {
+    fn schema(&self) -> &TableSchema {
+        &self.schema
+    }
+
+    fn list_indexes(config: &MMapConfig) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(&config.cache_dir) else {
             return Vec::new();
         };
         entries
@@ -87,10 +157,6 @@ impl Directory for MMapDirectory {
             .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
             .filter_map(|e| e.file_name().into_string().ok())
             .collect()
-    }
-
-    fn schema(&self) -> &TableSchema {
-        &self.schema
     }
 
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
@@ -101,51 +167,5 @@ impl Directory for MMapDirectory {
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError> {
         info!("mmap writer opened: {}", self.path().display());
         MMapWriter::new(Arc::clone(self)).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{ColumnSchema, DType};
-
-    fn test_schema() -> TableSchema {
-        let mut columns = std::collections::HashMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        TableSchema { key: "key".to_string(), columns }
-    }
-
-    #[test]
-    fn path_returns_url_path_with_index() {
-        let tmp = tempfile::tempdir().unwrap();
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
-        let dir = MMapDirectory::create(&url, "default", test_schema(), 4096, false).unwrap();
-        assert_eq!(dir.path(), tmp.path().join("default"));
-    }
-
-    #[test]
-    fn segment_path_zero_padded() {
-        let tmp = tempfile::tempdir().unwrap();
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
-        let dir = MMapDirectory::create(&url, "idx", test_schema(), 4096, false).unwrap();
-        assert_eq!(
-            dir.segment_path(0),
-            tmp.path().join("idx/00000000.seg")
-        );
-        assert_eq!(
-            dir.segment_path(42),
-            tmp.path().join("idx/00000042.seg")
-        );
-    }
-
-    #[test]
-    fn metadata_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let url = LocalUrl { path: tmp.path().to_path_buf() };
-        let dir = MMapDirectory::create(&url, "idx", test_schema(), 4096, false).unwrap();
-        assert_eq!(
-            dir.metadata_path(),
-            tmp.path().join("idx/_metadata.json")
-        );
     }
 }

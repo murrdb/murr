@@ -26,10 +26,11 @@ async fn main() {
     info!("Starting murr with config: {config:?}");
     info!("{ASCII_LOGO}");
 
-    let service = MurrService::new(config)
-        .await
-        .expect("failed to load tables");
-    let service = Arc::new(service);
+    let service = Arc::new(
+        MurrService::new(config)
+            .await
+            .expect("failed to load tables"),
+    );
 
     let http = MurrHttpService::new(service.clone());
     let flight = MurrFlightService::new(service.clone());

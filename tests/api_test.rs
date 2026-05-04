@@ -16,14 +16,15 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
-use murr::conf::{Config, StorageConfig};
+use murr::conf::{BackendConfig, Config, StorageConfig};
+use murr::io::directory::mmap::directory::MMapConfig;
 use murr::service::MurrService;
 
 async fn setup() -> (TempDir, Router) {
     let dir = TempDir::new().unwrap();
     let config = Config {
         storage: StorageConfig {
-            cache_dir: dir.path().to_path_buf(),
+            backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
         },
         ..Config::default()
     };

@@ -1,301 +1,230 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
-use arrow::array::{Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::record_batch::RecordBatch;
-use log::{debug, info};
-use tokio::task::JoinSet;
+use arrow::array::RecordBatch;
 
-use crate::core::{DType, MurrError, TableSchema};
-use crate::io::column::ColumnReader;
-use crate::io::column::float32::Float32ColumnReader;
-use crate::io::column::float64::Float64ColumnReader;
-use crate::io::column::utf8::reader::Utf8ColumnReader;
-use crate::io::directory::DirectoryReader;
-use crate::io::table::index::KeyIndex;
-use crate::io::table::key_offset::KeyOffset;
+use crate::{
+    core::{MurrError, TableSchema},
+    io::{
+        batch::{ColumnBatch, RowBatch},
+        directory::{DirectoryReader, ReadRequest, SegmentReadRequest},
+        info::SegmentInfo,
+        model::SegmentSchema,
+        row::Row,
+        table::{
+            index::{KeyIndex, keys::SegmentKeyBytes},
+            segment::Segment,
+        },
+    },
+};
 
-struct ColumnArray {
-    index: usize,
-    field: Field,
-    array: Arc<dyn Array>,
-}
+const FOOTER_TAIL_SIZE: u32 = 64 * 1024;
 
 pub struct TableReader<R: DirectoryReader> {
     schema: TableSchema,
+    segment_schema: SegmentSchema,
     reader: Arc<R>,
-    columns: HashMap<String, Arc<dyn ColumnReader<R>>>,
+    segments: Vec<Option<Segment>>,
     index: RwLock<KeyIndex>,
 }
 
 impl<R: DirectoryReader> TableReader<R> {
     pub async fn open(schema: TableSchema, reader: Arc<R>) -> Result<Self, MurrError> {
-        info!(
-            "table reader open: key='{}', schema columns: [{}]",
-            schema.key,
-            schema
-                .columns
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        let info = reader.info();
-        info!(
-            "directory reader opened: {} columns, {} segments, max_segment_id={}",
-            info.columns.len(),
-            info.columns
-                .values()
-                .flat_map(|c| c.segments.keys())
-                .collect::<HashSet<_>>()
-                .len(),
-            info.max_segment_id
-        );
+        let segment_schema = SegmentSchema::from(&schema);
+        let infos: Vec<SegmentInfo> = reader.info().segments.clone();
 
-        let mut columns: HashMap<String, Arc<dyn ColumnReader<R>>> = HashMap::new();
-        for (col_name, col_segments) in &info.columns {
-            let num_segments = col_segments.segments.len();
-            let col_reader =
-                open_column_reader(&col_segments.column.dtype, reader.clone(), col_segments)
-                    .await?;
-            columns.insert(col_name.clone(), col_reader);
-            debug!(
-                "opened column reader '{}' (dtype={:?}, nullable={}, segments={})",
-                col_name, col_segments.column.dtype, col_segments.column.nullable, num_segments
-            );
-        }
-
-        let mut index = KeyIndex::new();
-        let key_col_name = &schema.key;
-        if let Some(key_col_segments) = info.columns.get(key_col_name) {
-            let mut seg_ids: Vec<u32> = key_col_segments.segments.keys().copied().collect();
-            seg_ids.sort();
-            let key_col_reader = columns
-                .get(key_col_name)
-                .ok_or_else(|| MurrError::TableError("key column reader not found".into()))?;
-            for &seg_id in &seg_ids {
-                let seg_info = &key_col_segments.segments[&seg_id];
-                let keys =
-                    read_segment_keys(key_col_reader.as_ref(), seg_id, seg_info.num_values).await?;
-                index.add_segment(seg_id, &keys);
-                debug!(
-                    "indexed segment {}: {} keys (total index size: {})",
-                    seg_id,
-                    seg_info.num_values,
-                    index.len()
-                );
-            }
-        }
-        info!(
-            "table reader open complete: {} keys indexed across {} columns",
-            index.len(),
-            columns.len()
-        );
-
-        Ok(TableReader {
+        let mut me = TableReader {
             schema,
+            segment_schema,
             reader,
-            columns,
-            index: RwLock::new(index),
-        })
+            segments: Vec::new(),
+            index: RwLock::new(KeyIndex::empty()),
+        };
+        me.load_segments(&infos).await?;
+        let mut index = KeyIndex::empty();
+        me.add_segments_to_index(&infos, &mut index).await?;
+        me.index = RwLock::new(index);
+        Ok(me)
     }
 
     pub async fn reopen(self) -> Result<Self, MurrError> {
-        let old_info = self.reader.info().clone();
-        let old_key_seg_ids: HashSet<u32> = old_info
-            .columns
-            .get(&self.schema.key)
-            .map(|cs| cs.segments.keys().copied().collect())
-            .unwrap_or_default();
-
-        info!(
-            "table reader reopen: previous max_segment_id={}, {} key segments",
-            old_info.max_segment_id,
-            old_key_seg_ids.len()
-        );
-
         let new_reader = Arc::new(self.reader.reopen_reader().await?);
-        let new_info = new_reader.info();
-        let new_all_seg_ids: HashSet<u32> = new_info
-            .columns
-            .values()
-            .flat_map(|c| c.segments.keys())
-            .copied()
-            .collect();
+        let new_infos: Vec<SegmentInfo> = new_reader.info().segments.clone();
+        let new_ids: hashbrown::HashSet<u32> = new_infos.iter().map(|s| s.id).collect();
 
-        info!(
-            "directory reader reopened: max_segment_id {} -> {}, segments {} -> {}",
-            old_info.max_segment_id,
-            new_info.max_segment_id,
-            old_key_seg_ids.len(),
-            new_all_seg_ids.len()
-        );
+        let mut me = TableReader {
+            schema: self.schema,
+            segment_schema: self.segment_schema,
+            reader: new_reader,
+            segments: self.segments,
+            index: self.index,
+        };
 
-        let mut index = self
-            .index
-            .into_inner()
-            .map_err(|e| MurrError::TableError(format!("index lock poisoned: {e}")))?;
-
-        let mut columns: HashMap<String, Arc<dyn ColumnReader<R>>> = HashMap::new();
-        let mut reused_count = 0usize;
-        let mut new_count = 0usize;
-        for (col_name, col_segments) in &new_info.columns {
-            let col_reader = match self.columns.get(col_name) {
-                Some(prev) => {
-                    reused_count += 1;
-                    prev.reopen(new_reader.clone(), col_segments).await?
-                }
-                None => {
-                    new_count += 1;
-                    open_column_reader(&col_segments.column.dtype, new_reader.clone(), col_segments)
-                        .await?
-                }
-            };
-            columns.insert(col_name.clone(), col_reader);
-        }
-        debug!(
-            "column readers: {} reopened, {} newly opened",
-            reused_count, new_count
-        );
-
-        let key_col_name = &self.schema.key;
-        if let Some(key_col_segments) = new_info.columns.get(key_col_name) {
-            let mut new_seg_ids: Vec<u32> = key_col_segments
-                .segments
-                .keys()
-                .copied()
-                .filter(|id| !old_key_seg_ids.contains(id))
-                .collect();
-            new_seg_ids.sort();
-
-            if !new_seg_ids.is_empty() {
-                let key_col_reader = columns
-                    .get(key_col_name)
-                    .ok_or_else(|| MurrError::TableError("key column reader not found".into()))?;
-                let prev_index_len = index.len();
-                for &seg_id in &new_seg_ids {
-                    let seg_info = &key_col_segments.segments[&seg_id];
-                    let keys =
-                        read_segment_keys(key_col_reader.as_ref(), seg_id, seg_info.num_values)
-                            .await?;
-                    index.add_segment(seg_id, &keys);
-                    debug!(
-                        "indexed new segment {}: {} keys",
-                        seg_id, seg_info.num_values
-                    );
-                }
-                info!(
-                    "incremental index: {} new segments, {} -> {} keys",
-                    new_seg_ids.len(),
-                    prev_index_len,
-                    index.len()
-                );
-            } else {
-                debug!("no new segments to index");
+        let mut removed: Vec<u32> = Vec::new();
+        for (id, slot) in me.segments.iter_mut().enumerate() {
+            if slot.is_some() && !new_ids.contains(&(id as u32)) {
+                *slot = None;
+                removed.push(id as u32);
             }
         }
 
-        Ok(TableReader {
-            schema: self.schema,
-            reader: new_reader,
-            columns,
-            index: RwLock::new(index),
-        })
+        let added: Vec<SegmentInfo> = new_infos
+            .iter()
+            .filter(|info| {
+                me.segments
+                    .get(info.id as usize)
+                    .map(|slot| slot.is_none())
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+
+        me.load_segments(&added).await?;
+
+        let mut index = std::mem::replace(&mut me.index, RwLock::new(KeyIndex::empty()))
+            .into_inner()
+            .map_err(|e| MurrError::TableError(format!("index lock poisoned: {e}")))?;
+        if !removed.is_empty() {
+            index.prune_segments(&removed);
+        }
+        me.add_segments_to_index(&added, &mut index).await?;
+        me.index = RwLock::new(index);
+
+        Ok(me)
     }
 
     pub async fn read(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError> {
-        debug!(
-            "read: {} keys, columns=[{}]",
-            keys.len(),
-            columns.join(", ")
-        );
-        let key_offsets = {
-            let index = self
-                .index
-                .read()
-                .map_err(|e| MurrError::TableError(format!("index lock poisoned: {e}")))?;
-            index.get(keys)
-        };
-        let missing_count = key_offsets.iter().filter(|k| k.is_missing()).count();
-        if missing_count > 0 {
-            debug!("{} of {} keys missing", missing_count, keys.len());
+        let locations = self
+            .index
+            .read()
+            .map_err(|e| MurrError::TableError(format!("index lock poisoned: {e}")))?
+            .get(keys);
+
+        let mut requests: Vec<SegmentReadRequest> = Vec::with_capacity(locations.len());
+        let mut request_to_key_idx: Vec<usize> = Vec::with_capacity(locations.len());
+        for (i, loc_opt) in locations.iter().enumerate() {
+            if let Some(loc) = loc_opt {
+                let segment = self
+                    .segments
+                    .get(loc.segment_id as usize)
+                    .and_then(|s| s.as_ref())
+                    .ok_or_else(|| {
+                        MurrError::SegmentError(format!(
+                            "segment {} present in index but not loaded",
+                            loc.segment_id
+                        ))
+                    })?;
+                let rows_offset = segment.footer().rows.offset;
+                requests.push(SegmentReadRequest {
+                    segment: loc.segment_id,
+                    read: ReadRequest {
+                        offset: rows_offset + loc.offset + 4,
+                        size: loc.size,
+                    },
+                });
+                request_to_key_idx.push(i);
+            }
         }
 
-        let key_offsets: Arc<[KeyOffset]> = key_offsets.into();
-        let mut set = JoinSet::new();
-        for (index, &col_name) in columns.iter().enumerate() {
-            let col_reader = self
-                .columns
-                .get(col_name)
-                .ok_or_else(|| MurrError::TableError(format!("column '{}' not found", col_name)))?
-                .clone();
-            let col_schema = self.schema.columns.get(col_name).ok_or_else(|| {
-                MurrError::TableError(format!("column '{}' not in schema", col_name))
-            })?;
-            let field = Field::new(col_name, DataType::from(&col_schema.dtype), true);
-            let key_offsets = key_offsets.clone();
-            set.spawn(async move { read_column(index, col_reader, field, key_offsets).await });
+        let mut rows: Vec<Row> = (0..keys.len())
+            .map(|_| Row::all_null(&self.segment_schema))
+            .collect();
+
+        if !requests.is_empty() {
+            let responses = self.reader.read(&requests).await?;
+            for (response, key_idx) in responses.into_iter().zip(request_to_key_idx) {
+                rows[key_idx] = Row {
+                    bytes: response.bytes,
+                };
+            }
         }
 
-        let mut column_arrays: Vec<ColumnArray> = Vec::with_capacity(set.len());
-        while let Some(result) = set.join_next().await {
-            column_arrays.push(result.map_err(|e| MurrError::TableError(e.to_string()))??);
+        let column_batch: ColumnBatch = RowBatch {
+            schema: self.segment_schema.clone(),
+            rows,
         }
-        column_arrays.sort_by_key(|ca| ca.index);
+        .try_into()?;
+        let record_batch: RecordBatch = column_batch.try_into()?;
 
-        let fields: Vec<Field> = column_arrays.iter().map(|ca| ca.field.clone()).collect();
-        let arrays: Vec<Arc<dyn Array>> = column_arrays.into_iter().map(|ca| ca.array).collect();
-
-        let schema = Arc::new(Schema::new(fields));
-        RecordBatch::try_new(schema, arrays).map_err(|e| MurrError::ArrowError(e.to_string()))
+        let indexes: Vec<usize> = columns
+            .iter()
+            .map(|name| {
+                record_batch
+                    .schema()
+                    .index_of(name)
+                    .map_err(|e| MurrError::ArrowError(e.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+        record_batch
+            .project(&indexes)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))
     }
-}
 
-async fn read_column<R: DirectoryReader>(
-    index: usize,
-    col_reader: Arc<dyn ColumnReader<R>>,
-    field: Field,
-    key_offsets: Arc<[KeyOffset]>,
-) -> Result<ColumnArray, MurrError> {
-    let array = col_reader.read(&key_offsets).await?;
-    Ok(ColumnArray {
-        index,
-        field,
-        array,
-    })
-}
+    async fn load_segments(&mut self, infos: &[SegmentInfo]) -> Result<(), MurrError> {
+        if infos.is_empty() {
+            return Ok(());
+        }
+        let footer_requests: Vec<SegmentReadRequest> = infos
+            .iter()
+            .map(|info| {
+                let tail = info.size_bytes.min(FOOTER_TAIL_SIZE);
+                SegmentReadRequest {
+                    segment: info.id,
+                    read: ReadRequest {
+                        offset: info.size_bytes - tail,
+                        size: tail,
+                    },
+                }
+            })
+            .collect();
+        let footer_responses = self.reader.read(&footer_requests).await?;
 
-async fn open_column_reader<R: DirectoryReader>(
-    dtype: &DType,
-    reader: Arc<R>,
-    column: &crate::io::info::ColumnSegments,
-) -> Result<Arc<dyn ColumnReader<R>>, MurrError> {
-    match dtype {
-        DType::Float32 => Ok(Arc::new(
-            Float32ColumnReader::open(reader, column, &None).await?,
-        )),
-        DType::Utf8 => Ok(Arc::new(
-            Utf8ColumnReader::open(reader, column, &None).await?,
-        )),
-        DType::Float64 => Ok(Arc::new(
-            Float64ColumnReader::open(reader, column, &None).await?,
-        )),
+        let max_id = infos.iter().map(|info| info.id).max().unwrap() as usize;
+        if max_id >= self.segments.len() {
+            self.segments.resize_with(max_id + 1, || None);
+        }
+        for (info, response) in infos.iter().zip(footer_responses) {
+            let segment = Segment::load(&response.bytes)?;
+            if segment.footer().schema != self.segment_schema {
+                return Err(MurrError::SegmentError(format!(
+                    "segment {} schema does not match table schema",
+                    info.id
+                )));
+            }
+            self.segments[info.id as usize] = Some(segment);
+        }
+        Ok(())
     }
-}
 
-async fn read_segment_keys<R: DirectoryReader>(
-    key_col_reader: &dyn ColumnReader<R>,
-    seg_id: u32,
-    num_values: u32,
-) -> Result<StringArray, MurrError> {
-    let offsets: Vec<KeyOffset> = (0..num_values)
-        .map(|i| KeyOffset::new(i as usize, seg_id, i))
-        .collect();
-    let array = key_col_reader.read(&offsets).await?;
-    array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .cloned()
-        .ok_or_else(|| MurrError::TableError("key column is not StringArray".into()))
+    async fn add_segments_to_index(
+        &self,
+        infos: &[SegmentInfo],
+        index: &mut KeyIndex,
+    ) -> Result<(), MurrError> {
+        if infos.is_empty() {
+            return Ok(());
+        }
+        let requests: Vec<SegmentReadRequest> = infos
+            .iter()
+            .map(|info| {
+                let segment = self.segments[info.id as usize]
+                    .as_ref()
+                    .expect("segment loaded above");
+                SegmentReadRequest {
+                    segment: info.id,
+                    read: ReadRequest {
+                        offset: segment.footer().keys.offset,
+                        size: segment.footer().keys.size,
+                    },
+                }
+            })
+            .collect();
+        let responses = self.reader.read(&requests).await?;
+        for (info, response) in infos.iter().zip(responses) {
+            let key_bytes = SegmentKeyBytes {
+                bytes: response.bytes,
+            };
+            index.add_segment(info.id, &key_bytes);
+        }
+        Ok(())
+    }
 }
