@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use crate::core::MurrError;
 
-pub trait Url {}
+pub trait Url: Clone + Send + Sync {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalUrl {
@@ -17,6 +17,7 @@ pub struct S3Url {
     pub prefix: String,
 }
 
+#[derive(Clone)]
 pub struct MemUrl;
 
 impl Url for S3Url {}

@@ -9,9 +9,9 @@ use tokio::sync::RwLock;
 
 use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
-use crate::io3::directory::{Directory, DirectoryReader};
-use crate::io3::table::reader::TableReader;
-use crate::io3::table::writer::TableWriter;
+use crate::io::directory::{Directory, DirectoryReader};
+use crate::io::table::reader::TableReader;
+use crate::io::table::writer::TableWriter;
 
 use state::TableState;
 
@@ -154,8 +154,8 @@ mod tests {
     use super::*;
     use crate::conf::StorageConfig;
     use crate::core::{ColumnSchema, DType};
-    use crate::io3::directory::mmap::directory::MMapDirectory;
-    use crate::io3::url::LocalUrl;
+    use crate::io::directory::mmap::directory::MMapDirectory;
+    use crate::io::url::LocalUrl;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;

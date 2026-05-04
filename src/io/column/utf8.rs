@@ -4,7 +4,7 @@ use arrow::array::{Array, ArrayRef, StringArray};
 
 use crate::{
     core::MurrError,
-    io3::{
+    io::{
         column::{ColumnCodec, downcast},
         model::SegmentColumnSchema,
         row::Row,
@@ -60,7 +60,7 @@ mod tests {
     use arrow::array::Float32Array;
 
     use super::*;
-    use crate::{core::DType, io3::model::SegmentSchema};
+    use crate::{core::DType, io::model::SegmentSchema};
 
     fn schema() -> SegmentSchema {
         SegmentSchema::new(&vec![SegmentColumnSchema {

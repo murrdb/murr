@@ -6,8 +6,8 @@ use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use murr::io3::directory::mmap::directory::MMapDirectory;
-use murr::io3::url::LocalUrl;
+use murr::io::directory::mmap::directory::MMapDirectory;
+use murr::io::url::LocalUrl;
 use murr::service::MurrService;
 
 use crate::error::into_py_err;

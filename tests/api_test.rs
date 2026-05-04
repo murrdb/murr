@@ -17,8 +17,8 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{Config, StorageConfig};
-use murr::io3::directory::mmap::directory::MMapDirectory;
-use murr::io3::url::LocalUrl;
+use murr::io::directory::mmap::directory::MMapDirectory;
+use murr::io::url::LocalUrl;
 use murr::service::MurrService;
 
 async fn setup() -> (TempDir, Router) {

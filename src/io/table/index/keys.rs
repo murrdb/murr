@@ -1,6 +1,6 @@
 use lean_string::LeanString;
 
-use crate::io3::table::index::RowLocation;
+use crate::io::table::index::RowLocation;
 
 pub struct SegmentKey {
     pub key: LeanString,

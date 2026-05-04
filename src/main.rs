@@ -5,7 +5,6 @@ mod api;
 mod conf;
 mod core;
 mod io;
-mod io3;
 mod service;
 
 use std::sync::Arc;
@@ -16,8 +15,8 @@ use murr::util::logo::ASCII_LOGO;
 use crate::api::{MurrFlightService, MurrHttpService};
 use crate::conf::Config;
 use crate::core::{CliArgs, setup_logging};
-use crate::io3::directory::mmap::directory::MMapDirectory;
-use crate::io3::url::LocalUrl;
+use crate::io::directory::mmap::directory::MMapDirectory;
+use crate::io::url::LocalUrl;
 use crate::service::MurrService;
 use log::info;
 

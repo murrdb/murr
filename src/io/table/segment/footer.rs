@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     core::MurrError,
-    io3::{
+    io::{
         model::{OffsetSize, SegmentSchema},
         table::segment::trailer::SegmentTrailer,
     },
@@ -60,7 +60,7 @@ impl SegmentFooterV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::DType, io3::model::SegmentColumnSchema};
+    use crate::{core::DType, io::model::SegmentColumnSchema};
 
     fn sample_footer() -> SegmentFooterV1 {
         let columns = vec![

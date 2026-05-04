@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::debug;
 use memmap2::Mmap;
 
-use async_trait::async_trait;
-
 use crate::core::MurrError;
-use crate::io::bytes::FromBytes;
 use crate::io::directory::mmap::directory::MMapDirectory;
-use crate::io::directory::{DirectoryReader, SegmentReadRequest};
+use crate::io::directory::{DirectoryReader, SegmentReadRequest, SegmentReadResponse};
 use crate::io::info::TableInfo;
 
 pub struct MMapReader {
@@ -26,38 +24,31 @@ impl MMapReader {
             .map_err(|e| MurrError::IoError(format!("parsing {}: {e}", path.display())))
     }
 
-    fn segment_ids(info: &TableInfo) -> std::collections::BTreeSet<u32> {
-        let mut segment_ids = std::collections::BTreeSet::new();
-        for col in info.columns.values() {
-            for &seg_id in col.segments.keys() {
-                segment_ids.insert(seg_id);
-            }
-        }
-        segment_ids
-    }
-
     fn load_mmaps(
         dir: &MMapDirectory,
         info: &TableInfo,
         existing: &[Option<Arc<Mmap>>],
     ) -> Result<Vec<Option<Arc<Mmap>>>, MurrError> {
-        let max_id = info.max_segment_id as usize;
+        if info.segments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let max_id = info.segments.iter().map(|s| s.id).max().unwrap() as usize;
         let mut mmaps: Vec<Option<Arc<Mmap>>> = (0..=max_id).map(|_| None).collect();
 
-        for seg_id in Self::segment_ids(info) {
-            let idx = seg_id as usize;
+        for seg in &info.segments {
+            let idx = seg.id as usize;
             if let Some(existing_mmap) = existing.get(idx).and_then(|m| m.as_ref()) {
                 mmaps[idx] = Some(Arc::clone(existing_mmap));
                 continue;
             }
-            let path = dir.segment_path(seg_id);
+            let path = dir.segment_path(seg.id);
             let file = std::fs::File::open(&path)
                 .map_err(|e| MurrError::IoError(format!("opening {}: {e}", path.display())))?;
+            // SAFETY: segment files are written once, synced, and renamed into place;
+            // they are never truncated or modified after creation.
             let mmap = unsafe { Mmap::map(&file) }
                 .map_err(|e| MurrError::IoError(format!("mmapping {}: {e}", path.display())))?;
-            if idx < mmaps.len() {
-                mmaps[idx] = Some(Arc::new(mmap));
-            }
+            mmaps[idx] = Some(Arc::new(mmap));
         }
 
         Ok(mmaps)
@@ -88,10 +79,10 @@ impl DirectoryReader for MMapReader {
         &self.info
     }
 
-    async fn read<T: FromBytes<T> + Send>(
+    async fn read(
         &self,
         requests: &[SegmentReadRequest],
-    ) -> Result<Vec<T>, MurrError> {
+    ) -> Result<Vec<SegmentReadResponse>, MurrError> {
         debug!("mmap read: {} requests", requests.len());
         let mut results = Vec::with_capacity(requests.len());
         for req in requests {
@@ -102,166 +93,22 @@ impl DirectoryReader for MMapReader {
                 .ok_or_else(|| {
                     MurrError::SegmentError(format!("segment {} not loaded", req.segment))
                 })?;
-            let value = T::from_bytes(&mmap[..], req.read.offset, req.read.size);
-            results.push(value);
+            let start = req.read.offset as usize;
+            let end = start + req.read.size as usize;
+            let slice = mmap.get(start..end).ok_or_else(|| {
+                MurrError::SegmentError(format!(
+                    "segment {} read out of bounds: offset={} size={} mmap_len={}",
+                    req.segment,
+                    req.read.offset,
+                    req.read.size,
+                    mmap.len()
+                ))
+            })?;
+            results.push(SegmentReadResponse {
+                request: *req,
+                bytes: slice.to_vec(),
+            });
         }
         Ok(results)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::{ColumnSegmentBytes, PayloadBytes};
-    use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, ReadRequest};
-    use crate::io::info::ColumnInfo;
-    use crate::io::url::LocalUrl;
-
-    fn test_schema() -> TableSchema {
-        let mut columns = indexmap::IndexMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        TableSchema { key: "key".to_string(), columns }
-    }
-
-    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
-        let url = LocalUrl {
-            path: tmp.path().to_path_buf(),
-        };
-        Arc::new(MMapDirectory::create(&url, "default", test_schema(), 4096, false).unwrap())
-    }
-
-    fn column_bytes(
-        name: &str,
-        dtype: DType,
-        payload: Vec<u8>,
-        num_values: u32,
-    ) -> ColumnSegmentBytes {
-        ColumnSegmentBytes::new(
-            ColumnInfo {
-                name: name.to_string(),
-                dtype,
-                nullable: false,
-            },
-            vec![PayloadBytes::new(payload)],
-            Vec::new(),
-            num_values,
-        )
-    }
-
-    #[tokio::test]
-    async fn read_bytes_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-
-        // Write a segment with known bytes
-        let writer = dir.open_writer().await.unwrap();
-        let payload = b"hello world!".to_vec();
-        writer
-            .write(&[column_bytes("data", DType::Utf8, payload, 1)])
-            .await
-            .unwrap();
-
-        // Read back
-        let reader = dir.open_reader().await.unwrap();
-        let requests = vec![SegmentReadRequest {
-            segment: 0,
-            read: ReadRequest {
-                offset: 0,
-                size: 12,
-            },
-        }];
-        let results: Vec<Vec<u8>> = reader.read::<Vec<u8>>(&requests).await.unwrap();
-        assert_eq!(results, vec![b"hello world!".to_vec()]);
-    }
-
-    #[tokio::test]
-    async fn read_f32_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-
-        let writer = dir.open_writer().await.unwrap();
-        let value: f32 = 42.5;
-        let payload = value.to_ne_bytes().to_vec();
-        writer
-            .write(&[column_bytes("score", DType::Float32, payload, 1)])
-            .await
-            .unwrap();
-
-        let reader = dir.open_reader().await.unwrap();
-        let requests = vec![SegmentReadRequest {
-            segment: 0,
-            read: ReadRequest { offset: 0, size: 4 },
-        }];
-        let results: Vec<f32> = reader.read::<f32>(&requests).await.unwrap();
-        assert_eq!(results, vec![42.5_f32]);
-    }
-
-    #[tokio::test]
-    async fn read_multi_segment() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        // Write two segments
-        for i in 0..2u32 {
-            let value: f32 = i as f32 * 10.0;
-            let payload = value.to_ne_bytes().to_vec();
-            writer
-                .write(&[column_bytes("val", DType::Float32, payload, 1)])
-                .await
-                .unwrap();
-        }
-
-        let reader = dir.open_reader().await.unwrap();
-        let requests = vec![
-            SegmentReadRequest {
-                segment: 1,
-                read: ReadRequest { offset: 0, size: 4 },
-            },
-            SegmentReadRequest {
-                segment: 0,
-                read: ReadRequest { offset: 0, size: 4 },
-            },
-        ];
-        let results: Vec<f32> = reader.read::<f32>(&requests).await.unwrap();
-        assert_eq!(results, vec![10.0_f32, 0.0_f32]);
-    }
-
-    #[tokio::test]
-    async fn read_missing_segment_errors() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        writer
-            .write(&[column_bytes("x", DType::Float32, vec![0; 4], 1)])
-            .await
-            .unwrap();
-
-        let reader = dir.open_reader().await.unwrap();
-        let requests = vec![SegmentReadRequest {
-            segment: 99,
-            read: ReadRequest { offset: 0, size: 4 },
-        }];
-        let result = reader.read::<f32>(&requests).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn info_returns_cached_table_info() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        writer
-            .write(&[column_bytes("x", DType::Float32, vec![0; 4], 1)])
-            .await
-            .unwrap();
-
-        let reader = dir.open_reader().await.unwrap();
-        let info = reader.info();
-        assert_eq!(info.max_segment_id, 0);
-        assert!(info.columns.contains_key("x"));
     }
 }

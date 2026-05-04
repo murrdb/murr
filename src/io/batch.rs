@@ -7,8 +7,8 @@ use arrow::{
 
 use crate::{
     core::{DType, MurrError},
-    io3::column::codec_for,
-    io3::{
+    io::column::codec_for,
+    io::{
         model::{SegmentColumnSchema, SegmentSchema},
         row::Row,
     },

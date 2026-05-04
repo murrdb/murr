@@ -1,26 +1,24 @@
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use log::info;
-
 use async_trait::async_trait;
+use log::info;
 
 use crate::core::{MurrError, TableSchema};
 use crate::io::directory::mem::reader::MemReader;
 use crate::io::directory::mem::writer::MemWriter;
-use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter, METADATA_JSON};
+use crate::io::directory::{Directory, DirectoryConfig, DirectoryReader, DirectoryWriter};
 use crate::io::info::TableInfo;
 use crate::io::url::MemUrl;
 
-pub struct MemDirectory {
-    pub(crate) files: RwLock<HashMap<String, Vec<u8>>>,
-    schema: TableSchema,
-}
+#[derive(Default)]
+pub struct MemConfig;
 
-impl MemDirectory {
-    pub fn segment_name(id: u32) -> String {
-        format!("{:08}.seg", id)
-    }
+impl DirectoryConfig for MemConfig {}
+
+pub struct MemDirectory {
+    pub(crate) schema: TableSchema,
+    pub(crate) metadata: RwLock<TableInfo>,
+    pub(crate) segments: RwLock<Vec<Option<Vec<u8>>>>,
 }
 
 #[async_trait]
@@ -28,34 +26,34 @@ impl Directory for MemDirectory {
     type Location = MemUrl;
     type ReaderType = MemReader;
     type WriterType = MemWriter;
+    type ConfigType = MemConfig;
 
-    fn create(_url: &MemUrl, _index: &str, schema: TableSchema, _page_size: u32, _direct: bool) -> Result<MemDirectory, MurrError> {
-        let info = TableInfo {
-            schema: schema.clone(),
-            max_segment_id: 0,
-            columns: HashMap::new(),
-        };
-        let metadata = serde_json::to_vec_pretty(&info)
-            .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
-        let mut files = HashMap::new();
-        files.insert(METADATA_JSON.to_string(), metadata);
+    fn create(
+        _url: &MemUrl,
+        _index: &str,
+        schema: TableSchema,
+        _config: MemConfig,
+    ) -> Result<MemDirectory, MurrError> {
         info!("mem directory created");
         Ok(MemDirectory {
-            files: RwLock::new(files),
-            schema,
+            schema: schema.clone(),
+            metadata: RwLock::new(TableInfo { schema, segments: Vec::new() }),
+            segments: RwLock::new(Vec::new()),
         })
     }
 
-    fn open(_url: &MemUrl, _index: &str, _page_size: u32, _direct: bool) -> Result<MemDirectory, MurrError> {
-        Err(MurrError::IoError("mem directory does not support open (no persistent storage)".to_string()))
-    }
-
-    fn list_indexes(_url: &MemUrl) -> Vec<String> {
-        Vec::new()
+    fn open(_url: &MemUrl, _index: &str, _config: MemConfig) -> Result<MemDirectory, MurrError> {
+        Err(MurrError::IoError(
+            "mem directory has no persistent storage; use create()".to_string(),
+        ))
     }
 
     fn schema(&self) -> &TableSchema {
         &self.schema
+    }
+
+    fn list_indexes(_url: &MemUrl) -> Vec<String> {
+        Vec::new()
     }
 
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError> {
@@ -66,24 +64,5 @@ impl Directory for MemDirectory {
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError> {
         info!("mem writer opened");
         MemWriter::new(Arc::clone(self)).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{ColumnSchema, DType};
-
-    fn test_schema() -> TableSchema {
-        let mut columns = indexmap::IndexMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        TableSchema { key: "key".to_string(), columns }
-    }
-
-    #[test]
-    fn create_initializes_metadata() {
-        let dir = MemDirectory::create(&MemUrl, "default", test_schema(), 4096, false).unwrap();
-        let files = dir.files.read().unwrap();
-        assert!(files.contains_key(METADATA_JSON));
     }
 }

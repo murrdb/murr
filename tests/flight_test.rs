@@ -14,8 +14,8 @@ use tonic::transport::{Channel, Server};
 
 use murr::conf::{Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io3::directory::mmap::directory::MMapDirectory;
-use murr::io3::url::LocalUrl;
+use murr::io::directory::mmap::directory::MMapDirectory;
+use murr::io::url::LocalUrl;
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.

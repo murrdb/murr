@@ -12,8 +12,6 @@ use tokio::runtime::Runtime;
 use murr::core::{ColumnSchema, DType, TableSchema};
 use murr::io;
 use murr::io::directory::Directory as IoDirectory;
-use murr::io3;
-use murr::io3::directory::Directory as Io3Directory;
 use murr::testutil::{bench_column_names, generate_batch};
 
 const NUM_ROWS: usize = 50_000_000;
@@ -52,7 +50,7 @@ fn generate_random_keys(num_keys: usize, seed: u64) -> Vec<String> {
         .collect()
 }
 
-fn bench_io_vs_io3(c: &mut Criterion) {
+fn bench_io(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let (table_schema, arrow_schema) = make_schema();
     let batch = generate_batch(&arrow_schema, NUM_ROWS);
@@ -73,41 +71,16 @@ fn bench_io_vs_io3(c: &mut Criterion) {
                 &url,
                 "bench",
                 table_schema.clone(),
-                4096,
-                false,
+                io::directory::mmap::directory::MMapConfig,
             )
             .unwrap(),
         );
-        let table = io::table::Table::new(dir);
-        let writer = table.open_writer().await.unwrap();
-        writer.write(&batch).await.unwrap();
-        table.open_reader().await.unwrap()
-    });
-
-    eprintln!(
-        "io3: writing {} rows to {}",
-        NUM_ROWS,
-        tmp.path().join("io3").display()
-    );
-    let io3_reader = rt.block_on(async {
-        let url = io3::url::LocalUrl {
-            path: tmp.path().join("io3"),
-        };
-        let dir = Arc::new(
-            io3::directory::mmap::directory::MMapDirectory::create(
-                &url,
-                "bench",
-                table_schema.clone(),
-                io3::directory::mmap::directory::MMapConfig,
-            )
-            .unwrap(),
-        );
-        let writer = io3::table::writer::TableWriter::open(table_schema.clone(), dir.clone())
+        let writer = io::table::writer::TableWriter::open(table_schema.clone(), dir.clone())
             .await
             .unwrap();
         writer.write(&batch).await.unwrap();
-        let dir_reader = Arc::new(Io3Directory::open_reader(&dir).await.unwrap());
-        io3::table::reader::TableReader::open(table_schema.clone(), dir_reader)
+        let dir_reader = Arc::new(IoDirectory::open_reader(&dir).await.unwrap());
+        io::table::reader::TableReader::open(table_schema.clone(), dir_reader)
             .await
             .unwrap()
     });
@@ -118,7 +91,7 @@ fn bench_io_vs_io3(c: &mut Criterion) {
         .collect();
     let col_refs: Vec<&str> = col_names.iter().map(|s| s.as_str()).collect();
 
-    let mut group = c.benchmark_group("row_vs_col");
+    let mut group = c.benchmark_group("io");
     group.sample_size(100);
 
     for &num_keys in KEY_COUNTS {
@@ -143,32 +116,10 @@ fn bench_io_vs_io3(c: &mut Criterion) {
                 BatchSize::PerIteration,
             );
         });
-
-        let mut io3_seed: u64 = num_keys as u64 * 1_000_000 + 500_000;
-        let io3_reader_ref = &io3_reader;
-        let col_refs_ref = &col_refs;
-        group.bench_with_input(BenchmarkId::new("io3", num_keys), &num_keys, |b, &n| {
-            b.to_async(&rt).iter_batched(
-                || {
-                    io3_seed += 1;
-                    generate_random_keys(n, io3_seed)
-                },
-                |keys| async move {
-                    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-                    black_box(
-                        io3_reader_ref
-                            .read(black_box(&key_refs), black_box(col_refs_ref))
-                            .await
-                            .unwrap(),
-                    )
-                },
-                BatchSize::PerIteration,
-            );
-        });
     }
 
     group.finish();
 }
 
-criterion_group!(benches, bench_io_vs_io3);
+criterion_group!(benches, bench_io);
 criterion_main!(benches);

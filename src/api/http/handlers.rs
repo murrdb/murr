@@ -13,7 +13,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
-use crate::io3::directory::Directory;
+use crate::io::directory::Directory;
 use crate::service::MurrService;
 
 use super::convert::{FetchResponse, WriteRequest};

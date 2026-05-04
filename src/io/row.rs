@@ -13,7 +13,7 @@
 // example for f32+utf8 column:
 // [col0: f32, col1: u32] [col1_length: u32, ... col1_bytes ...]
 
-use crate::{core::MurrError, io3::model::SegmentSchema};
+use crate::{core::MurrError, io::model::SegmentSchema};
 
 pub struct Row {
     pub bytes: Vec<u8>,
@@ -109,7 +109,7 @@ mod tests {
 
     use crate::{
         core::DType,
-        io3::{
+        io::{
             batch::{ColumnBatch, RowBatch},
             model::SegmentColumnSchema,
         },

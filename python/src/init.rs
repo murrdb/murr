@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use murr::api::MurrHttpService;
 use murr::conf::{Config, StorageConfig};
-use murr::io3::directory::mmap::directory::MMapDirectory;
+use murr::io::directory::mmap::directory::MMapDirectory;
 use murr::service::MurrService;
 
 pub fn build_config(cache_dir: String, http_port: Option<u16>) -> Config {

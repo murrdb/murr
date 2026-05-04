@@ -1,47 +1,55 @@
-pub mod mem;
 pub mod mmap;
+pub mod mem;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
 use crate::{
     core::{MurrError, TableSchema},
-    io::{
-        bytes::FromBytes,
-        column::ColumnSegmentBytes,
-        info::TableInfo,
-        url::Url,
-    },
+    io::{info::TableInfo, table::segment::SegmentBytes, url::Url},
 };
 
-pub const METADATA_JSON: &str = "_metadata.json";
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait Directory: Sized + Send + Sync + 'static {
+    const METADATA_JSON: &str = "_metadata.json";
     type Location: Url;
-    type ReaderType: DirectoryReader + Send + Sync;
-    type WriterType: DirectoryWriter + Send + Sync;
+    type ReaderType: DirectoryReader;
+    type WriterType: DirectoryWriter;
+    type ConfigType: DirectoryConfig;
 
-    fn create(url: &Self::Location, index: &str, schema: TableSchema, page_size: u32, direct: bool) -> Result<Self, MurrError>;
-    fn open(url: &Self::Location, index: &str, page_size: u32, direct: bool) -> Result<Self, MurrError>;
+    fn create(
+        url: &Self::Location,
+        index: &str,
+        schema: TableSchema,
+        config: Self::ConfigType,
+    ) -> Result<Self, MurrError>;
+    fn open(url: &Self::Location, index: &str, config: Self::ConfigType)
+    -> Result<Self, MurrError>;
     fn list_indexes(url: &Self::Location) -> Vec<String>;
     fn schema(&self) -> &TableSchema;
     async fn open_reader(self: &Arc<Self>) -> Result<Self::ReaderType, MurrError>;
     async fn open_writer(self: &Arc<Self>) -> Result<Self::WriterType, MurrError>;
 }
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadRequest {
     pub offset: u32,
     pub size: u32,
 }
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegmentReadRequest {
     pub segment: u32,
     pub read: ReadRequest,
 }
+#[derive(PartialEq, Eq, Debug)]
+pub struct SegmentReadResponse {
+    pub request: SegmentReadRequest,
+    pub bytes: Vec<u8>,
+}
 
-/// Directory-aware reader with construction and reopen support.
+pub trait DirectoryConfig: Sized + Send + Sync + Default {}
+
+// Directory-aware reader with construction and reopen support.
 #[async_trait]
 pub trait DirectoryReader: Sized + Send + Sync + 'static {
     type D: Directory;
@@ -49,17 +57,17 @@ pub trait DirectoryReader: Sized + Send + Sync + 'static {
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
     async fn reopen_reader(&self) -> Result<Self, MurrError>;
     fn info(&self) -> &TableInfo;
-    async fn read<T: FromBytes<T> + Send>(
+    async fn read(
         &self,
         requests: &[SegmentReadRequest],
-    ) -> Result<Vec<T>, MurrError>;
+    ) -> Result<Vec<SegmentReadResponse>, MurrError>;
 }
 
-/// Directory-aware writer with construction support.
+// Directory-aware writer with construction support.
 #[async_trait]
 pub trait DirectoryWriter: Sized + Send + Sync {
     type D: Directory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError>;
-    async fn write(&self, segment: &[ColumnSegmentBytes]) -> Result<(), MurrError>;
+    async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError>;
 }

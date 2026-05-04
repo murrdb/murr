@@ -1,21 +1,18 @@
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::debug;
 
-use async_trait::async_trait;
-
-use crate::core::{MurrError, TableSchema};
-use crate::io::column::ColumnSegmentBytes;
-use crate::io::directory::{Directory, DirectoryWriter};
+use crate::core::MurrError;
 use crate::io::directory::mmap::directory::MMapDirectory;
-use crate::io::info::{ColumnSegments, SegmentInfo, TableInfo};
+use crate::io::directory::DirectoryWriter;
+use crate::io::info::{SegmentInfo, TableInfo};
+use crate::io::table::segment::SegmentBytes;
 
 pub struct MMapWriter {
     dir: Arc<MMapDirectory>,
-    schema: TableSchema,
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
@@ -33,34 +30,9 @@ impl MMapWriter {
     }
 
     fn next_segment_id(&self) -> u32 {
-        match self.load_existing_info() {
-            Some(info) if !info.columns.is_empty() => info.max_segment_id + 1,
-            _ => 0,
-        }
-    }
-
-    fn flush_info(&self, info: &TableInfo) -> Result<(), MurrError> {
-        let path = self.dir.metadata_path();
-        let data = serde_json::to_vec_pretty(info)
-            .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
-
-        let tmp = tmp_path(&path);
-        std::fs::write(&tmp, &data)
-            .map_err(|e| MurrError::IoError(format!("writing {}: {e}", tmp.display())))?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            MurrError::IoError(format!(
-                "renaming {} to {}: {e}",
-                tmp.display(),
-                path.display()
-            ))
-        })?;
-        Ok(())
-    }
-
-    fn ensure_dir(&self) -> Result<(), MurrError> {
-        let path = self.dir.path();
-        std::fs::create_dir_all(&path)
-            .map_err(|e| MurrError::IoError(format!("creating dir {}: {e}", path.display())))
+        self.load_existing_info()
+            .map(|info| info.segments.len() as u32)
+            .unwrap_or(0)
     }
 
     fn flush_segment(&self, segment_id: u32, data: &[u8]) -> Result<(), MurrError> {
@@ -82,7 +54,23 @@ impl MMapWriter {
                 seg_path.display()
             ))
         })?;
+        Ok(())
+    }
 
+    fn flush_info(&self, info: &TableInfo) -> Result<(), MurrError> {
+        let path = self.dir.metadata_path();
+        let data = serde_json::to_vec_pretty(info)
+            .map_err(|e| MurrError::IoError(format!("serializing metadata: {e}")))?;
+        let tmp = tmp_path(&path);
+        std::fs::write(&tmp, &data)
+            .map_err(|e| MurrError::IoError(format!("writing {}: {e}", tmp.display())))?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            MurrError::IoError(format!(
+                "renaming {} to {}: {e}",
+                tmp.display(),
+                path.display()
+            ))
+        })?;
         Ok(())
     }
 }
@@ -92,166 +80,35 @@ impl DirectoryWriter for MMapWriter {
     type D = MMapDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
-        let schema = dir.schema().clone();
-        Ok(MMapWriter { dir, schema })
+        Ok(MMapWriter { dir })
     }
 
-    async fn write(&self, columns: &[ColumnSegmentBytes]) -> Result<(), MurrError> {
+    async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
+        let bytes = segment.to_bytes()?;
+        let size_bytes = bytes.len() as u32;
+        let num_values = segment.footer.row_count;
         let segment_id = self.next_segment_id();
 
-        // Concatenate all column bytes, tracking offsets
-        let mut combined = Vec::new();
-        let mut column_infos = Vec::new();
-
-        for col in columns {
-            let bytes = col.to_bytes();
-            let offset = combined.len() as u32;
-            let length = bytes.len() as u32;
-            combined.extend_from_slice(&bytes);
-            column_infos.push((
-                col.column.clone(),
-                SegmentInfo {
-                    id: segment_id,
-                    offset,
-                    length,
-                    num_values: col.num_values,
-                },
-            ));
-        }
-
-        // Build/merge TableInfo
-        let mut info = self.load_existing_info().unwrap_or_else(|| TableInfo {
-            schema: self.schema.clone(),
-            max_segment_id: 0,
-            columns: HashMap::new(),
-        });
-        info.max_segment_id = segment_id;
-
-        for (col_info, seg_info) in column_infos {
-            let entry = info
-                .columns
-                .entry(col_info.name.clone())
-                .or_insert_with(|| ColumnSegments {
-                    column: col_info.clone(),
-                    segments: HashMap::new(),
-                });
-            entry.segments.insert(segment_id, seg_info);
-        }
-
-        let seg_path = self.dir.segment_path(segment_id);
         debug!(
-            "mmap write: segment={segment_id} path={} columns={} bytes={}",
-            seg_path.display(),
-            columns.len(),
-            combined.len()
+            "mmap write: segment={segment_id} path={} bytes={size_bytes} rows={num_values}",
+            self.dir.segment_path(segment_id).display()
         );
 
-        self.ensure_dir()?;
-        self.flush_segment(segment_id, &combined)?;
+        // Write segment file before updating metadata: an orphaned .seg is harmless,
+        // but a metadata entry pointing to a missing file would error on reader open.
+        self.flush_segment(segment_id, &bytes)?;
+
+        let mut info = self.load_existing_info().unwrap_or_else(|| TableInfo {
+            schema: self.dir.schema.clone(),
+            segments: Vec::new(),
+        });
+        info.segments.push(SegmentInfo {
+            id: segment_id,
+            size_bytes,
+            num_values,
+        });
+
         self.flush_info(&info)?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io::column::PayloadBytes;
-    use crate::io::directory::{Directory, DirectoryWriter};
-    use crate::io::info::ColumnInfo;
-    use crate::io::url::LocalUrl;
-
-    fn test_schema() -> TableSchema {
-        let mut columns = indexmap::IndexMap::new();
-        columns.insert("key".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false });
-        columns.insert("score".to_string(), ColumnSchema { dtype: DType::Float32, nullable: false });
-        TableSchema { key: "key".to_string(), columns }
-    }
-
-    fn test_dir(tmp: &tempfile::TempDir) -> Arc<MMapDirectory> {
-        let url = LocalUrl {
-            path: tmp.path().to_path_buf(),
-        };
-        Arc::new(MMapDirectory::create(&url, "default", test_schema(), 4096, false).unwrap())
-    }
-
-    fn column_bytes(name: &str, payload: Vec<u8>, num_values: u32) -> ColumnSegmentBytes {
-        ColumnSegmentBytes::new(
-            ColumnInfo {
-                name: name.to_string(),
-                dtype: DType::Float32,
-                nullable: false,
-            },
-            vec![PayloadBytes::new(payload)],
-            Vec::new(),
-            num_values,
-        )
-    }
-
-    #[tokio::test]
-    async fn write_first_segment() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        writer
-            .write(&[column_bytes("score", vec![1, 2, 3, 4], 1)])
-            .await
-            .unwrap();
-
-        let idx = tmp.path().join("default");
-        let seg_path = idx.join("00000000.seg");
-        assert!(seg_path.exists());
-        assert_eq!(std::fs::read(&seg_path).unwrap(), vec![1, 2, 3, 4, 0, 0, 0, 0]);
-        assert!(idx.join("_metadata.json").exists());
-    }
-
-    #[tokio::test]
-    async fn write_sequential_segments() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        for i in 0..3u32 {
-            writer
-                .write(&[column_bytes("score", vec![i as u8; 4], 1)])
-                .await
-                .unwrap();
-        }
-
-        let idx = tmp.path().join("default");
-        assert!(idx.join("00000000.seg").exists());
-        assert!(idx.join("00000001.seg").exists());
-        assert!(idx.join("00000002.seg").exists());
-        assert_eq!(
-            std::fs::read(idx.join("00000002.seg")).unwrap(),
-            vec![2, 2, 2, 2, 0, 0, 0, 0]
-        );
-    }
-
-    #[tokio::test]
-    async fn write_persists_metadata() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = test_dir(&tmp);
-        let writer = dir.open_writer().await.unwrap();
-
-        // Write two segments for the same column
-        writer
-            .write(&[column_bytes("score", vec![1; 16], 4)])
-            .await
-            .unwrap();
-        writer
-            .write(&[column_bytes("score", vec![2; 16], 4)])
-            .await
-            .unwrap();
-
-        let meta_path = tmp.path().join("default").join("_metadata.json");
-        let data = std::fs::read_to_string(&meta_path).unwrap();
-        let parsed: TableInfo = serde_json::from_str(&data).unwrap();
-
-        assert_eq!(parsed.max_segment_id, 1);
-        assert!(parsed.columns.contains_key("score"));
-        assert_eq!(parsed.columns["score"].segments.len(), 2);
     }
 }

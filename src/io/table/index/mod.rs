@@ -2,7 +2,7 @@ use hashbrown::HashMap;
 use lean_string::LeanString;
 use rustc_hash::FxBuildHasher;
 
-use crate::io3::table::index::keys::{SegmentKey, SegmentKeyBytes};
+use crate::io::table::index::keys::{SegmentKey, SegmentKeyBytes};
 
 pub mod keys;
 
@@ -53,7 +53,7 @@ impl KeyIndex {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType, TableSchema};
-    use crate::io3::table::segment::Segment;
+    use crate::io::table::segment::Segment;
     use arrow::array::{Float32Array, RecordBatch, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use indexmap::IndexMap;

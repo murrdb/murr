@@ -2,7 +2,7 @@ use arrow::array::{RecordBatch, StringArray};
 
 use crate::{
     core::{MurrError, TableSchema},
-    io3::{
+    io::{
         batch::{ColumnBatch, RowBatch},
         model::OffsetSize,
         table::{index::keys::SegmentKeyBytes, segment::footer::SegmentFooterV1},
@@ -107,7 +107,7 @@ impl Segment {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io3::table::segment::trailer::SegmentTrailer;
+    use crate::io::table::segment::trailer::SegmentTrailer;
     use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use indexmap::IndexMap;

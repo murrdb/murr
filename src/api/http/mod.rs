@@ -11,7 +11,7 @@ use axum::serve::ListenerExt;
 use axum::Router;
 
 use crate::core::MurrError;
-use crate::io3::directory::Directory;
+use crate::io::directory::Directory;
 use crate::service::MurrService;
 
 pub struct MurrHttpService<D: Directory> {

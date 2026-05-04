@@ -10,8 +10,8 @@ use tokio::runtime::Runtime;
 use murr::conf::Config;
 use murr::conf::StorageConfig;
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io3::directory::mmap::directory::MMapDirectory;
-use murr::io3::url::LocalUrl;
+use murr::io::directory::mmap::directory::MMapDirectory;
+use murr::io::url::LocalUrl;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 

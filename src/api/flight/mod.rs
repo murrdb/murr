@@ -17,7 +17,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::core::MurrError;
-use crate::io3::directory::Directory;
+use crate::io::directory::Directory;
 use crate::service::MurrService;
 
 use ticket::FetchTicket;

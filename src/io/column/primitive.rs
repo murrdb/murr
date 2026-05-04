@@ -5,7 +5,7 @@ use bytemuck::Pod;
 
 use crate::{
     core::MurrError,
-    io3::{
+    io::{
         column::{ColumnCodec, downcast},
         model::SegmentColumnSchema,
         row::Row,
@@ -65,7 +65,7 @@ mod tests {
     use arrow::datatypes::{Float32Type, Float64Type};
 
     use super::*;
-    use crate::{core::DType, io3::model::SegmentSchema};
+    use crate::{core::DType, io::model::SegmentSchema};
 
     fn single_col_schema(dtype: DType) -> SegmentSchema {
         SegmentSchema::new(&vec![SegmentColumnSchema {
