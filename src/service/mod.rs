@@ -33,6 +33,26 @@ impl MurrService {
                 }
             }
             BackendConfig::Mem(_) => {}
+            BackendConfig::IoUring(cfg) => {
+                core::cfg_select! {
+                    target_os = "linux" => {
+                        use crate::io::directory::iouring::directory::IoUringDirectory;
+                        for name in IoUringDirectory::list_indexes(cfg) {
+                            match Table::<IoUringDirectory>::open(&name, cfg.clone()).await {
+                                Ok(t) => {
+                                    info!("loaded table '{}'", name);
+                                    tables.insert(name, Box::new(t));
+                                }
+                                Err(e) => info!("skipping table '{}': {}", name, e),
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = cfg;
+                        return Err(crate::io::directory::iouring::unsupported_platform_error());
+                    }
+                }
+            }
         }
 
         Ok(Self { tables: RwLock::new(tables), config })
@@ -55,6 +75,20 @@ impl MurrService {
             }
             BackendConfig::Mem(cfg) => {
                 Box::new(Table::<MemDirectory>::create(table_name, schema, cfg.clone()).await?)
+            }
+            BackendConfig::IoUring(cfg) => {
+                core::cfg_select! {
+                    target_os = "linux" => {
+                        use crate::io::directory::iouring::directory::IoUringDirectory;
+                        Box::new(
+                            Table::<IoUringDirectory>::create(table_name, schema, cfg.clone()).await?,
+                        )
+                    }
+                    _ => {
+                        let _ = (cfg, schema);
+                        return Err(crate::io::directory::iouring::unsupported_platform_error());
+                    }
+                }
             }
         };
 
@@ -267,5 +301,39 @@ mod tests {
 
         let err = svc.read("empty", &["a"], &["score"]).await;
         assert!(err.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_iouring_backend_round_trip() {
+        use crate::io::directory::iouring::IoUringConfig;
+
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            storage: StorageConfig {
+                backend: BackendConfig::IoUring(IoUringConfig {
+                    cache_dir: dir.path().to_path_buf(),
+                    ..IoUringConfig::default()
+                }),
+            },
+            ..Config::default()
+        };
+        let svc = MurrService::new(config).await.unwrap();
+
+        svc.create("users", test_schema()).await.unwrap();
+
+        let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
+        svc.write("users", &batch).await.unwrap();
+
+        let result = svc.read("users", &["c", "a"], &["score"]).await.unwrap();
+        assert_eq!(result.num_rows(), 2);
+
+        let vals = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert_eq!(vals.value(0), 3.0);
+        assert_eq!(vals.value(1), 1.0);
     }
 }

@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use crate::io::directory::mmap::directory::MMapConfig;
+use crate::io::directory::iouring::IoUringConfig;
 use crate::io::directory::mem::directory::MemConfig;
+use crate::io::directory::mmap::directory::MMapConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BackendConfig {
     Mmap(MMapConfig),
     Mem(MemConfig),
+    IoUring(IoUringConfig),
 }
 
 impl Default for BackendConfig {

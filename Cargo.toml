@@ -48,6 +48,10 @@ rustc-hash = "2"
 bincode = { version = "2", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
+libc = "0.2"
+
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
@@ -61,7 +65,7 @@ name = "multi_segment_index_bench"
 harness = false
 
 [[bench]]
-name = "row_vs_col_bench"
+name = "read_bench"
 harness = false
 
 [profile.bench]

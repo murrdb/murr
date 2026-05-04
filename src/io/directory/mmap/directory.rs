@@ -47,7 +47,7 @@ fn is_dir_writable(path: &Path) -> bool {
     ok
 }
 
-fn resolve_cache_dir() -> Result<PathBuf, MurrError> {
+pub(crate) fn resolve_cache_dir() -> Result<PathBuf, MurrError> {
     let candidates: Vec<PathBuf> = vec![
         std::env::current_dir().unwrap_or_default(),
         PathBuf::from("/var/lib/murr"),

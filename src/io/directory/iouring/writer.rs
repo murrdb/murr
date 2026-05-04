@@ -6,20 +6,20 @@ use log::debug;
 use crate::core::MurrError;
 use crate::io::directory::DirectoryWriter;
 use crate::io::directory::file_writer;
-use crate::io::directory::mmap::directory::MMapDirectory;
+use crate::io::directory::iouring::directory::IoUringDirectory;
 use crate::io::info::SegmentInfo;
 use crate::io::table::segment::SegmentBytes;
 
-pub struct MMapWriter {
-    dir: Arc<MMapDirectory>,
+pub struct IoUringWriter {
+    dir: Arc<IoUringDirectory>,
 }
 
 #[async_trait]
-impl DirectoryWriter for MMapWriter {
-    type D = MMapDirectory;
+impl DirectoryWriter for IoUringWriter {
+    type D = IoUringDirectory;
 
     async fn new(dir: Arc<Self::D>) -> Result<Self, MurrError> {
-        Ok(MMapWriter { dir })
+        Ok(IoUringWriter { dir })
     }
 
     async fn write(&self, segment: &SegmentBytes) -> Result<(), MurrError> {
@@ -32,14 +32,11 @@ impl DirectoryWriter for MMapWriter {
         let seg_path = self.dir.segment_path(segment_id);
 
         debug!(
-            "mmap write: segment={segment_id} path={} bytes={size_bytes} rows={num_values}",
+            "iouring write: segment={segment_id} path={} bytes={size_bytes} rows={num_values}",
             seg_path.display()
         );
 
-        // Write segment file before updating metadata: an orphaned .seg is harmless,
-        // but a metadata entry pointing to a missing file would error on reader open.
         file_writer::atomic_write(&seg_path, &bytes)?;
-
         file_writer::append_segment_info(
             &metadata_path,
             &self.dir.schema,
