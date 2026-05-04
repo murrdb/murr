@@ -71,8 +71,6 @@ codegen-units = 1 # optional: more stable codegen
 
 [profile.bench.build-override]
 debug = true
-# force-frame-pointers = true
 
 [profile.bench.package."*"]
 debug = true
-# force-frame-pointers = true
