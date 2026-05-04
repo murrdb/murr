@@ -186,10 +186,10 @@ No ETAs, but at least you can see where things stand:
 - [x] Python embedded murrdb, so we can make a cool demo
 - [x] Benchmarking harness: Redis support, Feast and feature-blob styles
 - [x] Win at your own benchmark (this was surprisingly hard btw)
-- [x] Support for `utf8` and `float32` datatypes
+- [x] Support for `utf8`, `float32` and `float64` datatypes
 - [x] Python remote API client (sync + async)
 - [x] Docker image
-- [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16/64, date-time)
+- [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16, date-time)
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
 - [ ] Sparse columns
 - [x] Add RocksDB and Postgres to the benchmark harness
@@ -202,7 +202,7 @@ No ETAs, but at least you can see where things stand:
 
 The storage subsystem is a custom columnar format heavily inspired by [Apache Lucene](https://lucene.apache.org/)'s immutable segment model:
 
-- **[Segments](src/io/segment/)** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
+- **[Segments](src/io/table/segment/)** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
 - **[Directory abstraction](src/io/directory/)** keeps logical data organization separate from physical storage (local filesystem for now, S3 later).
 - **Memory-mapped reads** via [`memmap2`](https://crates.io/crates/memmap2) -- the OS takes care of page caching, segment data is accessed as zero-copy byte slices.
 - **Last-write-wins** key resolution: newer segments shadow older ones for the same key, so you get incremental updates without rewriting old data.
@@ -211,13 +211,13 @@ The storage subsystem is a custom columnar format heavily inspired by [Apache Lu
 <summary>Segment wire format</summary>
 
 ```
-[MURR magic (4B)][version u32 LE]
-[column payloads, 4-byte aligned]
-[footer entries: name_len|name|offset|size per column]
-[footer_size u32 LE]
+[row space:    per row [row_size u32 LE | row_bytes]]
+[key space:    per row [key_len u32 LE | key_bytes | row_offset u32 LE | row_size u32 LE]]
+[footer:       bincode-encoded SegmentFooterV1 (schema + section offsets)]
+[trailer (8B): footer_size u32 LE | version u32 LE]
 ```
 
-The footer-at-the-end layout follows the same pattern as Lucene's compound file format.
+Each row is a self-contained byte buffer: `[null_bitset_size u8][null bitset][static columns][dynamic payloads]`. Static columns (e.g. `float32`, `float64`) sit at known offsets inside the row; dynamic columns (e.g. `utf8`) store a 4-byte payload offset pointing further into the row. The key space duplicates `(row_offset, row_size)` per key so reads can locate a row from a key without scanning the row space. The footer-at-the-end layout follows the same pattern as Lucene's compound file format.
 </details>
 
 <details>
@@ -227,11 +227,12 @@ Each column type has its own binary encoding tuned for scatter-gather reads. We 
 
 | Type | Status | Description |
 |------|--------|-------------|
-| `float32` | Implemented | 16-byte header, 8-byte aligned f32 payload, optional null bitmap |
-| `utf8` | Implemented | 20-byte header, i32 value offsets, concatenated strings, optional null bitmap |
-| `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned |   |
+| `float32` | Implemented | 4-byte static slot per row, optional null bit |
+| `float64` | Implemented | 8-byte static slot per row, optional null bit |
+| `utf8` | Implemented | 4-byte static slot (payload offset) + dynamic `[length u32 LE | bytes]` payload, optional null bit |
+| `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `bool` | Planned |   |
 
-Null bitmaps are u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
+Null tracking is a per-row byte-level bitset (bit set = null) sized to the column count and stored at the start of each row. Adding a primitive dtype is a one-line change in the codec registry; non-primitive dtypes get one new file plus the same one-liner.
 </details>
 
 <details>
@@ -278,7 +279,7 @@ cargo test                   # Run all tests
 cargo check                  # Fast syntax/type check
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
+cargo bench --bench <name>   # Run a benchmark (multi_segment_index_bench, row_vs_col_bench)
 ```
 
 ## License
