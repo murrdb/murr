@@ -20,7 +20,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 log = { version = "0.4.29", features = ["kv"] }
 env_logger = "0.11"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 arrow = { version = "58", default-features = true, features = ["ipc"] }
 parquet = { version = "58", default-features = false, features = ["arrow"] }
 tokio = { version = "1", features = [
