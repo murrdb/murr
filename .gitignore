@@ -5,3 +5,4 @@ __pycache__/
 *.so
 *.egg-info/
 .pi
+.perf/
