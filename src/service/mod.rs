@@ -304,15 +304,23 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[serial_test::file_serial]
     #[tokio::test]
     async fn test_iouring_backend_round_trip() {
         use crate::io::directory::iouring::IoUringConfig;
 
         let dir = TempDir::new().unwrap();
+        // Same memlock-friendly settings as the iouring directory unit
+        // tests: skip register_buffers, tiny pools.
         let config = Config {
             storage: StorageConfig {
                 backend: BackendConfig::IoUring(IoUringConfig {
                     cache_dir: dir.path().to_path_buf(),
+                    workers: 1,
+                    ring_size: 8,
+                    buffer_slots: 8,
+                    register_buffers: false,
+                    coalesce_slots: 4,
                     ..IoUringConfig::default()
                 }),
             },

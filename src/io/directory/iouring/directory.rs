@@ -1,11 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use log::info;
 
 use crate::core::{MurrError, TableSchema};
 use crate::io::directory::iouring::IoUringConfig;
+use crate::io::directory::iouring::pool::IoUringPool;
 use crate::io::directory::iouring::reader::IoUringReader;
 use crate::io::directory::iouring::writer::IoUringWriter;
 use crate::io::directory::{Directory, DirectoryReader, DirectoryWriter};
@@ -16,6 +17,7 @@ pub struct IoUringDirectory {
     index: String,
     pub(crate) schema: TableSchema,
     pub(crate) cfg: IoUringConfig,
+    pool: OnceLock<Arc<IoUringPool>>,
 }
 
 impl IoUringDirectory {
@@ -29,6 +31,20 @@ impl IoUringDirectory {
 
     pub fn metadata_path(&self) -> PathBuf {
         self.path().join(Self::METADATA_JSON)
+    }
+
+    /// Get-or-create the shared io_uring worker pool. First reader on this
+    /// directory pays the spawn cost; subsequent readers (and reopens) reuse
+    /// the same pool.
+    pub(crate) fn pool(&self) -> Result<Arc<IoUringPool>, MurrError> {
+        if let Some(pool) = self.pool.get() {
+            return Ok(Arc::clone(pool));
+        }
+        let pool = Arc::new(IoUringPool::new(self.cfg.clone())?);
+        match self.pool.set(Arc::clone(&pool)) {
+            Ok(()) => Ok(pool),
+            Err(_) => Ok(Arc::clone(self.pool.get().expect("set or already set"))),
+        }
     }
 }
 
@@ -64,6 +80,7 @@ impl Directory for IoUringDirectory {
             index: index.to_string(),
             schema,
             cfg: config,
+            pool: OnceLock::new(),
         })
     }
 
@@ -84,6 +101,7 @@ impl Directory for IoUringDirectory {
             index: index.to_string(),
             schema: info.schema,
             cfg: config,
+            pool: OnceLock::new(),
         })
     }
 

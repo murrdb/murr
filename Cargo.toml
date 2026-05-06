@@ -51,6 +51,7 @@ indexmap = { version = "2", features = ["serde"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"
 libc = "0.2"
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
@@ -59,6 +60,7 @@ rand = "0.10"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
+serial_test = { version = "3", features = ["file_locks"] }
 
 [[bench]]
 name = "multi_segment_index_bench"

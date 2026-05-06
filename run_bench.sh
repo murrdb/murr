@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Profile a Criterion bench under `perf` and emit an LLM-friendly hotspot report.
 # Usage: ./run_bench.sh <bench_name>
-# Env: PROFILE_TIME=<secs>  DELAY_MS=<ms>  FREQ=<hz>  MMAP_PAGES=<spec>  ADDR2LINE=<path>
+# Env: PROFILE_TIME=<secs>  DELAY_MS=<ms>  FREQ=<hz>  ADDR2LINE=<path>
 set -euo pipefail
 
 BENCH="${1:?Usage: $0 <bench_name>}"
 PROFILE_TIME="${PROFILE_TIME:-15}"
-DELAY_MS="${DELAY_MS:-0}"
-FREQ="${FREQ:-999}"
+DELAY_MS="${DELAY_MS:-7000}"
+FREQ="${FREQ:-200}"
 
 PERF_DIR=".perf"
 mkdir -p "$PERF_DIR"
@@ -46,15 +46,14 @@ delay_arg=()
 [ "$DELAY_MS" -gt 0 ] && delay_arg=(-D "$DELAY_MS")
 # dwarf,32768: 32 KiB user-stack snapshot — enough for tokio+libc chains
 #   without exhausting the per-CPU ring buffer like 65528 did.
-# No -m override: perf auto-fits to perf_event_mlock_kb (default 516 KiB).
-#   If samples are lost on a beefy box, run with MMAP_PAGES=8M after
-#   `sudo sysctl -w kernel.perf_event_mlock_kb=16384`.
-mmap_arg=()
-[ -n "${MMAP_PAGES:-}" ] && mmap_arg=(-m "$MMAP_PAGES")
+# -m 8: 32 KiB perf ring per CPU. Perf's default (~512 KiB) eats most of the
+#   ~8 MiB RLIMIT_MEMLOCK budget, which makes io_uring benches (read_bench's
+#   `uring/*`) fail with ENOMEM at io_uring_setup. 8 pages keeps perf's
+#   footprint small enough that io_uring can still register its rings.
 
-echo "perf record -F $FREQ --call-graph dwarf,32768 ${mmap_arg[*]:-} ${delay_arg[*]:-} ($PROFILE_TIME s of bench iters)..." >&2
+echo "perf record -F $FREQ --call-graph dwarf,32768 -m 32 ${delay_arg[*]:-} ($PROFILE_TIME s of bench iters)..." >&2
 rm -f "$PERF_DATA"
-perf record -F "$FREQ" --call-graph dwarf,32768 "${mmap_arg[@]}" "${delay_arg[@]}" \
+perf record -F "$FREQ" --call-graph dwarf,32768 -m 32 "${delay_arg[@]}" \
     -o "$PERF_DATA" -- "$BIN" --bench --profile-time "$PROFILE_TIME" >&2
 
 # Surface lost-sample count up-front so a degraded run is obvious.

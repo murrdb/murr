@@ -104,7 +104,17 @@ fn bench_io(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let (table_schema, arrow_schema) = make_schema();
     let batch = generate_batch(&arrow_schema, NUM_ROWS);
-    let tmp = TempDir::new().unwrap();
+    // Pinned to a mount without inotify/fanotify watchers so the bench is not
+    // dominated by `__fsnotify_parent` walks during reads. The directory must
+    // exist; create it once on the host (e.g. `mkdir -p /tmp/murrbench_mount`).
+    let bench_root = std::path::Path::new("/tmp/murrbench_mount");
+    let tmp = TempDir::new_in(bench_root).unwrap_or_else(|e| {
+        panic!(
+            "failed to create temp dir under {}: {e}. Create it with `mkdir -p {}` first.",
+            bench_root.display(),
+            bench_root.display()
+        )
+    });
 
     eprintln!(
         "setup: {NUM_ROWS} rows, cache root = {}",
@@ -132,6 +142,17 @@ fn bench_io(c: &mut Criterion) {
         table_schema.clone(),
         io::directory::iouring::IoUringConfig {
             cache_dir: tmp.path().join("uring"),
+            direct: true,
+            workers: 1,
+            ring_size: 1024,
+            buffer_slots: 1024,
+            sqpoll: false,
+            register_buffers: false,
+            // Coalesce reads landing in the same 128 KiB bucket into one
+            // SQE. To re-baseline against the no-coalesce path, set
+            // `coalesce_window: 0` and rerun.
+            coalesce_window: 16 * 1024,
+            coalesce_slots: 32,
             ..io::directory::iouring::IoUringConfig::default()
         },
         &batch,
@@ -148,8 +169,8 @@ fn bench_io(c: &mut Criterion) {
     group.sample_size(100);
 
     for &num_keys in KEY_COUNTS {
-        bench_backend(&mut group, &rt, "mem", num_keys, &mem_reader, &col_refs);
-        bench_backend(&mut group, &rt, "mmap", num_keys, &mmap_reader, &col_refs);
+        //bench_backend(&mut group, &rt, "mem", num_keys, &mem_reader, &col_refs);
+        //bench_backend(&mut group, &rt, "mmap", num_keys, &mmap_reader, &col_refs);
         #[cfg(target_os = "linux")]
         bench_backend(&mut group, &rt, "uring", num_keys, &uring_reader, &col_refs);
     }
