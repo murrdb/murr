@@ -47,6 +47,7 @@ lean_string = "0.6"
 rustc-hash = "2"
 bincode = { version = "2", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
+rocksdb = "0.24"
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
