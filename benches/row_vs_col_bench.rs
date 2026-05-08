@@ -87,11 +87,12 @@ fn bench_io(c: &mut Criterion) {
     std::fs::create_dir_all(&io4_path).unwrap();
     eprintln!("io4: writing {} rows to {}", NUM_ROWS, io4_path.display());
     let io4_table = {
-        let store = io4::store::rocksdb::plain::PlainRocksDBStore::open(
-            &io4_path,
-            &io4::store::rocksdb::plain::PlainConfig::default(),
-        )
-        .unwrap();
+        // let store = io4::store::rocksdb::plain::PlainRocksDBStore::open(
+        //     &io4_path,
+        //     &io4::store::rocksdb::plain::PlainConfig::default(),
+        // )
+        // .unwrap();
+        let store = io4::store::memory::MemoryStore::new();
         let store = Arc::new(RwLock::new(store));
         let table =
             io4::table::Table::create(store.clone(), "bench", table_schema.clone()).unwrap();

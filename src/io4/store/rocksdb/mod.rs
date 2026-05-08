@@ -6,6 +6,7 @@ use crate::io4::store::ReadResult;
 pub mod config;
 pub mod plain;
 
+const MANIFEST_FILE: &str = "manifest.json";
 pub struct MultiGetResult<'a> {
     pub(crate) values: Vec<Result<Option<DBPinnableSlice<'a>>, Error>>,
 }

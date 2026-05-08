@@ -3,11 +3,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use arrow::{
-    array::{Array, ArrayRef, RecordBatch, StringArray},
-    datatypes::{DataType, Field, Schema},
-};
-
 use crate::{
     core::{DType, MurrError, TableSchema},
     io4::{
@@ -17,6 +12,13 @@ use crate::{
         store::{ReadResult, Store},
     },
 };
+use arrow::{
+    array::{Array, ArrayRef, RecordBatch, StringArray},
+    datatypes::{DataType, Field, Schema},
+};
+use itertools::Itertools;
+
+const WRITE_CHUNK_SIZE: usize = 1_000_000;
 
 pub struct Table<S: Store> {
     store: Arc<RwLock<S>>,
@@ -76,10 +78,7 @@ impl<S: Store> Table<S> {
             .as_any()
             .downcast_ref::<StringArray>()
             .ok_or_else(|| {
-                MurrError::SegmentError(format!(
-                    "key column '{}' must be Utf8",
-                    self.table.key
-                ))
+                MurrError::SegmentError(format!("key column '{}' must be Utf8", self.table.key))
             })?;
 
         let mut decoders: Vec<Box<dyn ColumnDecoder>> =
@@ -92,23 +91,25 @@ impl<S: Store> Table<S> {
         }
 
         let n = ordered.num_rows();
-        let mut rows: Vec<WriteRow> = Vec::with_capacity(n);
-        for i in 0..n {
-            if key_array.is_null(i) {
-                return Err(MurrError::SegmentError("null in key column".into()));
+        let mut store = self.store.write().expect("store lock poisoned");
+        for chunk_indexes in &(0..n).into_iter().chunks(WRITE_CHUNK_SIZE) {
+            let mut chunk: Vec<WriteRow> = Vec::with_capacity(WRITE_CHUNK_SIZE);
+            for i in chunk_indexes {
+                if key_array.is_null(i) {
+                    return Err(MurrError::SegmentError("null in key column".into()));
+                }
+                let mut row = WriteRow::new(&self.segment, key_array.value(i));
+                for d in &decoders {
+                    d.write_to_row(i, &mut row)?;
+                }
+                chunk.push(row);
             }
-            let mut row = WriteRow::new(&self.segment, key_array.value(i));
-            for d in &decoders {
-                d.write_to_row(i, &mut row)?;
-            }
-            rows.push(row);
+            store.write(
+                &self.name,
+                chunk.iter().map(|r| (r.key.as_slice(), r.bytes.as_slice())),
+            )?;
         }
 
-        let mut store = self.store.write().expect("store lock poisoned");
-        store.write(
-            &self.name,
-            rows.iter().map(|r| (r.key.as_slice(), r.bytes.as_slice())),
-        )?;
         Ok(())
     }
 
@@ -119,9 +120,7 @@ impl<S: Store> Table<S> {
                 self.columns
                     .get(*name)
                     .map(|idx| &self.segment.columns[*idx])
-                    .ok_or_else(|| {
-                        MurrError::SegmentError(format!("column '{name}' not found"))
-                    })
+                    .ok_or_else(|| MurrError::SegmentError(format!("column '{name}' not found")))
             })
             .collect::<Result<_, _>>()?;
 
@@ -160,11 +159,7 @@ impl<S: Store> Table<S> {
             .map_err(|e| MurrError::ArrowError(e.to_string()))
     }
 
-    fn build(
-        store: Arc<RwLock<S>>,
-        name: String,
-        table: TableSchema,
-    ) -> Result<Self, MurrError> {
+    fn build(store: Arc<RwLock<S>>, name: String, table: TableSchema) -> Result<Self, MurrError> {
         let key_col = table.columns.get(&table.key).ok_or_else(|| {
             MurrError::TableError(format!("key column '{}' not in schema", table.key))
         })?;
@@ -469,7 +464,9 @@ mod tests {
         let table = Table::create(store(), "t", schema).unwrap();
         table.write(&batch).unwrap();
 
-        let out = table.read(&["a", "b", "c"], &["f32", "f64", "label"]).unwrap();
+        let out = table
+            .read(&["a", "b", "c"], &["f32", "f64", "label"])
+            .unwrap();
         let f32 = out
             .column_by_name("f32")
             .unwrap()

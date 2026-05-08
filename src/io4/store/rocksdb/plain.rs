@@ -8,9 +8,8 @@ use rocksdb::{
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
+use crate::io4::store::rocksdb::MANIFEST_FILE;
 use crate::io4::store::{Manifest, Store, rocksdb::MultiGetResult};
-
-const MANIFEST_FILE: &str = "manifest.json";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlainConfig {
