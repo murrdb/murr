@@ -20,6 +20,7 @@ use crate::{
 
 pub trait ColumnEncoder: Send {
     fn add_row(&mut self, row: &ReadRow) -> Result<(), MurrError>;
+    fn add_empty(&mut self) -> Result<(), MurrError>;
     fn build(&mut self) -> ArrayRef;
 }
 
@@ -57,10 +58,7 @@ pub(crate) fn downcast<'a, A: Array + 'static>(
     expected: &str,
 ) -> Result<&'a A, MurrError> {
     array.as_any().downcast_ref::<A>().ok_or_else(|| {
-        MurrError::SegmentError(format!(
-            "expected {expected}, got {:?}",
-            array.data_type()
-        ))
+        MurrError::SegmentError(format!("expected {expected}, got {:?}", array.data_type()))
     })
 }
 
@@ -94,9 +92,9 @@ mod tests {
         ];
         let schema = SegmentSchema::new(&cols);
 
-        let f32_in = Float32Array::from(vec![Some(1.5), None, Some(-2.5), Some(0.0), Some(f32::NAN)]);
-        let f64_in =
-            Float64Array::from(vec![Some(1.0), Some(-1e10), None, Some(0.0), Some(2.5)]);
+        let f32_in =
+            Float32Array::from(vec![Some(1.5), None, Some(-2.5), Some(0.0), Some(f32::NAN)]);
+        let f64_in = Float64Array::from(vec![Some(1.0), Some(-1e10), None, Some(0.0), Some(2.5)]);
         let s_in = StringArray::from(vec![Some("hi"), Some(""), Some("δ"), None, Some("world")]);
         let n = f32_in.len();
 
@@ -114,7 +112,7 @@ mod tests {
 
         let row_buffers: Vec<Vec<u8>> = (0..n)
             .map(|i| {
-                let mut wrow = WriteRow::new(&schema);
+                let mut wrow = WriteRow::new(&schema, "");
                 for d in &decoders {
                     d.write_to_row(i, &mut wrow).unwrap();
                 }
@@ -146,8 +144,14 @@ mod tests {
                 }
             }
         }
-        assert_eq!(out[1].as_any().downcast_ref::<Float64Array>().unwrap(), &f64_in);
-        assert_eq!(out[2].as_any().downcast_ref::<StringArray>().unwrap(), &s_in);
+        assert_eq!(
+            out[1].as_any().downcast_ref::<Float64Array>().unwrap(),
+            &f64_in
+        );
+        assert_eq!(
+            out[2].as_any().downcast_ref::<StringArray>().unwrap(),
+            &s_in
+        );
     }
 
     #[test]

@@ -48,6 +48,11 @@ where
         Ok(())
     }
 
+    fn add_empty(&mut self) -> Result<(), MurrError> {
+        self.builder.append_null();
+        Ok(())
+    }
+
     fn build(&mut self) -> ArrayRef {
         Arc::new(self.builder.finish())
     }
@@ -123,7 +128,7 @@ mod tests {
         let dec = PrimitiveDecoder::<Float32Type>::new(c.clone(), &input).unwrap();
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
-                let mut w = WriteRow::new(&schema);
+                let mut w = WriteRow::new(&schema, "");
                 dec.write_to_row(i, &mut w).unwrap();
                 w.bytes
             })
@@ -158,7 +163,7 @@ mod tests {
         let dec = PrimitiveDecoder::<Float64Type>::new(c.clone(), &input).unwrap();
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
-                let mut w = WriteRow::new(&schema);
+                let mut w = WriteRow::new(&schema, "");
                 dec.write_to_row(i, &mut w).unwrap();
                 w.bytes
             })

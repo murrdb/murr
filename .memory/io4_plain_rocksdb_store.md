@@ -44,3 +44,11 @@ PlainTable is RocksDB's hash-indexed SST format — built for in-memory point-lo
 ## Why `WriteBatch` instead of per-key `put_cf`
 
 One `WriteBatch` → one `DB::write_opt` call → one WAL append + one memtable insert per N rows. Per-key `put_cf` would do N WAL fsyncs (or N WAL appends with default WriteOptions) and N memtable insertions. For batch ingest from Parquet partitions this is the difference between an O(N) syscall path and an O(1) one.
+
+## Why a sidecar `manifest.json`, not a `_meta` column family
+
+Per-table `TableSchema` is persisted in `<db_path>/manifest.json` (JSON, atomic tmp+rename in `Manifest::to_file`). The store loads it on `open` and rewrites on `create_table`. The `Store` trait now exposes `manifest()` so the service layer can rehydrate its registry on restart without the caller re-supplying schemas.
+
+Considered and rejected: a reserved `_meta` column family inside RocksDB. It would have given atomic checkpoint inclusion for free, but required a second `Options` profile (block-based, not PlainTable+mmap) and pushed metadata schema design into the trait. At pre-alpha, the sidecar's debuggability (`cat manifest.json`) and zero-friction `MemoryStore` parity (just an in-memory field) outweigh the atomicity argument.
+
+Known limitation: there is a small crash window between `db.create_cf` and `manifest.to_file`. If the process dies between the two, the next `open` sees an orphan CF that is invisible through the manifest. Acceptable until a `drop_table` API exists to clean orphans up.

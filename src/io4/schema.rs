@@ -33,6 +33,7 @@ impl From<&TableSchema> for SegmentSchema {
         let columns: Vec<SegmentColumnSchema> = schema
             .columns
             .iter()
+            .filter(|(name, _)| *name != &schema.key)
             .enumerate()
             .map(|(i, (name, col))| {
                 let column = SegmentColumnSchema {

@@ -48,6 +48,7 @@ rustc-hash = "2"
 bincode = { version = "2", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 rocksdb = "0.24"
+itertools = "0.14"
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }

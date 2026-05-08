@@ -37,6 +37,10 @@ impl ColumnEncoder for Utf8Encoder {
         }
         Ok(())
     }
+    fn add_empty(&mut self) -> Result<(), MurrError> {
+        self.builder.append_null();
+        Ok(())
+    }
 
     fn build(&mut self) -> ArrayRef {
         Arc::new(self.builder.finish())
@@ -101,7 +105,7 @@ mod tests {
         let dec = Utf8Decoder::new(c.clone(), &input).unwrap();
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
-                let mut w = WriteRow::new(&schema);
+                let mut w = WriteRow::new(&schema, "");
                 dec.write_to_row(i, &mut w).unwrap();
                 w.bytes
             })
@@ -112,13 +116,16 @@ mod tests {
             enc.add_row(&ReadRow::new(&schema, b)).unwrap();
         }
         let out_arr = enc.build();
-        assert_eq!(out_arr.as_any().downcast_ref::<StringArray>().unwrap(), &input);
+        assert_eq!(
+            out_arr.as_any().downcast_ref::<StringArray>().unwrap(),
+            &input
+        );
     }
 
     #[test]
     fn encoder_rejects_invalid_utf8() {
         let (schema, c) = single();
-        let mut w = WriteRow::new(&schema);
+        let mut w = WriteRow::new(&schema, "");
         w.write_dynamic(&c, &[0xFF, 0xFE, 0xFD]);
         let row = ReadRow::new(&schema, &w.bytes);
 

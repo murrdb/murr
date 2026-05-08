@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use crate::core::MurrError;
-use crate::io4::store::{ReadResult, Store};
+use crate::core::{MurrError, TableSchema};
+use crate::io4::store::{Manifest, ReadResult, Store};
 
 #[derive(Default)]
 pub struct MemoryStore {
     pub tables: HashMap<String, HashMap<Vec<u8>, Vec<u8>>>,
+    manifest: Manifest,
 }
 
 impl MemoryStore {
@@ -27,10 +28,8 @@ impl ReadResult for MemoryReadResult<'_> {
 impl Store for MemoryStore {
     type R<'a> = MemoryReadResult<'a>;
 
-    fn create_table(&mut self, table: &str) -> Result<(), MurrError> {
-        if self.tables.contains_key(table) {
-            return Err(MurrError::TableAlreadyExists(table.to_string()));
-        }
+    fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError> {
+        self.manifest.add_table(table, schema)?;
         self.tables.insert(table.to_string(), HashMap::new());
         Ok(())
     }
@@ -51,37 +50,59 @@ impl Store for MemoryStore {
         Ok(MemoryReadResult { values })
     }
 
-    fn write<'k, 'v>(
+    fn write<'a>(
         &mut self,
         table: &str,
-        keys: impl Iterator<Item = &'k [u8]>,
-        values: impl Iterator<Item = &'v [u8]>,
+        rows: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
     ) -> Result<(), MurrError> {
-        let rows = self
+        let entries = self
             .tables
             .get_mut(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
-        for (k, v) in keys.zip(values) {
-            rows.insert(k.to_vec(), v.to_vec());
+        for (k, v) in rows {
+            entries.insert(k.to_vec(), v.to_vec());
         }
         Ok(())
+    }
+
+    fn manifest(&self) -> &Manifest {
+        &self.manifest
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{ColumnSchema, DType};
+    use indexmap::IndexMap;
+
+    fn schema() -> TableSchema {
+        let mut columns = IndexMap::new();
+        columns.insert(
+            "id".into(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: false,
+            },
+        );
+        TableSchema {
+            key: "id".into(),
+            columns,
+        }
+    }
 
     #[test]
     fn round_trip() {
         let mut store = MemoryStore::new();
-        store.create_table("users").unwrap();
+        store.create_table("users", &schema()).unwrap();
 
         let keys: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let vals: [&[u8]; 3] = [b"a-payload", b"b-payload", b"c-payload"];
-        store
-            .write("users", keys.iter().copied(), vals.iter().copied())
-            .unwrap();
+        let rows: [(&[u8], &[u8]); 3] = [
+            (b"alice", b"a-payload"),
+            (b"bob", b"b-payload"),
+            (b"carol", b"c-payload"),
+        ];
+        store.write("users", rows.iter().copied()).unwrap();
 
         let result = store.read("users", &keys).unwrap();
         let got: Vec<Option<Vec<u8>>> = result
@@ -97,13 +118,13 @@ mod tests {
     #[test]
     fn missing_key_yields_none() {
         let mut store = MemoryStore::new();
-        store.create_table("users").unwrap();
+        store.create_table("users", &schema()).unwrap();
 
-        let written_keys: [&[u8]; 2] = [b"alice", b"carol"];
-        let vals: [&[u8]; 2] = [b"a-payload", b"c-payload"];
-        store
-            .write("users", written_keys.iter().copied(), vals.iter().copied())
-            .unwrap();
+        let written: [(&[u8], &[u8]); 2] = [
+            (b"alice", b"a-payload"),
+            (b"carol", b"c-payload"),
+        ];
+        store.write("users", written.iter().copied()).unwrap();
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
         let result = store.read("users", &lookup).unwrap();
@@ -120,10 +141,9 @@ mod tests {
     #[test]
     fn write_to_unknown_table_fails() {
         let mut store = MemoryStore::new();
-        let keys: [&[u8]; 1] = [b"x"];
-        let vals: [&[u8]; 1] = [b"y"];
+        let rows: [(&[u8], &[u8]); 1] = [(b"x", b"y")];
         let err = store
-            .write("nope", keys.iter().copied(), vals.iter().copied())
+            .write("nope", rows.iter().copied())
             .unwrap_err();
         assert!(matches!(err, MurrError::TableNotFound(_)));
     }
@@ -131,8 +151,16 @@ mod tests {
     #[test]
     fn create_duplicate_table_fails() {
         let mut store = MemoryStore::new();
-        store.create_table("users").unwrap();
-        let err = store.create_table("users").unwrap_err();
+        store.create_table("users", &schema()).unwrap();
+        let err = store.create_table("users", &schema()).unwrap_err();
         assert!(matches!(err, MurrError::TableAlreadyExists(_)));
+    }
+
+    #[test]
+    fn manifest_tracks_created_tables() {
+        let mut store = MemoryStore::new();
+        store.create_table("users", &schema()).unwrap();
+        assert!(store.manifest().contains("users"));
+        assert_eq!(store.manifest().schema("users"), Some(&schema()));
     }
 }
