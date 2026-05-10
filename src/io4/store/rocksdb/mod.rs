@@ -135,19 +135,20 @@ impl Store for RocksDBStore {
             let mut order: Vec<usize> = (0..n).collect();
             order.sort_unstable_by_key(|&i| keys[i]);
             let sorted: Vec<&[u8]> = order.iter().map(|&i| keys[i]).collect();
-            let raw = self
+            let mut raw = self
                 .db
                 .batched_multi_get_cf_opt(&cf, &sorted, true, &self.read_opts);
-            // raw[i] holds the result for sorted[i] = keys[order[i]]; scatter back to caller order.
-            let mut slots: Vec<Option<Result<Option<DBPinnableSlice<'a>>, Error>>> =
-                (0..n).map(|_| None).collect();
-            for (i, val) in raw.into_iter().enumerate() {
-                slots[order[i]] = Some(val);
+            // raw[i] is the result for keys[order[i]]; move each raw[i] to position order[i]
+            // via cycle-following. Each inner iteration fixes one slot permanently, so total
+            // work is O(n) swaps even though the loop is nested.
+            for i in 0..n {
+                while order[i] != i {
+                    let t = order[i];
+                    raw.swap(i, t);
+                    order.swap(i, t);
+                }
             }
-            slots
-                .into_iter()
-                .map(|s| s.expect("permutation covers every slot"))
-                .collect()
+            raw
         } else {
             self.db
                 .batched_multi_get_cf_opt(&cf, keys, false, &self.read_opts)
