@@ -85,11 +85,10 @@ where
     T: ArrowPrimitiveType + 'static,
     T::Native: NoUninit,
 {
-    fn write_to_row(&self, index: usize, row: &mut WriteRow) -> Result<(), MurrError> {
+    fn write_to_row(&self, index: usize, row: &mut WriteRow) {
         if !self.array.is_null(index) {
             row.write_static(&self.column, self.array.value(index));
         }
-        Ok(())
     }
 }
 
@@ -129,7 +128,7 @@ mod tests {
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
                 let mut w = WriteRow::new(&schema, "");
-                dec.write_to_row(i, &mut w).unwrap();
+                dec.write_to_row(i, &mut w);
                 w.bytes
             })
             .collect();
@@ -164,7 +163,7 @@ mod tests {
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
                 let mut w = WriteRow::new(&schema, "");
-                dec.write_to_row(i, &mut w).unwrap();
+                dec.write_to_row(i, &mut w);
                 w.bytes
             })
             .collect();

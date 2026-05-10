@@ -16,9 +16,6 @@ use arrow::{
     array::{Array, ArrayRef, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
 };
-use itertools::Itertools;
-
-const WRITE_CHUNK_SIZE: usize = 1_000_000;
 
 pub struct Table<S: Store> {
     store: Arc<RwLock<S>>,
@@ -80,6 +77,9 @@ impl<S: Store> Table<S> {
             .ok_or_else(|| {
                 MurrError::SegmentError(format!("key column '{}' must be Utf8", self.table.key))
             })?;
+        if key_array.null_count() > 0 {
+            return Err(MurrError::SegmentError("null in key column".into()));
+        }
 
         let mut decoders: Vec<Box<dyn ColumnDecoder>> =
             Vec::with_capacity(self.segment.columns.len());
@@ -92,23 +92,17 @@ impl<S: Store> Table<S> {
 
         let n = ordered.num_rows();
         let mut store = self.store.write().expect("store lock poisoned");
-        for chunk_indexes in &(0..n).into_iter().chunks(WRITE_CHUNK_SIZE) {
-            let mut chunk: Vec<WriteRow> = Vec::with_capacity(WRITE_CHUNK_SIZE);
-            for i in chunk_indexes {
-                if key_array.is_null(i) {
-                    return Err(MurrError::SegmentError("null in key column".into()));
-                }
+
+        store.write(
+            &self.name,
+            (0..n).into_iter().map(|i| {
                 let mut row = WriteRow::new(&self.segment, key_array.value(i));
                 for d in &decoders {
-                    d.write_to_row(i, &mut row)?;
+                    d.write_to_row(i, &mut row);
                 }
-                chunk.push(row);
-            }
-            store.write(
-                &self.name,
-                chunk.iter().map(|r| (r.key.as_slice(), r.bytes.as_slice())),
-            )?;
-        }
+                row.into()
+            }),
+        )?;
 
         Ok(())
     }

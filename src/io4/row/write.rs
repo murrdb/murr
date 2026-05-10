@@ -1,9 +1,19 @@
 use crate::io4::schema::{SegmentColumnSchema, SegmentSchema};
+use crate::io4::store::KeyValue;
 
 pub struct WriteRow<'a> {
     pub schema: &'a SegmentSchema,
     pub key: Vec<u8>,
     pub bytes: Vec<u8>,
+}
+
+impl<'a> From<WriteRow<'a>> for KeyValue {
+    fn from(wr: WriteRow<'a>) -> Self {
+        KeyValue {
+            key: wr.key,
+            value: wr.bytes,
+        }
+    }
 }
 
 impl<'a> WriteRow<'a> {

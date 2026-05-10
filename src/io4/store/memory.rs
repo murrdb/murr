@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::{MurrError, TableSchema};
-use crate::io4::store::{Manifest, ReadResult, Store};
+use crate::io4::store::{KeyValue, Manifest, ReadResult, Store};
 
 #[derive(Default)]
 pub struct MemoryStore {
@@ -34,11 +34,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    fn read<'a>(
-        &'a self,
-        table: &str,
-        keys: &[&[u8]],
-    ) -> Result<Self::R<'a>, MurrError> {
+    fn read<'a>(&'a self, table: &str, keys: &[&[u8]]) -> Result<Self::R<'a>, MurrError> {
         let rows = self
             .tables
             .get(table)
@@ -50,17 +46,17 @@ impl Store for MemoryStore {
         Ok(MemoryReadResult { values })
     }
 
-    fn write<'a>(
+    fn write(
         &mut self,
         table: &str,
-        rows: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
+        rows: impl IntoIterator<Item = KeyValue>,
     ) -> Result<(), MurrError> {
         let entries = self
             .tables
             .get_mut(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
-        for (k, v) in rows {
-            entries.insert(k.to_vec(), v.to_vec());
+        for row in rows {
+            entries.insert(row.key, row.value);
         }
         Ok(())
     }
@@ -97,12 +93,16 @@ mod tests {
         store.create_table("users", &schema()).unwrap();
 
         let keys: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let rows: [(&[u8], &[u8]); 3] = [
-            (b"alice", b"a-payload"),
-            (b"bob", b"b-payload"),
-            (b"carol", b"c-payload"),
-        ];
-        store.write("users", rows.iter().copied()).unwrap();
+        store
+            .write(
+                "users",
+                [
+                    KeyValue::new(*b"alice", *b"a-payload"),
+                    KeyValue::new(*b"bob", *b"b-payload"),
+                    KeyValue::new(*b"carol", *b"c-payload"),
+                ],
+            )
+            .unwrap();
 
         let result = store.read("users", &keys).unwrap();
         let got: Vec<Option<Vec<u8>>> = result
@@ -120,11 +120,15 @@ mod tests {
         let mut store = MemoryStore::new();
         store.create_table("users", &schema()).unwrap();
 
-        let written: [(&[u8], &[u8]); 2] = [
-            (b"alice", b"a-payload"),
-            (b"carol", b"c-payload"),
-        ];
-        store.write("users", written.iter().copied()).unwrap();
+        store
+            .write(
+                "users",
+                [
+                    KeyValue::new(*b"alice", *b"a-payload"),
+                    KeyValue::new(*b"carol", *b"c-payload"),
+                ],
+            )
+            .unwrap();
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
         let result = store.read("users", &lookup).unwrap();
@@ -141,9 +145,8 @@ mod tests {
     #[test]
     fn write_to_unknown_table_fails() {
         let mut store = MemoryStore::new();
-        let rows: [(&[u8], &[u8]); 1] = [(b"x", b"y")];
         let err = store
-            .write("nope", rows.iter().copied())
+            .write("nope", [KeyValue::new(*b"x", *b"y")])
             .unwrap_err();
         assert!(matches!(err, MurrError::TableNotFound(_)));
     }

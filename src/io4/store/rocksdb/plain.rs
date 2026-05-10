@@ -8,6 +8,7 @@ use rocksdb::{
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
+use crate::io4::store::KeyValue;
 use crate::io4::store::rocksdb::MANIFEST_FILE;
 use crate::io4::store::{Manifest, Store, rocksdb::MultiGetResult};
 
@@ -91,7 +92,8 @@ impl PlainRocksDBStore {
     pub fn open(path: &Path, config: &PlainConfig) -> Result<Self, MurrError> {
         let cf_opts: Options = config.into();
         let cfs = DB::list_cf(&cf_opts, path).unwrap_or_default();
-        let db = DB::open_cf(&cf_opts, path, cfs)?;
+        let cf_descriptors = cfs.iter().map(|name| (name.as_str(), cf_opts.clone()));
+        let db = DB::open_cf_with_opts(&cf_opts, path, cf_descriptors)?;
         let manifest = Manifest::from_file(&path.join(MANIFEST_FILE))?;
         Ok(Self {
             db,
@@ -160,10 +162,10 @@ impl Store for PlainRocksDBStore {
         &self.manifest
     }
 
-    fn write<'a>(
+    fn write(
         &mut self,
         table: &str,
-        rows: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
+        rows: impl IntoIterator<Item = KeyValue>,
     ) -> Result<(), MurrError> {
         let cf = self
             .db
@@ -172,8 +174,8 @@ impl Store for PlainRocksDBStore {
 
         for chunk in &rows.into_iter().chunks(self.config.write_batch_size) {
             let mut batch = WriteBatch::default();
-            for (k, v) in chunk {
-                batch.put_cf(cf, k, v);
+            for kv in chunk {
+                batch.put_cf(cf, kv.key, kv.value);
             }
             self.db.write_opt(batch, &self.write_opts)?;
             self.db.flush_cf(cf)?;
@@ -198,7 +200,7 @@ impl Store for PlainRocksDBStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io4::store::ReadResult;
+    use crate::io4::store::{KeyValue, ReadResult};
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
@@ -228,12 +230,16 @@ mod tests {
         store.create_table("users", &schema("id")).unwrap();
 
         let keys: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let rows: [(&[u8], &[u8]); 3] = [
-            (b"alice", b"a-payload"),
-            (b"bob", b"b-payload"),
-            (b"carol", b"c-payload"),
-        ];
-        store.write("users", rows.iter().copied()).unwrap();
+        store
+            .write(
+                "users",
+                [
+                    KeyValue::new(*b"alice", *b"a-payload"),
+                    KeyValue::new(*b"bob", *b"b-payload"),
+                    KeyValue::new(*b"carol", *b"c-payload"),
+                ],
+            )
+            .unwrap();
 
         let result = store.read("users", &keys).unwrap();
         let got: Vec<Option<Vec<u8>>> = result
@@ -252,13 +258,17 @@ mod tests {
         let mut store = open_store(&dir);
         store.create_table("users", &schema("id")).unwrap();
 
-        let rows: [(&[u8], &[u8]); 4] = [
-            (b"alice", b"a"),
-            (b"bob", b"b"),
-            (b"carol", b"c"),
-            (b"dave", b"d"),
-        ];
-        store.write("users", rows.iter().copied()).unwrap();
+        store
+            .write(
+                "users",
+                [
+                    KeyValue::new(*b"alice", *b"a"),
+                    KeyValue::new(*b"bob", *b"b"),
+                    KeyValue::new(*b"carol", *b"c"),
+                    KeyValue::new(*b"dave", *b"d"),
+                ],
+            )
+            .unwrap();
 
         // Mix sorted/unsorted keys, including a miss in the middle.
         let lookup: [&[u8]; 5] = [b"dave", b"alice", b"zzz", b"carol", b"bob"];
@@ -281,8 +291,15 @@ mod tests {
         let mut store = open_store(&dir);
         store.create_table("users", &schema("id")).unwrap();
 
-        let written: [(&[u8], &[u8]); 2] = [(b"alice", b"a-payload"), (b"carol", b"c-payload")];
-        store.write("users", written.iter().copied()).unwrap();
+        store
+            .write(
+                "users",
+                [
+                    KeyValue::new(*b"alice", *b"a-payload"),
+                    KeyValue::new(*b"carol", *b"c-payload"),
+                ],
+            )
+            .unwrap();
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
         let result = store.read("users", &lookup).unwrap();
@@ -302,8 +319,15 @@ mod tests {
         {
             let mut store = open_store(&dir);
             store.create_table("users", &schema("id")).unwrap();
-            let rows: [(&[u8], &[u8]); 2] = [(b"alice", b"v1"), (b"bob", b"v2")];
-            store.write("users", rows.iter().copied()).unwrap();
+            store
+                .write(
+                    "users",
+                    [
+                        KeyValue::new(*b"alice", *b"v1"),
+                        KeyValue::new(*b"bob", *b"v2"),
+                    ],
+                )
+                .unwrap();
         }
 
         let store = open_store(&dir);
@@ -321,8 +345,9 @@ mod tests {
     fn write_to_unknown_table_fails() {
         let dir = TempDir::new().unwrap();
         let mut store = open_store(&dir);
-        let rows: [(&[u8], &[u8]); 1] = [(b"x", b"y")];
-        let err = store.write("nope", rows.iter().copied()).unwrap_err();
+        let err = store
+            .write("nope", [KeyValue::new(*b"x", *b"y")])
+            .unwrap_err();
         assert!(matches!(err, MurrError::TableNotFound(_)));
     }
 
@@ -347,8 +372,9 @@ mod tests {
         let err = store.create_table("users", &schema("id")).unwrap_err();
         assert!(matches!(err, MurrError::TableAlreadyExists(_)));
 
-        let rows: [(&[u8], &[u8]); 1] = [(b"alice", b"v1")];
-        store.write("users", rows.iter().copied()).unwrap();
+        store
+            .write("users", [KeyValue::new(*b"alice", *b"v1")])
+            .unwrap();
     }
 
     #[test]

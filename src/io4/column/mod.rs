@@ -25,7 +25,7 @@ pub trait ColumnEncoder: Send {
 }
 
 pub trait ColumnDecoder: Send + Sync {
-    fn write_to_row(&self, index: usize, row: &mut WriteRow) -> Result<(), MurrError>;
+    fn write_to_row(&self, index: usize, row: &mut WriteRow);
 }
 
 pub fn encoder_for(column: &SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
@@ -114,7 +114,7 @@ mod tests {
             .map(|i| {
                 let mut wrow = WriteRow::new(&schema, "");
                 for d in &decoders {
-                    d.write_to_row(i, &mut wrow).unwrap();
+                    d.write_to_row(i, &mut wrow);
                 }
                 wrow.bytes
             })
