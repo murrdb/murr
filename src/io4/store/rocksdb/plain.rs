@@ -1,9 +1,9 @@
 use rocksdb::{
     KeyEncodingType, MemtableFactory, Options, PlainTableFactoryOptions, SliceTransform,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlainConfig {
     #[serde(default = "default_bloom_bits")]
     pub bloom_bits_per_key: i32,

@@ -14,7 +14,7 @@ use tonic::transport::{Channel, Server};
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io::directory::mmap::directory::MMapConfig;
+use murr::io4::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.
@@ -32,7 +32,8 @@ async fn setup() -> TestHarness {
     let dir = TempDir::new().unwrap();
     let config = Config {
         storage: StorageConfig {
-            backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
+            path: dir.path().to_path_buf(),
+            backend: BackendConfig::Mmap(PlainConfig::default()),
         },
         ..Config::default()
     };

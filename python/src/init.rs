@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use murr::api::MurrHttpService;
 use murr::conf::{BackendConfig, Config, StorageConfig};
-use murr::io::directory::mmap::directory::MMapConfig;
+use murr::io4::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
 pub fn build_config(cache_dir: String, http_port: Option<u16>) -> Config {
     let mut config = Config {
         storage: StorageConfig {
-            backend: BackendConfig::Mmap(MMapConfig::new(PathBuf::from(cache_dir))),
+            path: PathBuf::from(cache_dir),
+            backend: BackendConfig::Mmap(PlainConfig::default()),
         },
         ..Config::default()
     };

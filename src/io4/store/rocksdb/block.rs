@@ -1,12 +1,12 @@
 use rocksdb::{BlockBasedOptions, Cache, DataBlockIndexType, Options};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::io4::store::rocksdb::plain::{
     default_data_block_hash_ratio, default_disable_auto_compactions,
     default_target_file_size_base, default_write_buffer_size,
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BlockConfig {
     /// Bloom filter bits per key. None disables.
     #[serde(default)]
