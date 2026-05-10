@@ -61,6 +61,10 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    fn compact(&self, _table: &str) -> Result<(), MurrError> {
+        Ok(())
+    }
+
     fn manifest(&self) -> &Manifest {
         &self.manifest
     }

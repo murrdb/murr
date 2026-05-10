@@ -36,5 +36,6 @@ pub trait Store {
         rows: impl IntoIterator<Item = KeyValue>,
     ) -> Result<(), MurrError>;
     fn read<'a>(&'a self, table: &str, keys: &[&[u8]]) -> Result<Self::R<'a>, MurrError>;
+    fn compact(&self, table: &str) -> Result<(), MurrError>;
     fn manifest(&self) -> &Manifest;
 }
