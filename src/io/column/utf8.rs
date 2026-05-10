@@ -1,57 +1,72 @@
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, StringArray};
+use arrow::array::{Array, ArrayRef, StringArray, StringBuilder};
 
 use crate::{
     core::MurrError,
     io::{
-        column::{ColumnCodec, downcast},
-        model::SegmentColumnSchema,
-        row::Row,
+        column::{ColumnDecoder, ColumnEncoder, downcast},
+        row::{read::ReadRow, write::WriteRow},
+        schema::SegmentColumnSchema,
     },
 };
 
-pub struct Utf8Codec;
+pub struct Utf8Encoder {
+    column: SegmentColumnSchema,
+    builder: StringBuilder,
+}
 
-impl ColumnCodec for Utf8Codec {
-    fn encode(
-        &self,
-        col: &SegmentColumnSchema,
-        bitset_size: usize,
-        array: &dyn Array,
-        rows: &mut [Row],
-    ) -> Result<(), MurrError> {
-        let data = downcast::<StringArray>(array, "Utf8")?;
-        for (index, value) in data.iter().enumerate() {
-            let row = &mut rows[index];
-            match value {
-                None => row.set_null(col.index as usize),
-                Some(s) => row.set_dynamic_value(bitset_size, col.offset as usize, s.as_bytes()),
-            }
+impl Utf8Encoder {
+    pub fn new(column: SegmentColumnSchema, rows: usize) -> Self {
+        Self {
+            column,
+            builder: StringBuilder::with_capacity(rows, rows * 16),
+        }
+    }
+}
+
+impl ColumnEncoder for Utf8Encoder {
+    fn add_row(&mut self, row: &ReadRow) -> Result<(), MurrError> {
+        if row.is_null(&self.column) {
+            self.builder.append_null();
+        } else {
+            let bytes = row.read_dynamic(&self.column);
+            let s = std::str::from_utf8(bytes)
+                .map_err(|e| MurrError::SegmentError(format!("invalid utf8: {e}")))?;
+            self.builder.append_value(s);
         }
         Ok(())
     }
+    fn add_empty(&mut self) -> Result<(), MurrError> {
+        self.builder.append_null();
+        Ok(())
+    }
 
-    fn decode(
-        &self,
-        col: &SegmentColumnSchema,
-        bitset_size: usize,
-        rows: &[Row],
-    ) -> Result<ArrayRef, MurrError> {
-        let offset = col.offset as usize;
-        let col_index = col.index as usize;
-        let mut values: Vec<Option<&str>> = Vec::with_capacity(rows.len());
-        for row in rows {
-            if row.is_null(col_index) {
-                values.push(None);
-            } else {
-                let bytes = row.get_dynamic_bytes(bitset_size, offset)?;
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|e| MurrError::SegmentError(format!("invalid utf8: {e}")))?;
-                values.push(Some(s));
-            }
+    fn build(&mut self) -> ArrayRef {
+        Arc::new(self.builder.finish())
+    }
+}
+
+pub struct Utf8Decoder {
+    column: SegmentColumnSchema,
+    array: StringArray,
+}
+
+impl Utf8Decoder {
+    pub fn new(column: SegmentColumnSchema, array: &dyn Array) -> Result<Self, MurrError> {
+        let typed = downcast::<StringArray>(array, "Utf8")?;
+        Ok(Self {
+            column,
+            array: typed.clone(),
+        })
+    }
+}
+
+impl ColumnDecoder for Utf8Decoder {
+    fn write_to_row(&self, index: usize, row: &mut WriteRow) {
+        if !self.array.is_null(index) {
+            row.write_dynamic(&self.column, self.array.value(index).as_bytes());
         }
-        Ok(Arc::new(StringArray::from(values)))
     }
 }
 
@@ -60,62 +75,69 @@ mod tests {
     use arrow::array::Float32Array;
 
     use super::*;
-    use crate::{core::DType, io::model::SegmentSchema};
+    use crate::{
+        core::DType,
+        io::{row::read::ReadRow, schema::SegmentSchema},
+    };
 
-    fn schema() -> SegmentSchema {
-        SegmentSchema::new(&[SegmentColumnSchema {
+    fn single() -> (SegmentSchema, SegmentColumnSchema) {
+        let c = SegmentColumnSchema {
             index: 0,
             dtype: DType::Utf8,
             name: "s".into(),
             offset: 0,
-        }])
-    }
-
-    fn fresh_rows(schema: &SegmentSchema, n: usize) -> Vec<Row> {
-        (0..n)
-            .map(|_| Row::new(schema, schema.bitset_size, schema.capacity))
-            .collect()
+        };
+        (SegmentSchema::new(std::slice::from_ref(&c)), c)
     }
 
     #[test]
-    fn roundtrip_with_nulls_empty_and_unicode() {
-        let codec = Utf8Codec;
-        let schema = schema();
-        let array = StringArray::from(vec![
+    fn roundtrip_with_nulls_empty_unicode() {
+        let (schema, c) = single();
+        let input = StringArray::from(vec![
             Some("hello"),
             None,
             Some(""),
             Some("δ-unicode"),
             Some("world"),
         ]);
-        let mut rows = fresh_rows(&schema, array.len());
-        codec
-            .encode(&schema.columns[0], schema.bitset_size, &array, &mut rows)
-            .unwrap();
-        let decoded = codec
-            .decode(&schema.columns[0], schema.bitset_size, &rows)
-            .unwrap();
-        let back = decoded.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(back, &array);
+
+        let dec = Utf8Decoder::new(c.clone(), &input).unwrap();
+        let bufs: Vec<Vec<u8>> = (0..input.len())
+            .map(|i| {
+                let mut w = WriteRow::new(&schema, "");
+                dec.write_to_row(i, &mut w);
+                w.bytes
+            })
+            .collect();
+
+        let mut enc = Utf8Encoder::new(c, input.len());
+        for b in &bufs {
+            enc.add_row(&ReadRow::new(&schema, b)).unwrap();
+        }
+        let out_arr = enc.build();
+        assert_eq!(
+            out_arr.as_any().downcast_ref::<StringArray>().unwrap(),
+            &input
+        );
     }
 
     #[test]
-    fn decode_rejects_invalid_utf8() {
-        let codec = Utf8Codec;
-        let schema = schema();
-        let mut rows = fresh_rows(&schema, 1);
-        rows[0].set_dynamic_value(schema.bitset_size, 0, &[0xFF, 0xFE, 0xFD]);
-        let err = codec.decode(&schema.columns[0], schema.bitset_size, &rows);
+    fn encoder_rejects_invalid_utf8() {
+        let (schema, c) = single();
+        let mut w = WriteRow::new(&schema, "");
+        w.write_dynamic(&c, &[0xFF, 0xFE, 0xFD]);
+        let row = ReadRow::new(&schema, &w.bytes);
+
+        let mut enc = Utf8Encoder::new(c, 1);
+        let err = enc.add_row(&row);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
     }
 
     #[test]
-    fn encode_rejects_wrong_array_type() {
-        let codec = Utf8Codec;
-        let schema = schema();
+    fn decoder_rejects_wrong_array_type() {
+        let (_schema, c) = single();
         let wrong = Float32Array::from(vec![Some(1.0_f32)]);
-        let mut rows = fresh_rows(&schema, 1);
-        let err = codec.encode(&schema.columns[0], schema.bitset_size, &wrong, &mut rows);
+        let err = Utf8Decoder::new(c, &wrong);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
     }
 }

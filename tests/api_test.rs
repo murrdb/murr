@@ -17,7 +17,7 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{BackendConfig, Config, StorageConfig};
-use murr::io4::store::rocksdb::plain::PlainConfig;
+use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
 async fn setup() -> (TempDir, Router) {

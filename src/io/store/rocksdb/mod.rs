@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use rocksdb::{DB, DBPinnableSlice, Error, Options, ReadOptions, WriteBatch, WriteOptions};
 
 use crate::core::{MurrError, TableSchema};
-use crate::io4::store::rocksdb::block::BlockConfig;
-use crate::io4::store::rocksdb::plain::PlainConfig;
-use crate::io4::store::{KeyValue, Manifest, ReadResult, Store};
+use crate::io::store::rocksdb::block::BlockConfig;
+use crate::io::store::rocksdb::plain::PlainConfig;
+use crate::io::store::{KeyValue, Manifest, ReadResult, Store};
 use itertools::Itertools;
 pub mod block;
 pub mod plain;
@@ -170,7 +170,7 @@ impl Store for RocksDBStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io4::store::ReadResult;
+    use crate::io::store::ReadResult;
     use indexmap::IndexMap;
     use rstest::rstest;
     use std::path::Path;

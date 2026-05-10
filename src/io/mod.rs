@@ -1,7 +1,6 @@
-pub mod batch;
 pub mod column;
-pub mod directory;
-pub mod info;
-pub mod model;
+pub mod fs;
 pub mod row;
+pub mod schema;
+pub mod store;
 pub mod table;

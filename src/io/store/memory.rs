@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::{MurrError, TableSchema};
-use crate::io4::store::{KeyValue, Manifest, ReadResult, Store};
+use crate::io::store::{KeyValue, Manifest, ReadResult, Store};
 
 #[derive(Default)]
 pub struct MemoryStore {

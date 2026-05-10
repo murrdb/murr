@@ -7,9 +7,9 @@ use tokio::sync::RwLock;
 
 use crate::conf::{BackendConfig, Config};
 use crate::core::{MurrError, TableSchema};
-use crate::io4::store::Store;
-use crate::io4::store::rocksdb::RocksDBStore;
-use crate::io4::table::Table;
+use crate::io::store::Store;
+use crate::io::store::rocksdb::RocksDBStore;
+use crate::io::table::Table;
 
 pub struct MurrService {
     tables: RwLock<HashMap<String, Table<RocksDBStore>>>,
@@ -117,7 +117,7 @@ mod tests {
     use super::*;
     use crate::conf::StorageConfig;
     use crate::core::{ColumnSchema, DType};
-    use crate::io4::store::rocksdb::plain::PlainConfig;
+    use crate::io::store::rocksdb::plain::PlainConfig;
     use arrow::array::{Array, Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;

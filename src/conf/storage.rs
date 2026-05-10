@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::conf::path::resolve_cache_dir;
-use crate::io4::store::rocksdb::block::BlockConfig;
-use crate::io4::store::rocksdb::plain::PlainConfig;
+use crate::io::store::rocksdb::block::BlockConfig;
+use crate::io::store::rocksdb::plain::PlainConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StorageConfig {

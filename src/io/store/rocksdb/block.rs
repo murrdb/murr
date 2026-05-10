@@ -1,7 +1,7 @@
 use rocksdb::{BlockBasedOptions, Cache, DataBlockIndexType, Options};
 use serde::{Deserialize, Serialize};
 
-use crate::io4::store::rocksdb::plain::{
+use crate::io::store::rocksdb::plain::{
     default_data_block_hash_ratio, default_disable_auto_compactions,
     default_target_file_size_base, default_write_buffer_size,
 };

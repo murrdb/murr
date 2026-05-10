@@ -14,7 +14,7 @@ use tonic::transport::{Channel, Server};
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io4::store::rocksdb::plain::PlainConfig;
+use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
 /// Guard that shuts down the Flight server when dropped.

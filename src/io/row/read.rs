@@ -1,4 +1,4 @@
-use crate::io4::schema::{SegmentColumnSchema, SegmentSchema};
+use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
 
 pub struct ReadRow<'a> {
     pub schema: &'a SegmentSchema,

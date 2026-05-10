@@ -9,7 +9,7 @@ use tokio::runtime::Runtime;
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io4::store::rocksdb::plain::PlainConfig;
+use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 

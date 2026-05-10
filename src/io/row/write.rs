@@ -1,5 +1,5 @@
-use crate::io4::schema::{SegmentColumnSchema, SegmentSchema};
-use crate::io4::store::KeyValue;
+use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
+use crate::io::store::KeyValue;
 
 pub struct WriteRow<'a> {
     pub schema: &'a SegmentSchema,
@@ -56,7 +56,7 @@ impl<'a> WriteRow<'a> {
 mod tests {
     use super::*;
     use crate::core::DType;
-    use crate::io4::row::read::ReadRow;
+    use crate::io::row::read::ReadRow;
 
     fn col(index: u32, dtype: DType, name: &str, offset: u32) -> SegmentColumnSchema {
         SegmentColumnSchema {
