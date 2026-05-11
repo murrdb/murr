@@ -78,3 +78,10 @@ debug = true
 
 [profile.bench.package."*"]
 debug = true
+
+[profile.release]
+opt-level = 3
+debug = "none"
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
