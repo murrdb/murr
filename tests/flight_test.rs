@@ -37,7 +37,7 @@ async fn setup() -> TestHarness {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).await.unwrap());
+    let service = Arc::new(MurrService::new(config).unwrap());
 
     // Create and populate a table
     let schema = TableSchema {
@@ -59,7 +59,7 @@ async fn setup() -> TestHarness {
             ),
         ]),
     };
-    service.create("features", schema).await.unwrap();
+    service.create("features", schema).unwrap();
 
     let arrow_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
@@ -69,7 +69,7 @@ async fn setup() -> TestHarness {
     let scores: Float32Array = vec![Some(1.0), Some(2.0), None].into_iter().collect();
     let batch =
         RecordBatch::try_new(arrow_schema, vec![Arc::new(ids), Arc::new(scores)]).unwrap();
-    service.write("features", &batch).await.unwrap();
+    service.write("features", &batch).unwrap();
 
     // Start Flight server on OS-assigned port with shutdown signal
     let flight_svc = murr::api::MurrFlightService::new(service);

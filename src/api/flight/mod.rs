@@ -71,14 +71,15 @@ impl FlightService for MurrFlightService {
         let fetch: FetchTicket = serde_json::from_slice(&ticket.ticket)
             .map_err(|e| Status::invalid_argument(format!("invalid ticket JSON: {e}")))?;
 
-        let keys: Vec<&str> = fetch.keys.iter().map(|s| s.as_str()).collect();
-        let columns: Vec<&str> = fetch.columns.iter().map(|s| s.as_str()).collect();
-
-        let batch = self
-            .service
-            .read(&fetch.table, &keys, &columns)
-            .await
-            .map_err(Status::from)?;
+        let service = self.service.clone();
+        let batch = tokio::task::spawn_blocking(move || {
+            let keys: Vec<&str> = fetch.keys.iter().map(String::as_str).collect();
+            let columns: Vec<&str> = fetch.columns.iter().map(String::as_str).collect();
+            service.read(&fetch.table, &keys, &columns)
+        })
+        .await
+        .map_err(join_to_status)?
+        .map_err(Status::from)?;
 
         let stream = FlightDataEncoderBuilder::new()
             .build(stream::once(async { Ok(batch) }))
@@ -95,12 +96,13 @@ impl FlightService for MurrFlightService {
         let table_name = descriptor
             .path
             .first()
-            .ok_or_else(|| Status::invalid_argument("path must contain table name"))?;
+            .ok_or_else(|| Status::invalid_argument("path must contain table name"))?
+            .clone();
 
-        let schema = self
-            .service
-            .get_schema(table_name)
+        let service = self.service.clone();
+        let schema = tokio::task::spawn_blocking(move || service.get_schema(&table_name))
             .await
+            .map_err(join_to_status)?
             .map_err(Status::from)?;
         let arrow_schema: Schema = (&schema).into();
 
@@ -120,12 +122,13 @@ impl FlightService for MurrFlightService {
         let table_name = descriptor
             .path
             .first()
-            .ok_or_else(|| Status::invalid_argument("path must contain table name"))?;
+            .ok_or_else(|| Status::invalid_argument("path must contain table name"))?
+            .clone();
 
-        let schema = self
-            .service
-            .get_schema(table_name)
+        let service = self.service.clone();
+        let schema = tokio::task::spawn_blocking(move || service.get_schema(&table_name))
             .await
+            .map_err(join_to_status)?
             .map_err(Status::from)?;
         let arrow_schema: Schema = (&schema).into();
         let options = IpcWriteOptions::default();
@@ -140,7 +143,10 @@ impl FlightService for MurrFlightService {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let tables = self.service.list_tables().await;
+        let service = self.service.clone();
+        let tables = tokio::task::spawn_blocking(move || service.list_tables())
+            .await
+            .map_err(join_to_status)?;
         let infos: Vec<Result<FlightInfo, Status>> = tables
             .into_iter()
             .map(|(name, schema)| {
@@ -197,4 +203,8 @@ impl FlightService for MurrFlightService {
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         Err(Status::unimplemented("list_actions not supported"))
     }
+}
+
+fn join_to_status(e: tokio::task::JoinError) -> Status {
+    Status::internal(format!("blocking task failed: {e}"))
 }

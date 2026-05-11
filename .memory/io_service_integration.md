@@ -24,17 +24,29 @@ Inner keys nest the corresponding RocksDB tunables. Specifying both is rejected 
 
 ```rust
 pub struct MurrService {
-    tables: tokio::sync::RwLock<HashMap<String, io::table::Table<RocksDBStore>>>,
+    tables: std::sync::RwLock<HashMap<String, io::table::Table<RocksDBStore>>>,
     store: Arc<std::sync::RwLock<RocksDBStore>>,
     config: Config,
 }
 ```
 
-One `Arc<StdRwLock<RocksDBStore>>` shared across all tables (one RocksDB DB, many CFs). Each table holds its own clone of the `Arc` and locks it internally per call.
+One `Arc<StdRwLock<RocksDBStore>>` shared across all tables (one RocksDB DB, many CFs). Each table holds its own clone of the `Arc` and locks it internally per call. The service's public methods (`new`, `create`, `write`, `read`, `list_tables`, `get_schema`) are all **sync**.
 
 **Why no `TableOps` trait, no `Box<dyn ...>`** — only one concrete backend exists (`RocksDBStore`), and `io::Table::read`/`write` already take `&self` (the store-level RwLock handles serialisation). Trait erasure plus `&mut self` would have forced HashMap-write-lock during writes; concrete `Table<RocksDBStore>` lets the HashMap stay at a read lock for both reads and writes, so writes on different tables run concurrently. Same-table serialisation comes from the store's internal RwLock.
 
-**Why `tokio::sync::RwLock` outside, `std::sync::RwLock` inside** — outer lock is contended only briefly (HashMap insert/lookup) but crosses `.await` boundaries; tokio version is the right choice. Inner lock wraps `RocksDBStore` whose ops are all sync — std lock is cheaper and `io::Table` already expects `Arc<RwLock<S>>` shape from `std`.
+**Why std::sync::RwLock both inside and outside** — the only async work in the service was the `.await` on the outer tables-registry lock, which guards a HashMap lookup. With RocksDB sync, the entire method body is CPU/blocking work; pretending it's async invited holding std locks across `.await` boundaries. The crossing point now lives one level up at the API handlers (see below).
+
+**Lock poisoning** — service methods recover via `unwrap_or_else(PoisonError::into_inner)` rather than `.expect()`. The inner HashMap can be inconsistent only if a panic landed mid-`insert`; for our use (insert-once + mostly reads) recovery is safe. Inside `io::Table` and `RocksDBStore` the existing pattern still uses `.expect("...lock poisoned")` — pre-existing, unchanged.
+
+## Async/sync boundary at API handlers
+
+HTTP handlers (`api/http/handlers.rs`), Flight RPCs (`api/flight/mod.rs`), and `PyMurrLocalAsync` all wrap service calls in `tokio::task::spawn_blocking(move || ...)`. The Arc-cloned `MurrService` and any owned arguments (`String`, `Vec<String>`, `Bytes`) move into the closure; `&str` slices are rebuilt inside. `JoinError`s (panic-only — the closure itself returns `Result<_, MurrError>`) map to `MurrError::IoError` → HTTP 500 / gRPC Internal.
+
+**Why `spawn_blocking` over `block_in_place`** — the blocking pool is demand-spawned up to 512 threads, so concurrency isn't capped at `worker_threads`. PlainTable+mmap reads are usually short, but cold-cache block reads can take ms; capping in-flight requests at core count would hurt tail latency. The ~1µs thread-hop is negligible against multi-key read cost.
+
+**Why fetch/write-table do their Arrow/Parquet encode/decode inside the closure** — that's CPU work too, and pulling it onto the blocking pool keeps the async runtime free. Only response wrapping (`Json`, `into_response`) stays async.
+
+**Why `PyMurrLocalSync` no longer needs an unconditional tokio Runtime** — without async data ops there's nothing to `block_on`. The Runtime is now `Option<Runtime>`, present only when `http_port` is set (the in-process HTTP server still needs a tokio handle to live on).
 
 **Why the empty-table read returns nulls instead of erroring** — missing-key semantics are uniform: any key the store doesn't have produces `None` in the read result, which the column encoder turns into a null row. A table with zero rows is just the all-keys-miss case. No special case for "table has no data."
 

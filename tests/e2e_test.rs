@@ -118,7 +118,7 @@ async fn setup() -> (TempDir, Router, HashMap<String, AnimeRow>) {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).await.unwrap());
+    let service = Arc::new(MurrService::new(config).unwrap());
     let api = MurrHttpService::new(service);
     let router = api.router();
 
