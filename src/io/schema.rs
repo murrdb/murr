@@ -1,23 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use crate::core::DType;
-use crate::core::TableSchema;
-use crate::io::directory::ReadRequest;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct OffsetSize {
-    pub offset: u32,
-    pub size: u32,
-}
-
-impl From<OffsetSize> for ReadRequest {
-    fn from(val: OffsetSize) -> Self {
-        ReadRequest {
-            offset: val.offset,
-            size: val.size,
-        }
-    }
-}
+use crate::core::{DType, TableSchema};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SegmentColumnSchema {
@@ -39,7 +22,7 @@ impl SegmentSchema {
         SegmentSchema {
             columns: columns.to_vec(),
             capacity: columns.iter().map(|c| c.dtype.size()).sum::<usize>(),
-            bitset_size: 1 + columns.len().div_ceil(8),
+            bitset_size: columns.len().div_ceil(8),
         }
     }
 }
@@ -50,6 +33,7 @@ impl From<&TableSchema> for SegmentSchema {
         let columns: Vec<SegmentColumnSchema> = schema
             .columns
             .iter()
+            .filter(|(name, _)| *name != &schema.key)
             .enumerate()
             .map(|(i, (name, col))| {
                 let column = SegmentColumnSchema {

@@ -38,14 +38,12 @@ async def test_create_and_read_roundtrip(murr_client):
 
 
 @pytest.mark.asyncio
-async def test_read_all_columns(murr_client):
+async def test_read_key_column_rejected(murr_client):
     await murr_client.create_table("users", user_schema())
     await murr_client.write("users", user_batch())
 
-    result = await murr_client.read("users", ["b"], ["id", "score"])
-    assert result.num_rows == 1
-    assert result.column("id").to_pylist() == ["b"]
-    assert result.column("score").to_pylist() == [2.0]
+    with pytest.raises((RuntimeError, Exception)):
+        await murr_client.read("users", ["b"], ["id", "score"])
 
 
 @pytest.mark.asyncio
