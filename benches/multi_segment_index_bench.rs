@@ -9,7 +9,7 @@ use tokio::runtime::Runtime;
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
-use murr::io::directory::mmap::directory::MMapConfig;
+use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 use murr::testutil::{bench_column_names, generate_batch};
 
@@ -66,7 +66,8 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                         let dir = TempDir::new().unwrap();
                         let config = Config {
                             storage: StorageConfig {
-                                backend: BackendConfig::Mmap(MMapConfig::new(dir.path().to_path_buf())),
+                                path: dir.path().to_path_buf(),
+                                backend: BackendConfig::Mmap(PlainConfig::default()),
                             },
                             ..Config::default()
                         };

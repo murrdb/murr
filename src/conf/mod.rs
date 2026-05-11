@@ -1,4 +1,5 @@
 mod config;
+pub mod path;
 mod server;
 mod storage;
 

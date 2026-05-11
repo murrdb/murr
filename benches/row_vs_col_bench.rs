@@ -1,5 +1,5 @@
 use std::hint::black_box;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arrow::datatypes::Schema;
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -7,15 +7,13 @@ use indexmap::IndexMap;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
 
 use murr::core::{ColumnSchema, DType, TableSchema};
 use murr::io;
-use murr::io::directory::Directory as IoDirectory;
 use murr::testutil::{bench_column_names, generate_batch};
 
-const NUM_ROWS: usize = 5_000_000;
-const KEY_COUNTS: &[usize] = &[100, 1000];
+const NUM_ROWS: usize = 100_000_000;
+const KEY_COUNTS: &[usize] = &[1000];
 
 fn make_schema() -> (TableSchema, Arc<Schema>) {
     let mut columns = IndexMap::new();
@@ -51,62 +49,46 @@ fn generate_random_keys(num_keys: usize, seed: u64) -> Vec<String> {
 }
 
 fn bench_io(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
     let (table_schema, arrow_schema) = make_schema();
     let batch = generate_batch(&arrow_schema, NUM_ROWS);
 
     let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("io");
+    std::fs::create_dir_all(&path).unwrap();
+    eprintln!("io: writing {} rows to {}", NUM_ROWS, path.display());
 
-    eprintln!(
-        "io: writing {} rows to {}",
-        NUM_ROWS,
-        tmp.path().join("io").display()
-    );
-    let io_reader = rt.block_on(async {
-        let cfg = io::directory::mmap::directory::MMapConfig::new(tmp.path().join("io"));
-        let dir = Arc::new(
-            io::directory::mmap::directory::MMapDirectory::create(
-                "bench",
-                table_schema.clone(),
-                cfg,
-            )
-            .unwrap(),
-        );
-        let writer = io::table::writer::TableWriter::open(table_schema.clone(), dir.clone())
-            .await
-            .unwrap();
-        writer.write(&batch).await.unwrap();
-        let dir_reader = Arc::new(IoDirectory::open_reader(&dir).await.unwrap());
-        io::table::reader::TableReader::open(table_schema.clone(), dir_reader)
-            .await
-            .unwrap()
-    });
+    let table = {
+        let store = io::store::memory::MemoryStore::new();
+        let store = Arc::new(RwLock::new(store));
+        let table = io::table::Table::create(store.clone(), "bench", table_schema.clone()).unwrap();
+        table.write(&batch).unwrap();
+        table
+    };
     eprintln!("setup complete, starting benchmarks");
 
-    let col_names: Vec<String> = std::iter::once("key".to_string())
-        .chain(bench_column_names())
-        .collect();
+    // io::Table::read rejects the key column (key is lookup-only),
+    // so the bench reads only the data columns.
+    let col_names: Vec<String> = bench_column_names();
     let col_refs: Vec<&str> = col_names.iter().map(|s| s.as_str()).collect();
 
     let mut group = c.benchmark_group("io");
     group.sample_size(100);
 
     for &num_keys in KEY_COUNTS {
-        let mut io_seed: u64 = num_keys as u64 * 1_000_000;
-        let io_reader_ref = &io_reader;
+        let mut seed: u64 = num_keys as u64 * 2_000_000;
+        let table_ref = &table;
         let col_refs_ref = &col_refs;
         group.bench_with_input(BenchmarkId::new("io", num_keys), &num_keys, |b, &n| {
-            b.to_async(&rt).iter_batched(
+            b.iter_batched(
                 || {
-                    io_seed += 1;
-                    generate_random_keys(n, io_seed)
+                    seed += 1;
+                    generate_random_keys(n, seed)
                 },
-                |keys| async move {
+                |keys| {
                     let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
                     black_box(
-                        io_reader_ref
+                        table_ref
                             .read(black_box(&key_refs), black_box(col_refs_ref))
-                            .await
                             .unwrap(),
                     )
                 },
