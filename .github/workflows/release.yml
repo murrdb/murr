@@ -75,9 +75,6 @@ jobs:
         with:
           shared-key: "release-${{ matrix.os }}"
 
-      - name: Run tests
-        run: cargo test
-
       - name: Build release binary
         run: cargo build --release
 

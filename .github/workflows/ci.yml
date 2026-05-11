@@ -45,7 +45,6 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo check --all-targets
           cargo test
 
   python-test:
