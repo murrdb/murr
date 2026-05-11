@@ -6,6 +6,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CFLAGS: -g0
+  CXXFLAGS: -g0
 
 permissions:
   contents: read
