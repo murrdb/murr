@@ -1,8 +1,8 @@
-# io4 RocksDBStore
+# io RocksDBStore
 
 ## Shape
 
-`io4::store::rocksdb::RocksDBStore` is a single concrete `Store` impl that supports two SST formats — PlainTable (in-memory hash point lookups) and BlockBasedTable (general-purpose block index + bloom). The two backends are selected at construction time:
+`io::store::rocksdb::RocksDBStore` is a single concrete `Store` impl that supports two SST formats — PlainTable (in-memory hash point lookups) and BlockBasedTable (general-purpose block index + bloom). The two backends are selected at construction time:
 
 ```rust
 RocksDBStore::open(path, &PlainConfig::default())?           // plain backend (default constructor)
@@ -51,7 +51,7 @@ PlainTable is RocksDB's hash-indexed SST format — built for in-memory point-lo
 
 `sorted_input` on `batched_multi_get_cf_opt` is a hint for **block-based** SSTs — when keys are pre-sorted, RocksDB can skip its internal sort step on the path through block-based table metadata. PlainTable does point lookups via its hash index and doesn't read keys in sorted order at all, so the hint is a no-op here. Hardcoding `sort_keys = false` for plain avoids paying for an O(n log n) sort + O(n) scatter-restore that wouldn't help PlainTable read.
 
-For the block backend the hint is real — see `io4_block_rocksdb_store.md`.
+For the block backend the hint is real — see `io_block_rocksdb_store.md`.
 
 ## Why `WriteBatch` instead of per-key `put_cf`
 

@@ -1,6 +1,6 @@
-# io4::table::Table
+# io::table::Table
 
-`Table<S: Store>` is the glue between Arrow `RecordBatch` (public API) and the byte-oriented `io4::store::Store` (RocksDB CF per table). It's the unit `MurrService` will hold in its registry.
+`Table<S: Store>` is the glue between Arrow `RecordBatch` (public API) and the byte-oriented `io::store::Store` (RocksDB CF per table). It's the unit `MurrService` will hold in its registry.
 
 ## Shape
 
@@ -25,7 +25,7 @@ Both `read` and `write` take `&self` — the lock lives inside `Arc<RwLock<S>>`,
 
 ## Why the key column is not encoded into the row payload
 
-Calls always pass keys explicitly (`read(keys, ...)` and `write` extracts them from the batch's key column). Round-tripping the key inside the row blob would just duplicate request data on every read. So `From<&TableSchema> for SegmentSchema` (in `io4::schema`) **filters out the column whose name matches `schema.key`** before assigning bitset indices and offsets. Consequence: requesting the key column via `read(_, &["id"])` returns `MurrError::SegmentError("column 'id' not found")` — the key is lookup-only, not data.
+Calls always pass keys explicitly (`read(keys, ...)` and `write` extracts them from the batch's key column). Round-tripping the key inside the row blob would just duplicate request data on every read. So `From<&TableSchema> for SegmentSchema` (in `io::schema`) **filters out the column whose name matches `schema.key`** before assigning bitset indices and offsets. Consequence: requesting the key column via `read(_, &["id"])` returns `MurrError::SegmentError("column 'id' not found")` — the key is lookup-only, not data.
 
 ## Why `Arc<RwLock<S>>` instead of owned `S` or interior-mutable `Store`
 

@@ -1,8 +1,8 @@
-# io4 column encoder/decoder design
+# io column encoder/decoder design
 
 ## Shape
 
-`io4::column` exposes two narrow trait pairs and free factory functions:
+`io::column` exposes two narrow trait pairs and free factory functions:
 
 ```rust
 pub trait ColumnEncoder: Send {
@@ -23,7 +23,7 @@ Concrete impls: `PrimitiveEncoder<T>` / `PrimitiveDecoder<T>` (any `ArrowPrimiti
 
 The old `io::column::ColumnCodec` had one trait with `encode(array, &mut [Row])` and `decode(&[Row]) -> ArrayRef`. That bounces dtype dispatch on every call and forces the caller to materialize a row buffer up front.
 
-The io4 split is row-oriented:
+The io split is row-oriented:
 - **read path**: pre-create one `ColumnEncoder` per requested column, then loop rows from the KV store; each row hits each encoder once. Row stays in L1; column builders are pre-allocated. Adding a dtype = one match arm in `encoder_for`.
 - **write path**: pre-create one `ColumnDecoder` per source array, then loop row indices; each row visits each decoder once.
 
@@ -37,7 +37,7 @@ The earlier draft had `fn schema()` / `fn column()` accessors on both traits. Ca
 
 ## Why free factory functions, not `impl dyn Trait`
 
-`encoder_for` / `decoder_for` are free functions in `io4::column`. The `<dyn Trait>::factory(...)` pattern was considered but rejected as visually ugly at call sites. Free functions land at `column::encoder_for(&col, n)` after a `use crate::io4::column;` — same dtype-dispatch role, cleaner read.
+`encoder_for` / `decoder_for` are free functions in `io::column`. The `<dyn Trait>::factory(...)` pattern was considered but rejected as visually ugly at call sites. Free functions land at `column::encoder_for(&col, n)` after a `use crate::io::column;` — same dtype-dispatch role, cleaner read.
 
 ## Why per-impl `new` is a private inherent method, not a trait method
 

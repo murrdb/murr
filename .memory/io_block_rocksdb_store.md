@@ -1,6 +1,6 @@
-# io4 RocksDBStore — Block backend
+# io RocksDBStore — Block backend
 
-Per-backend deep-dive on the block-based-table arm of the unified `RocksDBStore`. Read alongside `io4_rocksdb_store.md` for the cross-cutting design (one struct, GAT, manifest sidecar, etc.).
+Per-backend deep-dive on the block-based-table arm of the unified `RocksDBStore`. Read alongside `io_rocksdb_store.md` for the cross-cutting design (one struct, GAT, manifest sidecar, etc.).
 
 ## When to pick block over plain
 
