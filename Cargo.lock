@@ -184,9 +184,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-cast"
-version = "58.2.0"
+version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca5e686972523798f76bef355145bc1ae25a84c731e650268d31ab763c701663"
+checksum = "4c5aefb56a2c02e9e2b30746241058b85f8983f0fcff2ba0c6d09006e1cded7f"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -233,9 +233,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-flight"
-version = "58.2.0"
+version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c379738a9e41eda5873bb3256c89164f87c65b16b0b153cccc74d8a462b7e8"
+checksum = "28abfe8bf9f124e5fc83b334af4fa58f8d0323ad25312ccb2d1da50178415704"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -292,9 +292,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-ord"
-version = "58.2.0"
+version = "58.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efa70d9d6b1356f1fb9f1f651b84a725b7e0abb93f188cf7d31f14abfa2f2e6f"
+checksum = "1bffd8fd2579286a5d63bac898159873e5094a79009940bcb42bbfce4f19f1d0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
