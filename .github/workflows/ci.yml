@@ -27,11 +27,13 @@ jobs:
         os: [ubuntu-22.04, macos-14, windows-2022, ubuntu-22.04-arm64]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
-
       - name: Install build-essential and clang (arm64)
         if: matrix.os == 'ubuntu-22.04-arm64'
-        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-dev git-lfs
+
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
