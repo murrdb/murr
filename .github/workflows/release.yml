@@ -70,10 +70,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "release-${{ matrix.os }}"
+      # No true reason to cache build here - we constantly bump deps, cache is always invalid
+      # - name: Cache cargo registry and build
+      #   uses: Swatinem/rust-cache@v2
+      #   with:
+      #     shared-key: "release-${{ matrix.os }}"
 
       - name: Build release binary
         run: cargo build --release
