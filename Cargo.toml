@@ -1,12 +1,6 @@
-[workspace]
-members = ["python"]
-
-[workspace.package]
-version = "0.2.0-rc2"
-
 [package]
 name = "murr"
-version.workspace = true
+version = "0.2.0-rc2"
 edition = "2024"
 description = "Columnar in-memory cache for AI/ML inference workloads"
 license = "Apache-2.0"

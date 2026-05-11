@@ -46,16 +46,7 @@ cargo fmt                    # Format code
 cargo bench --bench <name>   # Run a specific benchmark (multi_segment_index_bench)
 ```
 
-### Python bindings
-
-```bash
-cd python
-uv venv .venv --python 3.14  # One-time venv setup
-source .venv/bin/activate
-uv pip install maturin pytest pyarrow pydantic
-maturin develop              # Build and install in dev mode
-pytest tests/ -v             # Run Python tests
-```
+Python bindings live in a separate repo: [shuttie/murr-python](https://github.com/shuttie/murr-python).
 
 ## Architecture
 
@@ -102,14 +93,6 @@ pytest tests/ -v             # Run Python tests
 **`util/`** — Miscellaneous utilities (`logo.rs` — ASCII art banner)
 
 **`testutil.rs`** — Feature-gated (`testutil`) test helpers: `generate_parquet_file()`, `setup_test_table()`, `setup_benchmark_table()`, `bench_generate_keys()`
-
-**`python/`** — PyO3/maturin Python bindings (workspace member `murr-python`, PyPI package `murr`)
-- `src/lib.rs` — `PyLocalMurr` pyclass wrapping `MurrService` with owned tokio `Runtime` for sync API
-- `src/error.rs` — `MurrError` → Python exception mapping (`into_py_err`)
-- `python/murr/schema.py` — Pydantic v2 models: `DType`, `ColumnSchema`, `TableSchema`
-- `python/murr/client.py` — `LocalMurr` wrapper: Pydantic validation + JSON bridge to Rust
-- Arrow RecordBatch passed zero-copy via Arrow C Data Interface (`arrow::pyarrow`)
-- Schema passed as JSON strings between Python (Pydantic `model_dump_json`) and Rust (`serde_json`)
 
 ### Key Design Patterns
 
