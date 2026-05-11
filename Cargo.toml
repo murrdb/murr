@@ -58,6 +58,7 @@ http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 rstest = "0.26.1"
+csv = "1"
 
 [[bench]]
 name = "multi_segment_index_bench"
