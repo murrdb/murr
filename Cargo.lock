@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "murr"
-version = "0.2.0-rc2"
+version = "0.2.0-rc3"
 dependencies = [
  "arrow",
  "arrow-flight",

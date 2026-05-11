@@ -1,6 +1,6 @@
 [package]
 name = "murr"
-version = "0.2.0-rc2"
+version = "0.2.0-rc3"
 edition = "2024"
 description = "Columnar in-memory cache for AI/ML inference workloads"
 license = "Apache-2.0"
