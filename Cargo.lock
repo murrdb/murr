@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "murr"
-version = "0.2.0-rc1"
+version = "0.2.0-rc2"
 dependencies = [
  "arrow",
  "arrow-flight",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "murr-python"
-version = "0.2.0-rc1"
+version = "0.2.0-rc2"
 dependencies = [
  "arrow",
  "indexmap",
