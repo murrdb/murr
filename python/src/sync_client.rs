@@ -15,7 +15,8 @@ use crate::schema::PyTableSchema;
 #[pyclass(name = "MurrLocalSync")]
 pub struct PyMurrLocalSync {
     service: Arc<MurrService>,
-    runtime: tokio::runtime::Runtime,
+    // Present only when an HTTP server is running — it needs a tokio runtime to live on.
+    _runtime: Option<tokio::runtime::Runtime>,
 }
 
 #[pymethods]
@@ -23,36 +24,31 @@ impl PyMurrLocalSync {
     #[new]
     #[pyo3(signature = (cache_dir, http_port=None))]
     fn new(cache_dir: String, http_port: Option<u16>) -> PyResult<Self> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-
         let config = build_config(cache_dir, http_port);
+        let service = Arc::new(MurrService::new(config).map_err(into_py_err)?);
 
-        let service = runtime
-            .block_on(MurrService::new(config))
-            .map_err(into_py_err)?;
+        let runtime = if http_port.is_some() {
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            spawn_http_server(&service, rt.handle());
+            Some(rt)
+        } else {
+            None
+        };
 
-        let service = Arc::new(service);
-
-        if http_port.is_some() {
-            spawn_http_server(&service, runtime.handle());
-        }
-
-        Ok(Self { service, runtime })
+        Ok(Self { service, _runtime: runtime })
     }
 
     fn create_table(&self, py: Python<'_>, name: String, schema: PyTableSchema) -> PyResult<()> {
         let service = self.service.clone();
         let schema = schema.0;
-        py.detach(|| self.runtime.block_on(service.create(&name, schema)))
-            .map_err(into_py_err)
+        py.detach(|| service.create(&name, schema)).map_err(into_py_err)
     }
 
     fn write(&self, py: Python<'_>, table_name: String, batch: &Bound<'_, PyAny>) -> PyResult<()> {
         let batch = RecordBatch::from_pyarrow_bound(batch)?;
         let service = self.service.clone();
-        py.detach(|| self.runtime.block_on(service.write(&table_name, &batch)))
-            .map_err(into_py_err)
+        py.detach(|| service.write(&table_name, &batch)).map_err(into_py_err)
     }
 
     fn read<'py>(
@@ -62,14 +58,12 @@ impl PyMurrLocalSync {
         keys: Vec<String>,
         columns: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-        let col_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
-
         let service = self.service.clone();
         let batch = py
             .detach(|| {
-                self.runtime
-                    .block_on(service.read(&table_name, &key_refs, &col_refs))
+                let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
+                service.read(&table_name, &key_refs, &col_refs)
             })
             .map_err(into_py_err)?;
 
@@ -78,7 +72,7 @@ impl PyMurrLocalSync {
 
     fn list_tables(&self, py: Python<'_>) -> PyResult<HashMap<String, PyTableSchema>> {
         let service = self.service.clone();
-        let tables = py.detach(|| self.runtime.block_on(service.list_tables()));
+        let tables = py.detach(|| service.list_tables());
 
         Ok(tables
             .into_iter()
@@ -89,7 +83,7 @@ impl PyMurrLocalSync {
     fn get_schema(&self, py: Python<'_>, table_name: String) -> PyResult<PyTableSchema> {
         let service = self.service.clone();
         let schema = py
-            .detach(|| self.runtime.block_on(service.get_schema(&table_name)))
+            .detach(|| service.get_schema(&table_name))
             .map_err(into_py_err)?;
 
         Ok(PyTableSchema(schema))

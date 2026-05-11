@@ -5,7 +5,6 @@ use std::time::Duration;
 use arrow::datatypes::Schema;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
@@ -44,7 +43,6 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
 }
 
 fn bench_multi_segment_write(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
     let (table_schema, arrow_schema) = make_schema();
     let batch = generate_batch(&arrow_schema, ROWS_PER_SEGMENT);
 
@@ -59,23 +57,21 @@ fn bench_multi_segment_write(c: &mut Criterion) {
             BenchmarkId::new("segments", num_segments),
             &num_segments,
             |b, &n| {
-                b.to_async(&rt).iter(|| {
+                b.iter(|| {
                     let schema = table_schema.clone();
                     let batch = batch.clone();
-                    async move {
-                        let dir = TempDir::new().unwrap();
-                        let config = Config {
-                            storage: StorageConfig {
-                                path: dir.path().to_path_buf(),
-                                backend: BackendConfig::Mmap(PlainConfig::default()),
-                            },
-                            ..Config::default()
-                        };
-                        let svc = MurrService::new(config).await.unwrap();
-                        svc.create("bench", schema).await.unwrap();
-                        for _ in 0..n {
-                            svc.write("bench", &batch).await.unwrap();
-                        }
+                    let dir = TempDir::new().unwrap();
+                    let config = Config {
+                        storage: StorageConfig {
+                            path: dir.path().to_path_buf(),
+                            backend: BackendConfig::Mmap(PlainConfig::default()),
+                        },
+                        ..Config::default()
+                    };
+                    let svc = MurrService::new(config).unwrap();
+                    svc.create("bench", schema).unwrap();
+                    for _ in 0..n {
+                        svc.write("bench", &batch).unwrap();
                     }
                 });
             },

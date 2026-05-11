@@ -36,15 +36,22 @@ pub async fn health() -> &'static str {
 
 pub async fn list_tables(
     State(service): State<Arc<MurrService>>,
-) -> impl IntoResponse {
-    Json(service.list_tables().await)
+) -> Result<Json<std::collections::HashMap<String, TableSchema>>, ApiError> {
+    let svc = service.clone();
+    let tables = tokio::task::spawn_blocking(move || svc.list_tables())
+        .await
+        .map_err(join_to_api_error)?;
+    Ok(Json(tables))
 }
 
 pub async fn get_schema(
     State(service): State<Arc<MurrService>>,
     Path(name): Path<String>,
 ) -> Result<Json<TableSchema>, ApiError> {
-    let schema = service.get_schema(&name).await?;
+    let svc = service.clone();
+    let schema = tokio::task::spawn_blocking(move || svc.get_schema(&name))
+        .await
+        .map_err(join_to_api_error)??;
     Ok(Json(schema))
 }
 
@@ -53,7 +60,10 @@ pub async fn create_table(
     Path(name): Path<String>,
     Json(schema): Json<TableSchema>,
 ) -> Result<StatusCode, ApiError> {
-    service.create(&name, schema).await?;
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || svc.create(&name, schema))
+        .await
+        .map_err(join_to_api_error)??;
     Ok(StatusCode::CREATED)
 }
 
@@ -69,29 +79,33 @@ pub async fn fetch(
     headers: HeaderMap,
     Json(req): Json<FetchRequest>,
 ) -> Result<Response, ApiError> {
-    let keys: Vec<&str> = req.keys.iter().map(|s| s.as_str()).collect();
-    let columns: Vec<&str> = req.columns.iter().map(|s| s.as_str()).collect();
-
-    let batch = service.read(&name, &keys, &columns).await?;
-
     let wants_arrow = headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains(ARROW_IPC_MIME));
 
-    if wants_arrow {
-        let mut buf = Vec::new();
-        {
-            let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())
-                .map_err(|e| ApiError(e.into()))?;
-            writer.write(&batch).map_err(|e| ApiError(e.into()))?;
-            writer.finish().map_err(|e| ApiError(e.into()))?;
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || -> Result<Response, ApiError> {
+        let keys: Vec<&str> = req.keys.iter().map(String::as_str).collect();
+        let columns: Vec<&str> = req.columns.iter().map(String::as_str).collect();
+        let batch = svc.read(&name, &keys, &columns)?;
+
+        if wants_arrow {
+            let mut buf = Vec::new();
+            {
+                let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())
+                    .map_err(|e| ApiError(e.into()))?;
+                writer.write(&batch).map_err(|e| ApiError(e.into()))?;
+                writer.finish().map_err(|e| ApiError(e.into()))?;
+            }
+            Ok(([(axum::http::header::CONTENT_TYPE, ARROW_IPC_MIME)], buf).into_response())
+        } else {
+            let FetchResponse(json) = FetchResponse::try_from(&batch).map_err(ApiError)?;
+            Ok(Json(json).into_response())
         }
-        Ok(([(axum::http::header::CONTENT_TYPE, ARROW_IPC_MIME)], buf).into_response())
-    } else {
-        let FetchResponse(json) = FetchResponse::try_from(&batch).map_err(ApiError)?;
-        Ok(Json(json).into_response())
-    }
+    })
+    .await
+    .map_err(join_to_api_error)?
 }
 
 pub async fn write_table(
@@ -103,36 +117,46 @@ pub async fn write_table(
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
 
-    let batch = if content_type.contains(ARROW_IPC_MIME) {
-        let cursor = Cursor::new(&body);
-        let mut reader = StreamReader::try_new(cursor, None)
-            .map_err(|e| ApiError(e.into()))?;
-        reader
-            .next()
-            .ok_or_else(|| ApiError(MurrError::TableError("empty Arrow IPC stream".into())))?
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || -> Result<StatusCode, ApiError> {
+        let batch = if content_type.contains(ARROW_IPC_MIME) {
+            let cursor = Cursor::new(&body);
+            let mut reader = StreamReader::try_new(cursor, None)
+                .map_err(|e| ApiError(e.into()))?;
+            reader
+                .next()
+                .ok_or_else(|| ApiError(MurrError::TableError("empty Arrow IPC stream".into())))?
+                .map_err(|e| ApiError(e.into()))?
+        } else if content_type.contains(PARQUET_MIME) {
+            let reader = ParquetRecordBatchReaderBuilder::try_new(body)
+                .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?
+                .build()
+                .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?;
+            let batches: Vec<_> = reader
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| ApiError(e.into()))?;
+            arrow::compute::concat_batches(
+                &batches[0].schema(),
+                &batches,
+            )
             .map_err(|e| ApiError(e.into()))?
-    } else if content_type.contains(PARQUET_MIME) {
-        let reader = ParquetRecordBatchReaderBuilder::try_new(body)
-            .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?
-            .build()
-            .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?;
-        let batches: Vec<_> = reader
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ApiError(e.into()))?;
-        arrow::compute::concat_batches(
-            &batches[0].schema(),
-            &batches,
-        )
-        .map_err(|e| ApiError(e.into()))?
-    } else {
-        let write: WriteRequest = serde_json::from_slice(&body)
-            .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
-        let schema = service.get_schema(&name).await?;
-        write.into_record_batch(&schema).map_err(ApiError)?
-    };
+        } else {
+            let write: WriteRequest = serde_json::from_slice(&body)
+                .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
+            let schema = svc.get_schema(&name)?;
+            write.into_record_batch(&schema).map_err(ApiError)?
+        };
 
-    service.write(&name, &batch).await?;
-    Ok(StatusCode::OK)
+        svc.write(&name, &batch)?;
+        Ok(StatusCode::OK)
+    })
+    .await
+    .map_err(join_to_api_error)?
+}
+
+fn join_to_api_error(e: tokio::task::JoinError) -> ApiError {
+    ApiError(MurrError::IoError(format!("blocking task failed: {e}")))
 }

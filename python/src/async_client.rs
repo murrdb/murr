@@ -24,7 +24,10 @@ impl PyMurrLocalAsync {
     fn create(py: Python<'_>, cache_dir: String, http_port: Option<u16>) -> PyResult<Bound<'_, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let config = build_config(cache_dir, http_port);
-            let service = MurrService::new(config).await.map_err(into_py_err)?;
+            let service = tokio::task::spawn_blocking(move || MurrService::new(config))
+                .await
+                .map_err(join_to_py_err)?
+                .map_err(into_py_err)?;
             let service = Arc::new(service);
 
             if http_port.is_some() {
@@ -46,7 +49,10 @@ impl PyMurrLocalAsync {
         let service = self.service.clone();
         let schema = schema.0;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            service.create(&name, schema).await.map_err(into_py_err)
+            tokio::task::spawn_blocking(move || service.create(&name, schema))
+                .await
+                .map_err(join_to_py_err)?
+                .map_err(into_py_err)
         })
     }
 
@@ -59,9 +65,9 @@ impl PyMurrLocalAsync {
         let batch = RecordBatch::from_pyarrow_bound(batch)?;
         let service = self.service.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            service
-                .write(&table_name, &batch)
+            tokio::task::spawn_blocking(move || service.write(&table_name, &batch))
                 .await
+                .map_err(join_to_py_err)?
                 .map_err(into_py_err)
         })
     }
@@ -75,13 +81,14 @@ impl PyMurrLocalAsync {
     ) -> PyResult<Bound<'py, PyAny>> {
         let service = self.service.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-            let col_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
-
-            let batch = service
-                .read(&table_name, &key_refs, &col_refs)
-                .await
-                .map_err(into_py_err)?;
+            let batch = tokio::task::spawn_blocking(move || {
+                let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
+                service.read(&table_name, &key_refs, &col_refs)
+            })
+            .await
+            .map_err(join_to_py_err)?
+            .map_err(into_py_err)?;
 
             Python::try_attach(|py| batch.to_pyarrow(py).map(|b| b.unbind()))
                 .expect("GIL should be available")
@@ -91,7 +98,9 @@ impl PyMurrLocalAsync {
     fn list_tables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let service = self.service.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let tables = service.list_tables().await;
+            let tables = tokio::task::spawn_blocking(move || service.list_tables())
+                .await
+                .map_err(join_to_py_err)?;
             let result: HashMap<String, PyTableSchema> = tables
                 .into_iter()
                 .map(|(name, schema)| (name, PyTableSchema(schema)))
@@ -107,11 +116,15 @@ impl PyMurrLocalAsync {
     ) -> PyResult<Bound<'py, PyAny>> {
         let service = self.service.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let schema = service
-                .get_schema(&table_name)
+            let schema = tokio::task::spawn_blocking(move || service.get_schema(&table_name))
                 .await
+                .map_err(join_to_py_err)?
                 .map_err(into_py_err)?;
             Ok(PyTableSchema(schema))
         })
     }
+}
+
+fn join_to_py_err(e: tokio::task::JoinError) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!("blocking task failed: {e}"))
 }
