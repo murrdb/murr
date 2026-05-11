@@ -8,6 +8,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use murr::io::store::rocksdb::plain::PlainConfig;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -112,7 +113,8 @@ async fn setup() -> (TempDir, Router, HashMap<String, AnimeRow>) {
     let dir = TempDir::new().unwrap();
     let config = Config {
         storage: StorageConfig {
-            cache_dir: dir.path().to_path_buf(),
+            path: dir.path().to_path_buf(),
+            backend: murr::conf::BackendConfig::Mmap(PlainConfig::default()),
         },
         ..Config::default()
     };
