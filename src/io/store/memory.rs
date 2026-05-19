@@ -72,9 +72,7 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io::row::write::WriteRow;
-    use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
-    use arrow::array::{Array, StringArray};
+    use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
 
     fn schema() -> TableSchema {
@@ -97,50 +95,6 @@ mod tests {
             key: "id".into(),
             columns,
         }
-    }
-
-    fn payload_segment() -> SegmentSchema {
-        SegmentSchema::new(&[SegmentColumnSchema {
-            index: 0,
-            dtype: DType::Utf8,
-            name: "payload".into(),
-            offset: 0,
-        }])
-    }
-
-    fn put(store: &mut MemoryStore, table: &str, rows: &[(&str, &[u8])]) {
-        let segment = payload_segment();
-        let col = &segment.columns[0];
-        let kvs: Vec<KeyValue> = rows
-            .iter()
-            .map(|(k, v)| {
-                let mut row = WriteRow::new(&segment, k);
-                row.write_dynamic(col, v);
-                row.into()
-            })
-            .collect();
-        store.write(table, kvs).unwrap();
-    }
-
-    fn fetch(store: &MemoryStore, table: &str, keys: &[&[u8]]) -> Vec<Option<Vec<u8>>> {
-        let segment = payload_segment();
-        let cols: Vec<&SegmentColumnSchema> = segment.columns.iter().collect();
-        let builder = ReadBatchBuilder::new(&segment, cols, keys.len());
-        let batch = store.read(table, keys, builder).unwrap();
-        let arr = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("payload column is Utf8");
-        (0..arr.len())
-            .map(|i| {
-                if arr.is_null(i) {
-                    None
-                } else {
-                    Some(arr.value(i).as_bytes().to_vec())
-                }
-            })
-            .collect()
     }
 
     #[test]

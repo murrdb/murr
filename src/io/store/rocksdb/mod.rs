@@ -123,37 +123,34 @@ impl Store for RocksDBStore {
             .cf_handle(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
 
-        if self.sort_keys {
+        let raw = if self.sort_keys {
             let n = keys.len();
             let mut order: Vec<usize> = (0..n).collect();
             order.sort_unstable_by_key(|&i| keys[i]);
             let sorted: Vec<&[u8]> = order.iter().map(|&i| keys[i]).collect();
-            let raw = self
+            let mut raw = self
                 .db
                 .batched_multi_get_cf_opt(&cf, &sorted, true, &self.read_opts);
-            // raw[i] is the result for keys[order[i]]; pos[order[i]] = i so we can
-            // walk caller order by indexing into raw with pos[i].
-            let mut pos = vec![0usize; n];
-            for (i, &o) in order.iter().enumerate() {
-                pos[o] = i;
-            }
+            // raw[i] is the result for keys[order[i]]; move each raw[i] to position order[i]
+            // via cycle-following. Each inner iteration fixes one slot permanently, so total
+            // work is O(n) swaps even though the loop is nested.
             for i in 0..n {
-                match &raw[pos[i]] {
-                    Ok(Some(v)) => builder.add_row(v.as_ref())?,
-                    Ok(None) => builder.add_empty()?,
-                    Err(e) => return Err(MurrError::IoError(e.to_string())),
+                while order[i] != i {
+                    let t = order[i];
+                    raw.swap(i, t);
+                    order.swap(i, t);
                 }
             }
+            raw
         } else {
-            let raw = self
-                .db
-                .batched_multi_get_cf_opt(&cf, keys, false, &self.read_opts);
-            for r in &raw {
-                match r {
-                    Ok(Some(v)) => builder.add_row(v.as_ref())?,
-                    Ok(None) => builder.add_empty()?,
-                    Err(e) => return Err(MurrError::IoError(e.to_string())),
-                }
+            self.db
+                .batched_multi_get_cf_opt(&cf, keys, false, &self.read_opts)
+        };
+        for r in &raw {
+            match r {
+                Ok(Some(v)) => builder.add_row(v.as_ref())?,
+                Ok(None) => builder.add_empty()?,
+                Err(e) => return Err(MurrError::IoError(e.to_string())),
             }
         }
         builder.build()
@@ -173,9 +170,7 @@ impl Store for RocksDBStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io::row::write::WriteRow;
-    use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
-    use arrow::array::{Array, StringArray};
+    use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
     use rstest::rstest;
     use std::path::Path;
@@ -211,50 +206,6 @@ mod tests {
             key: key.to_string(),
             columns,
         }
-    }
-
-    fn payload_segment() -> SegmentSchema {
-        SegmentSchema::new(&[SegmentColumnSchema {
-            index: 0,
-            dtype: DType::Utf8,
-            name: "payload".into(),
-            offset: 0,
-        }])
-    }
-
-    fn put(store: &mut RocksDBStore, table: &str, rows: &[(&str, &[u8])]) {
-        let segment = payload_segment();
-        let col = &segment.columns[0];
-        let kvs: Vec<KeyValue> = rows
-            .iter()
-            .map(|(k, v)| {
-                let mut row = WriteRow::new(&segment, k);
-                row.write_dynamic(col, v);
-                row.into()
-            })
-            .collect();
-        store.write(table, kvs).unwrap();
-    }
-
-    fn fetch(store: &RocksDBStore, table: &str, keys: &[&[u8]]) -> Vec<Option<Vec<u8>>> {
-        let segment = payload_segment();
-        let cols: Vec<&SegmentColumnSchema> = segment.columns.iter().collect();
-        let builder = ReadBatchBuilder::new(&segment, cols, keys.len());
-        let batch = store.read(table, keys, builder).unwrap();
-        let arr = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("payload column is Utf8");
-        (0..arr.len())
-            .map(|i| {
-                if arr.is_null(i) {
-                    None
-                } else {
-                    Some(arr.value(i).as_bytes().to_vec())
-                }
-            })
-            .collect()
     }
 
     #[rstest]

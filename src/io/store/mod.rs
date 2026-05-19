@@ -8,6 +8,9 @@ pub mod memory;
 pub mod rocksdb;
 pub mod snapshot;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 pub use manifest::Manifest;
 
 pub struct KeyValue {
