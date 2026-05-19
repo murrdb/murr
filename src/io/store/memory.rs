@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
+use arrow::array::RecordBatch;
+
 use crate::core::{MurrError, TableSchema};
-use crate::io::store::{KeyValue, Manifest, ReadResult, Store};
+use crate::io::row::read::ReadBatchBuilder;
+use crate::io::store::{KeyValue, Manifest, Store};
 
 #[derive(Default)]
 pub struct MemoryStore {
@@ -15,35 +18,30 @@ impl MemoryStore {
     }
 }
 
-pub struct MemoryReadResult<'a> {
-    pub values: Vec<Option<&'a [u8]>>,
-}
-
-impl ReadResult for MemoryReadResult<'_> {
-    fn bytes(&self) -> impl Iterator<Item = Result<Option<&[u8]>, MurrError>> {
-        self.values.iter().map(|v| Ok(*v))
-    }
-}
-
 impl Store for MemoryStore {
-    type R<'a> = MemoryReadResult<'a>;
-
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError> {
         self.manifest.add_table(table, schema)?;
         self.tables.insert(table.to_string(), HashMap::new());
         Ok(())
     }
 
-    fn read<'a>(&'a self, table: &str, keys: &[&[u8]]) -> Result<Self::R<'a>, MurrError> {
+    fn read(
+        &self,
+        table: &str,
+        keys: &[&[u8]],
+        mut builder: ReadBatchBuilder<'_>,
+    ) -> Result<RecordBatch, MurrError> {
         let rows = self
             .tables
             .get(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
-        let values = keys
-            .iter()
-            .map(|k| rows.get(*k).map(|v| v.as_slice()))
-            .collect();
-        Ok(MemoryReadResult { values })
+        for k in keys {
+            match rows.get(*k) {
+                Some(v) => builder.add_row(v.as_slice())?,
+                None => builder.add_empty()?,
+            }
+        }
+        builder.build()
     }
 
     fn write(
@@ -74,6 +72,9 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
+    use crate::io::row::write::WriteRow;
+    use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
+    use arrow::array::{Array, StringArray};
     use indexmap::IndexMap;
 
     fn schema() -> TableSchema {
@@ -85,10 +86,61 @@ mod tests {
                 nullable: false,
             },
         );
+        columns.insert(
+            "payload".into(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: true,
+            },
+        );
         TableSchema {
             key: "id".into(),
             columns,
         }
+    }
+
+    fn payload_segment() -> SegmentSchema {
+        SegmentSchema::new(&[SegmentColumnSchema {
+            index: 0,
+            dtype: DType::Utf8,
+            name: "payload".into(),
+            offset: 0,
+        }])
+    }
+
+    fn put(store: &mut MemoryStore, table: &str, rows: &[(&str, &[u8])]) {
+        let segment = payload_segment();
+        let col = &segment.columns[0];
+        let kvs: Vec<KeyValue> = rows
+            .iter()
+            .map(|(k, v)| {
+                let mut row = WriteRow::new(&segment, k);
+                row.write_dynamic(col, v);
+                row.into()
+            })
+            .collect();
+        store.write(table, kvs).unwrap();
+    }
+
+    fn fetch(store: &MemoryStore, table: &str, keys: &[&[u8]]) -> Vec<Option<Vec<u8>>> {
+        let segment = payload_segment();
+        let cols: Vec<&SegmentColumnSchema> = segment.columns.iter().collect();
+        let builder = ReadBatchBuilder::new(&segment, cols, keys.len());
+        let batch = store.read(table, keys, builder).unwrap();
+        let arr = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("payload column is Utf8");
+        (0..arr.len())
+            .map(|i| {
+                if arr.is_null(i) {
+                    None
+                } else {
+                    Some(arr.value(i).as_bytes().to_vec())
+                }
+            })
+            .collect()
     }
 
     #[test]
@@ -97,22 +149,17 @@ mod tests {
         store.create_table("users", &schema()).unwrap();
 
         let keys: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a-payload"),
-                    KeyValue::new(*b"bob", *b"b-payload"),
-                    KeyValue::new(*b"carol", *b"c-payload"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[
+                ("alice", b"a-payload"),
+                ("bob", b"b-payload"),
+                ("carol", b"c-payload"),
+            ],
+        );
 
-        let result = store.read("users", &keys).unwrap();
-        let got: Vec<Option<Vec<u8>>> = result
-            .bytes()
-            .map(|r| r.unwrap().map(|b| b.to_vec()))
-            .collect();
+        let got = fetch(&store, "users", &keys);
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].as_deref(), Some(&b"a-payload"[..]));
         assert_eq!(got[1].as_deref(), Some(&b"b-payload"[..]));
@@ -124,22 +171,14 @@ mod tests {
         let mut store = MemoryStore::new();
         store.create_table("users", &schema()).unwrap();
 
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a-payload"),
-                    KeyValue::new(*b"carol", *b"c-payload"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[("alice", b"a-payload"), ("carol", b"c-payload")],
+        );
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let result = store.read("users", &lookup).unwrap();
-        let got: Vec<Option<Vec<u8>>> = result
-            .bytes()
-            .map(|r| r.unwrap().map(|b| b.to_vec()))
-            .collect();
+        let got = fetch(&store, "users", &lookup);
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].as_deref(), Some(&b"a-payload"[..]));
         assert_eq!(got[1], None);

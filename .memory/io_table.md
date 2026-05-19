@@ -41,7 +41,13 @@ Alternative considered and rejected: change `Store::write` / `Store::create_tabl
 
 ## Why `ColumnEncoder::add_empty()` for missing keys
 
-Earlier draft synthesized one all-null row buffer (`WriteRow::new(&segment, "").bytes`) and fed it through `add_row` for every miss. Cleaner: `ColumnEncoder` exposes `add_empty()` directly. Each impl just calls `builder.append_null()` — one branch instead of bitset-decode-then-null. Used in `Table::read` when `Store::ReadResult::bytes()` yields `None` for a slot.
+Earlier draft synthesized one all-null row buffer (`WriteRow::new(&segment, "").bytes`) and fed it through `add_row` for every miss. Cleaner: `ColumnEncoder` exposes `add_empty()` directly. Each impl just calls `builder.append_null()` — one branch instead of bitset-decode-then-null. The store calls `builder.add_empty()` when no row exists for a given key; otherwise `builder.add_row(bytes)`.
+
+## Why `Table::read` hands a `ReadBatchBuilder` down to the store
+
+`Table::read` is now thin: it resolves the requested column schemas, constructs a `ReadBatchBuilder` (which owns the `ColumnEncoder`s and references the segment schema), and passes it by value to `Store::read` along with the keys. The store does all the per-key iteration internally and returns the finished `RecordBatch`.
+
+**Why**: the previous shape (`Store::read` returns `ReadResult` → `Table::read` iterates and feeds encoders) leaked the byte-slice lifetime out of the store. That works for RocksDB pinned slices and HashMap entries (both keep their backing alive through `&self`), but breaks down for LMDB/heed where the slices borrow from a `RoTxn` that has to live alongside them. Inverting the call keeps the slice lifetime bounded by the store fn frame while preserving zero-copy on the RocksDB pinned-slice path. `ReadBatchBuilder` lives in `io::row::read` next to `ReadRow` because it's the thing that owns the row-decode iteration step.
 
 ## Constraints today
 

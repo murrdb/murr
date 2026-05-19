@@ -1,4 +1,7 @@
+use arrow::array::RecordBatch;
+
 use crate::core::{MurrError, TableSchema};
+use crate::io::row::read::ReadBatchBuilder;
 
 pub mod manifest;
 pub mod memory;
@@ -21,21 +24,19 @@ impl KeyValue {
     }
 }
 
-pub trait ReadResult {
-    fn bytes(&self) -> impl Iterator<Item = Result<Option<&[u8]>, MurrError>>;
-}
-
 pub trait Store {
-    type R<'a>: ReadResult
-    where
-        Self: 'a;
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError>;
     fn write(
         &mut self,
         table: &str,
         rows: impl IntoIterator<Item = KeyValue>,
     ) -> Result<(), MurrError>;
-    fn read<'a>(&'a self, table: &str, keys: &[&[u8]]) -> Result<Self::R<'a>, MurrError>;
+    fn read(
+        &self,
+        table: &str,
+        keys: &[&[u8]],
+        builder: ReadBatchBuilder<'_>,
+    ) -> Result<RecordBatch, MurrError>;
     fn compact(&self, table: &str) -> Result<(), MurrError>;
     fn manifest(&self) -> &Manifest;
 }
