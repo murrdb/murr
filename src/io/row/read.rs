@@ -1,4 +1,17 @@
-use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
+use std::sync::Arc;
+
+use arrow::{
+    array::{ArrayRef, RecordBatch},
+    datatypes::{DataType, Field, Schema},
+};
+
+use crate::{
+    core::MurrError,
+    io::{
+        column::{ColumnEncoder, encoder_for},
+        schema::{SegmentColumnSchema, SegmentSchema},
+    },
+};
 
 pub struct ReadRow<'a> {
     pub schema: &'a SegmentSchema,
@@ -39,5 +52,56 @@ impl<'a> ReadRow<'a> {
                 .unwrap(),
         ) as usize;
         &self.values[payload_off + 4..payload_off + 4 + len]
+    }
+}
+
+/// Accumulates rows into Arrow column builders inside `Store::read`. Stores
+/// fan raw bytes through `add_row` / `add_empty`; the builder yields the final
+/// `RecordBatch` via `build`. Keeps slice lifetimes bounded by the store fn
+/// frame so backends like LMDB can hold a read txn across the iteration.
+pub struct ReadBatchBuilder<'a> {
+    segment: &'a SegmentSchema,
+    columns: Vec<&'a SegmentColumnSchema>,
+    encoders: Vec<Box<dyn ColumnEncoder>>,
+}
+
+impl<'a> ReadBatchBuilder<'a> {
+    pub fn new(
+        segment: &'a SegmentSchema,
+        columns: Vec<&'a SegmentColumnSchema>,
+        capacity: usize,
+    ) -> Self {
+        let encoders = columns.iter().map(|c| encoder_for(c, capacity)).collect();
+        Self {
+            segment,
+            columns,
+            encoders,
+        }
+    }
+
+    pub fn add_row(&mut self, bytes: &[u8]) -> Result<(), MurrError> {
+        let row = ReadRow::new(self.segment, bytes);
+        for e in &mut self.encoders {
+            e.add_row(&row)?;
+        }
+        Ok(())
+    }
+
+    pub fn add_empty(&mut self) -> Result<(), MurrError> {
+        for e in &mut self.encoders {
+            e.add_empty()?;
+        }
+        Ok(())
+    }
+
+    pub fn build(mut self) -> Result<RecordBatch, MurrError> {
+        let arrays: Vec<ArrayRef> = self.encoders.iter_mut().map(|e| e.build()).collect();
+        let fields: Vec<Field> = self
+            .columns
+            .iter()
+            .map(|c| Field::new(&c.name, DataType::from(&c.dtype), true))
+            .collect();
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))
     }
 }

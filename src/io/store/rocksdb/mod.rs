@@ -1,28 +1,18 @@
 use std::path::{Path, PathBuf};
 
-use rocksdb::{DB, DBPinnableSlice, Error, Options, ReadOptions, WriteBatch, WriteOptions};
+use arrow::array::RecordBatch;
+use rocksdb::{DB, Options, ReadOptions, WriteBatch, WriteOptions};
 
 use crate::core::{MurrError, TableSchema};
+use crate::io::row::read::ReadBatchBuilder;
 use crate::io::store::rocksdb::block::BlockConfig;
 use crate::io::store::rocksdb::plain::PlainConfig;
-use crate::io::store::{KeyValue, Manifest, ReadResult, Store};
+use crate::io::store::{KeyValue, Manifest, Store};
 use itertools::Itertools;
 pub mod block;
 pub mod plain;
 
 const MANIFEST_FILE: &str = "manifest.json";
-pub struct MultiGetResult<'a> {
-    pub(crate) values: Vec<Result<Option<DBPinnableSlice<'a>>, Error>>,
-}
-
-impl ReadResult for MultiGetResult<'_> {
-    fn bytes(&self) -> impl Iterator<Item = Result<Option<&[u8]>, MurrError>> {
-        self.values.iter().map(|r| match r {
-            Ok(opt) => Ok(opt.as_deref()),
-            Err(e) => Err(MurrError::IoError(e.to_string())),
-        })
-    }
-}
 
 pub struct RocksDBStore {
     db: DB,
@@ -90,8 +80,6 @@ impl RocksDBStore {
 }
 
 impl Store for RocksDBStore {
-    type R<'a> = MultiGetResult<'a>;
-
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError> {
         self.manifest.add_table(table, schema)?;
         self.db.create_cf(table, &self.cf_opts)?;
@@ -124,13 +112,18 @@ impl Store for RocksDBStore {
         Ok(())
     }
 
-    fn read<'a>(&'a self, table: &str, keys: &[&[u8]]) -> Result<MultiGetResult<'a>, MurrError> {
+    fn read(
+        &self,
+        table: &str,
+        keys: &[&[u8]],
+        mut builder: ReadBatchBuilder<'_>,
+    ) -> Result<RecordBatch, MurrError> {
         let cf = self
             .db
             .cf_handle(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
 
-        let values = if self.sort_keys {
+        let raw = if self.sort_keys {
             let n = keys.len();
             let mut order: Vec<usize> = (0..n).collect();
             order.sort_unstable_by_key(|&i| keys[i]);
@@ -153,7 +146,14 @@ impl Store for RocksDBStore {
             self.db
                 .batched_multi_get_cf_opt(&cf, keys, false, &self.read_opts)
         };
-        Ok(MultiGetResult { values })
+        for r in &raw {
+            match r {
+                Ok(Some(v)) => builder.add_row(v.as_ref())?,
+                Ok(None) => builder.add_empty()?,
+                Err(e) => return Err(MurrError::IoError(e.to_string())),
+            }
+        }
+        builder.build()
     }
 
     fn compact(&self, table: &str) -> Result<(), MurrError> {
@@ -170,7 +170,7 @@ impl Store for RocksDBStore {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DType};
-    use crate::io::store::ReadResult;
+    use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
     use rstest::rstest;
     use std::path::Path;
@@ -195,17 +195,17 @@ mod tests {
                 nullable: false,
             },
         );
+        columns.insert(
+            "payload".into(),
+            ColumnSchema {
+                dtype: DType::Utf8,
+                nullable: true,
+            },
+        );
         TableSchema {
             key: key.to_string(),
             columns,
         }
-    }
-
-    fn collect(result: MultiGetResult<'_>) -> Vec<Option<Vec<u8>>> {
-        result
-            .bytes()
-            .map(|r| r.unwrap().map(|b| b.to_vec()))
-            .collect()
     }
 
     #[rstest]
@@ -217,18 +217,17 @@ mod tests {
         store.create_table("users", &schema("id")).unwrap();
 
         let keys: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a-payload"),
-                    KeyValue::new(*b"bob", *b"b-payload"),
-                    KeyValue::new(*b"carol", *b"c-payload"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[
+                ("alice", b"a-payload"),
+                ("bob", b"b-payload"),
+                ("carol", b"c-payload"),
+            ],
+        );
 
-        let got = collect(store.read("users", &keys).unwrap());
+        let got = fetch(&store, "users", &keys);
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].as_deref(), Some(&b"a-payload"[..]));
         assert_eq!(got[1].as_deref(), Some(&b"b-payload"[..]));
@@ -243,21 +242,15 @@ mod tests {
         let mut store = open(dir.path());
         store.create_table("users", &schema("id")).unwrap();
 
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a"),
-                    KeyValue::new(*b"bob", *b"b"),
-                    KeyValue::new(*b"carol", *b"c"),
-                    KeyValue::new(*b"dave", *b"d"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[("alice", b"a"), ("bob", b"b"), ("carol", b"c"), ("dave", b"d")],
+        );
 
         // Mix sorted/unsorted keys, including a miss in the middle.
         let lookup: [&[u8]; 5] = [b"dave", b"alice", b"zzz", b"carol", b"bob"];
-        let got = collect(store.read("users", &lookup).unwrap());
+        let got = fetch(&store, "users", &lookup);
         assert_eq!(got.len(), 5);
         assert_eq!(got[0].as_deref(), Some(&b"d"[..]));
         assert_eq!(got[1].as_deref(), Some(&b"a"[..]));
@@ -274,18 +267,14 @@ mod tests {
         let mut store = open(dir.path());
         store.create_table("users", &schema("id")).unwrap();
 
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a-payload"),
-                    KeyValue::new(*b"carol", *b"c-payload"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[("alice", b"a-payload"), ("carol", b"c-payload")],
+        );
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let got = collect(store.read("users", &lookup).unwrap());
+        let got = fetch(&store, "users", &lookup);
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].as_deref(), Some(&b"a-payload"[..]));
         assert_eq!(got[1], None);
@@ -300,20 +289,12 @@ mod tests {
         {
             let mut store = open(dir.path());
             store.create_table("users", &schema("id")).unwrap();
-            store
-                .write(
-                    "users",
-                    [
-                        KeyValue::new(*b"alice", *b"v1"),
-                        KeyValue::new(*b"bob", *b"v2"),
-                    ],
-                )
-                .unwrap();
+            put(&mut store, "users", &[("alice", b"v1"), ("bob", b"v2")]);
         }
 
         let store = open(dir.path());
         let lookup: [&[u8]; 2] = [b"alice", b"bob"];
-        let got = collect(store.read("users", &lookup).unwrap());
+        let got = fetch(&store, "users", &lookup);
         assert_eq!(got[0].as_deref(), Some(&b"v1"[..]));
         assert_eq!(got[1].as_deref(), Some(&b"v2"[..]));
     }
@@ -385,21 +366,16 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
         store.create_table("users", &schema("id")).unwrap();
-        store
-            .write(
-                "users",
-                [
-                    KeyValue::new(*b"alice", *b"a"),
-                    KeyValue::new(*b"bob", *b"b"),
-                    KeyValue::new(*b"carol", *b"c"),
-                ],
-            )
-            .unwrap();
+        put(
+            &mut store,
+            "users",
+            &[("alice", b"a"), ("bob", b"b"), ("carol", b"c")],
+        );
 
         store.compact("users").unwrap();
 
         let lookup: [&[u8]; 3] = [b"alice", b"bob", b"carol"];
-        let got = collect(store.read("users", &lookup).unwrap());
+        let got = fetch(&store, "users", &lookup);
         assert_eq!(got[0].as_deref(), Some(&b"a"[..]));
         assert_eq!(got[1].as_deref(), Some(&b"b"[..]));
         assert_eq!(got[2].as_deref(), Some(&b"c"[..]));

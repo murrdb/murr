@@ -6,15 +6,15 @@ use std::{
 use crate::{
     core::{DType, MurrError, TableSchema},
     io::{
-        column::{ColumnDecoder, ColumnEncoder, decoder_for, encoder_for},
-        row::{read::ReadRow, write::WriteRow},
+        column::{ColumnDecoder, decoder_for},
+        row::{read::ReadBatchBuilder, write::WriteRow},
         schema::{SegmentColumnSchema, SegmentSchema},
-        store::{ReadResult, Store},
+        store::Store,
     },
 };
 use arrow::{
-    array::{Array, ArrayRef, RecordBatch, StringArray},
-    datatypes::{DataType, Field, Schema},
+    array::{Array, RecordBatch, StringArray},
+    datatypes::Schema,
 };
 
 pub struct Table<S: Store> {
@@ -118,39 +118,10 @@ impl<S: Store> Table<S> {
             })
             .collect::<Result<_, _>>()?;
 
-        let mut encoders: Vec<Box<dyn ColumnEncoder>> = req_cols
-            .iter()
-            .map(|c| encoder_for(c, keys.len()))
-            .collect();
-
+        let builder = ReadBatchBuilder::new(&self.segment, req_cols, keys.len());
         let key_bytes: Vec<&[u8]> = keys.iter().map(|s| s.as_bytes()).collect();
-        {
-            let store = self.store.read().expect("store lock poisoned");
-            let result = store.read(&self.name, &key_bytes)?;
-            for slot in result.bytes() {
-                match slot? {
-                    Some(bytes) => {
-                        let row = ReadRow::new(&self.segment, bytes);
-                        for e in &mut encoders {
-                            e.add_row(&row)?;
-                        }
-                    }
-                    None => {
-                        for e in &mut encoders {
-                            e.add_empty()?;
-                        }
-                    }
-                }
-            }
-        }
-
-        let arrays: Vec<ArrayRef> = encoders.iter_mut().map(|e| e.build()).collect();
-        let fields: Vec<Field> = req_cols
-            .iter()
-            .map(|c| Field::new(&c.name, DataType::from(&c.dtype), true))
-            .collect();
-        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
-            .map_err(|e| MurrError::ArrowError(e.to_string()))
+        let store = self.store.read().expect("store lock poisoned");
+        store.read(&self.name, &key_bytes, builder)
     }
 
     fn build(store: Arc<RwLock<S>>, name: String, table: TableSchema) -> Result<Self, MurrError> {

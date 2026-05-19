@@ -25,18 +25,22 @@ Two parallel `PlainRocksDBStore` / `BlockRocksDBStore` types were considered and
 
 `sort_keys: bool` lives on the struct (not on the config) because the value is fixed at construction time and never re-derived. After `open*` returns, callers and the `Store` trait don't see configs at all — only the concrete store with all the runtime state baked in.
 
-## Why GAT on `Store::R<'a>`
+## Why `Store::read` takes a `ReadBatchBuilder` instead of returning borrowed bytes
 
-`MultiGetResult<'a>` borrows from `&self.db` because `DBPinnableSlice<'a>` is a pointer into a RocksDB-pinned buffer. The trait therefore can't use a non-generic associated type — it needs `type R<'a>: ReadResult where Self: 'a` and `fn read<'a>(&'a self, …) -> Result<Self::R<'a>, _>`.
+`Store::read` no longer returns `Result<Self::R<'a>, _>` with a GAT-bound `ReadResult`. The trait now reads:
 
-## Why `bytes()` returns `Iterator<Item = Result<Option<&[u8]>, MurrError>>`
+```rust
+fn read(&self, table: &str, keys: &[&[u8]], builder: ReadBatchBuilder<'_>)
+    -> Result<RecordBatch, MurrError>;
+```
 
-Two requirements collide:
+The caller constructs the `ReadBatchBuilder` (which owns Arrow column encoders and the target segment schema) and hands it down by value. The store iterates RocksDB's `batched_multi_get_cf_opt` results internally, calling `builder.add_row(pinned.as_ref())` or `builder.add_empty()` per key while the `DBPinnableSlice<'_>` slots are still live, then finalises the builder into a `RecordBatch` and returns it.
 
-1. **Pipe RocksDB's response as-is.** `batched_multi_get_cf_opt` returns `Vec<Result<Option<DBPinnableSlice<'a>>, Error>>` — one slot per input key. We move that Vec straight into `MultiGetResult` without rebuilding it. No validation walk in `read`, no per-row reallocation.
-2. **Preserve positional alignment.** The column encoder needs to emit a null row for any key the KV didn't have, so missing slots cannot be silently filtered out.
+**Why**: a future LMDB/heed-backed `Store` needs its `RoTxn` alive *across* the per-key iteration. Returning borrowed slices out of `read` would force the impl into self-referential ownership (txn + slices in one struct) or eager cloning of every row (defeating zero-copy). Pushing the builder down lets each impl bound the slice lifetime to its own fn frame.
 
-The trait yields `Result<Option<&[u8]>, MurrError>` so each per-row error and each per-row absence surfaces at iteration time rather than forcing an eager scan in `read`. **Why not** an early validation walk: even though it's just pointer iteration, it's an unnecessary pass on the hot path that the consumer would do anyway.
+**Why not return `Vec<Vec<u8>>` instead of a builder**: defeats the RocksDB pinned-slice zero-copy path — every read would allocate per-row even when the encoder only needs to memcpy a fixed-width field. The builder is the minimum interface that lets the store keep zero-copy on the hot path while still erasing the slice lifetime at the trait boundary.
+
+**Positional alignment** (every input key must produce exactly one output slot) is still preserved — the store calls either `add_row` or `add_empty` for each key, and the inverse-permutation table on the `sort_keys = true` path restores caller order before the loop.
 
 ## Why PlainTable + mmap + NoopTransform + Vector memtable (plain backend)
 
