@@ -54,6 +54,16 @@ Only the rocksdb lookup phase is parallelized — the downstream `for r in &raw 
 
 `DBPinnableSlice<'_>`, `&DB`, `&ColumnFamily`, `&ReadOptions` are all `Send + Sync` in rocksdb-0.24 — no wrapping or `unsafe` is needed to share them across rayon workers.
 
+## Why `ReadMethod::ParMultiGet` exists alongside `ParGet`
+
+`ParGet` fans out one `get_pinned_cf_opt` per key across rayon workers — full parallelism, but every key pays the full point-lookup setup cost. `ParMultiGet` splits the input into `rayon::current_num_threads()` contiguous chunks and calls `batched_multi_get_cf_opt(..., sorted_input = false, ...)` once per chunk in parallel. Each chunk thus amortizes the rocksdb MultiGet path's per-call setup across ~`n / num_threads` keys.
+
+The fan-out uses `par_chunks(chunk_size).flat_map_iter(|chunk| batched_multi_get_cf_opt(...))`. `par_chunks` yields contiguous slices in input order; the indexed parallel iterator + `flat_map_iter` concatenates per-chunk result vectors in that same order, so global positional alignment with the caller's `keys` slice is preserved without a scatter step.
+
+**No sort.** This is deliberately the unsorted counterpart of `MultiGetSorted` — chunks are sliced off the caller's key array as-is. Sorting per chunk would help block-based table block-walk locality, but it also forces a scatter back to caller order; that variant (`ParMultiGetSorted`) is left for later if measurements show the unsorted-parallel ceiling isn't enough.
+
+Chunk size is `keys.len().div_ceil(num_threads).max(1)` so the empty-keys and `keys.len() < num_threads` cases stay legal (`slice::chunks(0)` panics).
+
 ## Why PlainTable + mmap + NoopTransform + Vector memtable (plain backend)
 
 PlainTable is RocksDB's hash-indexed SST format — built for in-memory point-lookup workloads. It has hard prerequisites:

@@ -22,6 +22,7 @@ pub enum ReadMethod {
     MultiGetSorted,
     Get,
     ParGet,
+    ParMultiGet,
 }
 
 pub struct RocksDBStore {
@@ -138,10 +139,23 @@ impl RocksDBStore {
         keys: &[&[u8]],
     ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
         use rayon::prelude::*;
-        // par_iter().collect() preserves input order, so positional alignment
-        // with the caller's keys slice holds without a scatter step.
         keys.par_iter()
             .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
+            .collect()
+    }
+
+    fn read_multiget_parallel<'a>(
+        &'a self,
+        cf: &ColumnFamily,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+        use rayon::prelude::*;
+        let chunk_size = keys.len().div_ceil(rayon::current_num_threads()).max(1);
+        keys.par_chunks(chunk_size)
+            .flat_map_iter(|chunk| {
+                self.db
+                    .batched_multi_get_cf_opt(cf, chunk, false, &self.read_opts)
+            })
             .collect()
     }
 }
@@ -195,6 +209,7 @@ impl Store for RocksDBStore {
             ReadMethod::MultiGetSorted => self.read_multiget_sorted(cf, keys),
             ReadMethod::Get => self.read_get(cf, keys),
             ReadMethod::ParGet => self.read_get_parallel(cf, keys),
+            ReadMethod::ParMultiGet => self.read_multiget_parallel(cf, keys),
         };
         for r in &raw {
             match r {
@@ -270,11 +285,18 @@ mod tests {
         store
     }
 
+    fn open_block_par_multi_get(path: &Path) -> RocksDBStore {
+        let mut store = open_block(path);
+        store.read_method = ReadMethod::ParMultiGet;
+        store
+    }
+
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
+    #[case::block_par_multi_get(open_block_par_multi_get)]
     fn round_trip(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -303,6 +325,7 @@ mod tests {
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
+    #[case::block_par_multi_get(open_block_par_multi_get)]
     fn read_preserves_caller_key_order(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -311,7 +334,12 @@ mod tests {
         put(
             &mut store,
             "users",
-            &[("alice", b"a"), ("bob", b"b"), ("carol", b"c"), ("dave", b"d")],
+            &[
+                ("alice", b"a"),
+                ("bob", b"b"),
+                ("carol", b"c"),
+                ("dave", b"d"),
+            ],
         );
 
         // Mix sorted/unsorted keys, including a miss in the middle.
@@ -330,6 +358,7 @@ mod tests {
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
+    #[case::block_par_multi_get(open_block_par_multi_get)]
     fn missing_key_yields_none(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());

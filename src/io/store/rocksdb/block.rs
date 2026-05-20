@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::io::store::rocksdb::ReadMethod;
 use crate::io::store::rocksdb::plain::{
-    default_data_block_hash_ratio, default_disable_auto_compactions,
-    default_target_file_size_base, default_write_buffer_size,
+    default_data_block_hash_ratio, default_disable_auto_compactions, default_target_file_size_base,
+    default_write_buffer_size,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,7 +74,7 @@ impl Default for BlockConfig {
 }
 
 fn default_block_read_method() -> ReadMethod {
-    ReadMethod::MultiGetSorted
+    ReadMethod::ParMultiGet
 }
 
 fn default_true() -> bool {
