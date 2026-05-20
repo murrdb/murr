@@ -47,7 +47,7 @@ impl Default for PlainConfig {
 }
 
 fn default_plain_read_method() -> ReadMethod {
-    ReadMethod::MultiGet
+    ReadMethod::ParGet
 }
 
 fn default_bloom_bits() -> i32 {

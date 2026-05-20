@@ -42,6 +42,28 @@ The caller constructs the `ReadBatchBuilder` (which owns Arrow column encoders a
 
 **Positional alignment** (every input key must produce exactly one output slot) is still preserved — the store calls either `add_row` or `add_empty` for each key, and the inverse-permutation table on the `sort_keys = true` path restores caller order before the loop.
 
+## Why `ReadMethod::ParGet` exists alongside `Get`
+
+`Get` walks `keys.iter()` and calls `db.get_pinned_cf_opt` once per key on a single core. For a 1k-key fetch every lookup is independent CPU-bound work (PlainTable hash probe + memcpy into the pinned slice), so the loop is embarrassingly parallel. `ParGet` is the same loop with `keys.par_iter()` — rayon's global pool (sized to `num_cpus`) fans the work out, and `par_iter().collect()` preserves input order so positional alignment with the caller's `keys` slice holds **without** a scatter step (unlike `MultiGetSorted`, which has to undo a key-bytes sort before handing slices to the builder).
+
+Only the rocksdb lookup phase is parallelized — the downstream `for r in &raw { builder.add_row(...) }` loop stays serial because the Arrow encoders mutate column buffers in order.
+
+**Why a new variant rather than replacing `Get`**: keeps the sequential path so benchmarks can A/B the two, and avoids a silent regression on small key batches where rayon scheduling overhead dominates the per-key work. The choice is one config flip in `PlainConfig::read_method` / `BlockConfig::read_method`.
+
+**Why rayon's global pool, not a per-store custom pool**: no thread-count knob to misconfigure, and the global pool is shared across whatever else might use rayon (today: nothing) — if that becomes a real contention source later it's easy to switch to a `ThreadPoolBuilder` owned by `RocksDBStore`. Pre-alpha defaults beat premature configurability.
+
+`DBPinnableSlice<'_>`, `&DB`, `&ColumnFamily`, `&ReadOptions` are all `Send + Sync` in rocksdb-0.24 — no wrapping or `unsafe` is needed to share them across rayon workers.
+
+## Why `ReadMethod::ParMultiGet` exists alongside `ParGet`
+
+`ParGet` fans out one `get_pinned_cf_opt` per key across rayon workers — full parallelism, but every key pays the full point-lookup setup cost. `ParMultiGet` splits the input into `rayon::current_num_threads()` contiguous chunks and calls `batched_multi_get_cf_opt(..., sorted_input = false, ...)` once per chunk in parallel. Each chunk thus amortizes the rocksdb MultiGet path's per-call setup across ~`n / num_threads` keys.
+
+The fan-out uses `par_chunks(chunk_size).flat_map_iter(|chunk| batched_multi_get_cf_opt(...))`. `par_chunks` yields contiguous slices in input order; the indexed parallel iterator + `flat_map_iter` concatenates per-chunk result vectors in that same order, so global positional alignment with the caller's `keys` slice is preserved without a scatter step.
+
+**No sort.** This is deliberately the unsorted counterpart of `MultiGetSorted` — chunks are sliced off the caller's key array as-is. Sorting per chunk would help block-based table block-walk locality, but it also forces a scatter back to caller order; that variant (`ParMultiGetSorted`) is left for later if measurements show the unsorted-parallel ceiling isn't enough.
+
+Chunk size is `keys.len().div_ceil(num_threads).max(1)` so the empty-keys and `keys.len() < num_threads` cases stay legal (`slice::chunks(0)` panics).
+
 ## Why PlainTable + mmap + NoopTransform + Vector memtable (plain backend)
 
 PlainTable is RocksDB's hash-indexed SST format — built for in-memory point-lookup workloads. It has hard prerequisites:
