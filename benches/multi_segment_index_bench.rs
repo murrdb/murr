@@ -10,7 +10,9 @@ use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DType, TableSchema};
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
-use murr::testutil::{bench_column_names, generate_batch};
+
+mod common;
+use common::data::{bench_column_names, generate_batch};
 
 const ROWS_PER_SEGMENT: usize = 50_000;
 const SEGMENT_COUNTS: &[usize] = &[1, 32, 128];

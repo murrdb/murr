@@ -59,7 +59,15 @@ name = "multi_segment_index_bench"
 harness = false
 
 [[bench]]
-name = "row_vs_col_bench"
+name = "read_memory"
+harness = false
+
+[[bench]]
+name = "read_plain"
+harness = false
+
+[[bench]]
+name = "read_block"
 harness = false
 
 [profile.dev.package.librocksdb-sys]

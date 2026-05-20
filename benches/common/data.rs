@@ -1,6 +1,8 @@
-//! Test and benchmark utilities.
+//! Shared deterministic test data generation for benchmarks.
 //!
-//! This module is only available when the `testutil` feature is enabled.
+//! Moved verbatim from the (now-removed) `murr::testutil` module. Only used
+//! by bench binaries — kept out of the main crate to avoid coupling library
+//! code to bench-only helpers.
 
 use std::sync::Arc;
 
@@ -64,8 +66,6 @@ pub fn generate_deterministic_array(dtype: &DataType, num_rows: usize) -> ArrayR
         _ => panic!("Unsupported dtype: {:?}", dtype),
     }
 }
-
-// Benchmark-specific utilities
 
 /// Number of Float32 columns for benchmarks
 pub const BENCH_NUM_COLUMNS: usize = 10;
