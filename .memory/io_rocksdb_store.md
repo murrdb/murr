@@ -42,6 +42,18 @@ The caller constructs the `ReadBatchBuilder` (which owns Arrow column encoders a
 
 **Positional alignment** (every input key must produce exactly one output slot) is still preserved — the store calls either `add_row` or `add_empty` for each key, and the inverse-permutation table on the `sort_keys = true` path restores caller order before the loop.
 
+## Why `ReadMethod::ParGet` exists alongside `Get`
+
+`Get` walks `keys.iter()` and calls `db.get_pinned_cf_opt` once per key on a single core. For a 1k-key fetch every lookup is independent CPU-bound work (PlainTable hash probe + memcpy into the pinned slice), so the loop is embarrassingly parallel. `ParGet` is the same loop with `keys.par_iter()` — rayon's global pool (sized to `num_cpus`) fans the work out, and `par_iter().collect()` preserves input order so positional alignment with the caller's `keys` slice holds **without** a scatter step (unlike `MultiGetSorted`, which has to undo a key-bytes sort before handing slices to the builder).
+
+Only the rocksdb lookup phase is parallelized — the downstream `for r in &raw { builder.add_row(...) }` loop stays serial because the Arrow encoders mutate column buffers in order.
+
+**Why a new variant rather than replacing `Get`**: keeps the sequential path so benchmarks can A/B the two, and avoids a silent regression on small key batches where rayon scheduling overhead dominates the per-key work. The choice is one config flip in `PlainConfig::read_method` / `BlockConfig::read_method`.
+
+**Why rayon's global pool, not a per-store custom pool**: no thread-count knob to misconfigure, and the global pool is shared across whatever else might use rayon (today: nothing) — if that becomes a real contention source later it's easy to switch to a `ThreadPoolBuilder` owned by `RocksDBStore`. Pre-alpha defaults beat premature configurability.
+
+`DBPinnableSlice<'_>`, `&DB`, `&ColumnFamily`, `&ReadOptions` are all `Send + Sync` in rocksdb-0.24 — no wrapping or `unsafe` is needed to share them across rayon workers.
+
 ## Why PlainTable + mmap + NoopTransform + Vector memtable (plain backend)
 
 PlainTable is RocksDB's hash-indexed SST format — built for in-memory point-lookup workloads. It has hard prerequisites:

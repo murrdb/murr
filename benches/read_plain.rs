@@ -14,7 +14,9 @@ use common::read_bench::{BenchOpts, run_read_bench};
 fn bench(c: &mut Criterion) {
     let dataset = Dataset::new(100_000_000, 10);
     let tmp = TempDir::new().unwrap();
-    let store = RocksDBStore::open_plain(tmp.path(), &PlainConfig::default()).unwrap();
+    let mut config = PlainConfig::default();
+    config.read_method = murr::io::store::rocksdb::ReadMethod::Get;
+    let store = RocksDBStore::open_plain(tmp.path(), &config).unwrap();
     let store = Arc::new(RwLock::new(store));
     let table = Table::create(store, "bench", dataset.table_schema().clone()).unwrap();
     let opts = BenchOpts {

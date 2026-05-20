@@ -21,6 +21,7 @@ pub enum ReadMethod {
     MultiGet,
     MultiGetSorted,
     Get,
+    ParGet,
 }
 
 pub struct RocksDBStore {
@@ -130,6 +131,19 @@ impl RocksDBStore {
             .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
             .collect()
     }
+
+    fn read_get_parallel<'a>(
+        &'a self,
+        cf: &ColumnFamily,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+        use rayon::prelude::*;
+        // par_iter().collect() preserves input order, so positional alignment
+        // with the caller's keys slice holds without a scatter step.
+        keys.par_iter()
+            .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
+            .collect()
+    }
 }
 
 impl Store for RocksDBStore {
@@ -180,6 +194,7 @@ impl Store for RocksDBStore {
             ReadMethod::MultiGet => self.read_multiget(cf, keys),
             ReadMethod::MultiGetSorted => self.read_multiget_sorted(cf, keys),
             ReadMethod::Get => self.read_get(cf, keys),
+            ReadMethod::ParGet => self.read_get_parallel(cf, keys),
         };
         for r in &raw {
             match r {
@@ -249,10 +264,17 @@ mod tests {
         store
     }
 
+    fn open_block_par_get(path: &Path) -> RocksDBStore {
+        let mut store = open_block(path);
+        store.read_method = ReadMethod::ParGet;
+        store
+    }
+
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
+    #[case::block_par_get(open_block_par_get)]
     fn round_trip(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -280,6 +302,7 @@ mod tests {
     #[case::plain(open_plain)]
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
+    #[case::block_par_get(open_block_par_get)]
     fn read_preserves_caller_key_order(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -306,6 +329,7 @@ mod tests {
     #[case::plain(open_plain)]
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
+    #[case::block_par_get(open_block_par_get)]
     fn missing_key_yields_none(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());

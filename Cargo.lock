@@ -1680,6 +1680,7 @@ dependencies = [
  "murr",
  "parquet",
  "rand",
+ "rayon",
  "rocksdb",
  "rstest",
  "rustc-hash",
