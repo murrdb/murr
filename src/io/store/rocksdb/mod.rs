@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use arrow::array::RecordBatch;
-use rocksdb::{DB, Options, ReadOptions, WriteBatch, WriteOptions};
+use rocksdb::{ColumnFamily, DB, DBPinnableSlice, Options, ReadOptions, WriteBatch, WriteOptions};
+use serde::{Deserialize, Serialize};
 
 use crate::core::{MurrError, TableSchema};
 use crate::io::row::read::ReadBatchBuilder;
@@ -14,6 +15,14 @@ pub mod plain;
 
 const MANIFEST_FILE: &str = "manifest.json";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadMethod {
+    MultiGet,
+    MultiGetSorted,
+    Get,
+}
+
 pub struct RocksDBStore {
     db: DB,
     cf_opts: Options,
@@ -22,7 +31,7 @@ pub struct RocksDBStore {
     path: PathBuf,
     manifest: Manifest,
     write_buffer_size: usize,
-    sort_keys: bool,
+    read_method: ReadMethod,
 }
 
 impl RocksDBStore {
@@ -33,7 +42,7 @@ impl RocksDBStore {
             cf_opts,
             ReadOptions::default(),
             config.write_buffer_size,
-            false,
+            config.read_method,
         )
     }
 
@@ -47,7 +56,7 @@ impl RocksDBStore {
             cf_opts,
             read_opts,
             config.write_buffer_size,
-            true,
+            config.read_method,
         )
     }
 
@@ -56,7 +65,7 @@ impl RocksDBStore {
         cf_opts: Options,
         read_opts: ReadOptions,
         write_buffer_size: usize,
-        sort_keys: bool,
+        read_method: ReadMethod,
     ) -> Result<Self, MurrError> {
         let cfs = DB::list_cf(&cf_opts, path).unwrap_or_default();
         let cf_descriptors = cfs.iter().map(|name| (name.as_str(), cf_opts.clone()));
@@ -70,12 +79,56 @@ impl RocksDBStore {
             path: path.to_path_buf(),
             manifest,
             write_buffer_size,
-            sort_keys,
+            read_method,
         })
     }
 
     fn manifest_path(&self) -> PathBuf {
         self.path.join(MANIFEST_FILE)
+    }
+
+    fn read_multiget<'a>(
+        &'a self,
+        cf: &ColumnFamily,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+        self.db
+            .batched_multi_get_cf_opt(cf, keys, false, &self.read_opts)
+    }
+
+    fn read_multiget_sorted<'a>(
+        &'a self,
+        cf: &ColumnFamily,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+        let n = keys.len();
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_unstable_by_key(|&i| keys[i]);
+        let sorted: Vec<&[u8]> = order.iter().map(|&i| keys[i]).collect();
+        let mut raw = self
+            .db
+            .batched_multi_get_cf_opt(cf, &sorted, true, &self.read_opts);
+        // raw[i] is the result for keys[order[i]]; move each raw[i] to position order[i]
+        // via cycle-following. Each inner iteration fixes one slot permanently, so total
+        // work is O(n) swaps even though the loop is nested.
+        for i in 0..n {
+            while order[i] != i {
+                let t = order[i];
+                raw.swap(i, t);
+                order.swap(i, t);
+            }
+        }
+        raw
+    }
+
+    fn read_get<'a>(
+        &'a self,
+        cf: &ColumnFamily,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+        keys.iter()
+            .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
+            .collect()
     }
 }
 
@@ -123,28 +176,10 @@ impl Store for RocksDBStore {
             .cf_handle(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
 
-        let raw = if self.sort_keys {
-            let n = keys.len();
-            let mut order: Vec<usize> = (0..n).collect();
-            order.sort_unstable_by_key(|&i| keys[i]);
-            let sorted: Vec<&[u8]> = order.iter().map(|&i| keys[i]).collect();
-            let mut raw = self
-                .db
-                .batched_multi_get_cf_opt(&cf, &sorted, true, &self.read_opts);
-            // raw[i] is the result for keys[order[i]]; move each raw[i] to position order[i]
-            // via cycle-following. Each inner iteration fixes one slot permanently, so total
-            // work is O(n) swaps even though the loop is nested.
-            for i in 0..n {
-                while order[i] != i {
-                    let t = order[i];
-                    raw.swap(i, t);
-                    order.swap(i, t);
-                }
-            }
-            raw
-        } else {
-            self.db
-                .batched_multi_get_cf_opt(&cf, keys, false, &self.read_opts)
+        let raw = match self.read_method {
+            ReadMethod::MultiGet => self.read_multiget(cf, keys),
+            ReadMethod::MultiGetSorted => self.read_multiget_sorted(cf, keys),
+            ReadMethod::Get => self.read_get(cf, keys),
         };
         for r in &raw {
             match r {
@@ -208,9 +243,16 @@ mod tests {
         }
     }
 
+    fn open_block_get(path: &Path) -> RocksDBStore {
+        let mut store = open_block(path);
+        store.read_method = ReadMethod::Get;
+        store
+    }
+
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
+    #[case::block_get(open_block_get)]
     fn round_trip(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -237,6 +279,7 @@ mod tests {
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
+    #[case::block_get(open_block_get)]
     fn read_preserves_caller_key_order(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -262,6 +305,7 @@ mod tests {
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
+    #[case::block_get(open_block_get)]
     fn missing_key_yields_none(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());

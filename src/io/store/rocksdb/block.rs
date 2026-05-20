@@ -1,6 +1,7 @@
 use rocksdb::{BlockBasedOptions, Cache, DataBlockIndexType, Options};
 use serde::{Deserialize, Serialize};
 
+use crate::io::store::rocksdb::ReadMethod;
 use crate::io::store::rocksdb::plain::{
     default_data_block_hash_ratio, default_disable_auto_compactions,
     default_target_file_size_base, default_write_buffer_size,
@@ -44,6 +45,8 @@ pub struct BlockConfig {
     pub target_file_size_base: u64,
     #[serde(default = "default_disable_auto_compactions")]
     pub disable_auto_compactions: bool,
+    #[serde(default = "default_block_read_method")]
+    pub read_method: ReadMethod,
 }
 
 impl Default for BlockConfig {
@@ -65,8 +68,13 @@ impl Default for BlockConfig {
             write_buffer_size: default_write_buffer_size(),
             target_file_size_base: default_target_file_size_base(),
             disable_auto_compactions: default_disable_auto_compactions(),
+            read_method: default_block_read_method(),
         }
     }
+}
+
+fn default_block_read_method() -> ReadMethod {
+    ReadMethod::MultiGetSorted
 }
 
 fn default_true() -> bool {

@@ -3,6 +3,8 @@ use rocksdb::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::io::store::rocksdb::ReadMethod;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlainConfig {
     #[serde(default = "default_bloom_bits")]
@@ -24,6 +26,8 @@ pub struct PlainConfig {
     pub target_file_size_base: u64,
     #[serde(default = "default_disable_auto_compactions")]
     pub disable_auto_compactions: bool,
+    #[serde(default = "default_plain_read_method")]
+    pub read_method: ReadMethod,
 }
 
 impl Default for PlainConfig {
@@ -37,8 +41,13 @@ impl Default for PlainConfig {
             write_buffer_size: default_write_buffer_size(),
             target_file_size_base: default_target_file_size_base(),
             disable_auto_compactions: default_disable_auto_compactions(),
+            read_method: default_plain_read_method(),
         }
     }
+}
+
+fn default_plain_read_method() -> ReadMethod {
+    ReadMethod::MultiGet
 }
 
 fn default_bloom_bits() -> i32 {

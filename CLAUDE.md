@@ -31,7 +31,7 @@ The project uses .memory directory as an append-only log of architectural decisi
 * after you finish implementing a big feature (e.g. using a plan mode), write a 2-3 paragraph comment explaining the reasoning.
 * the comment should be in raw markdown so I can copy-paste it as is. do not over-use formatting.
 * do not go too deep on implementation details, focus on why things were changed and user-visible changes.
-* prefer human language, no AI slop please.
+* prefer human language, no AI slop please. Also do not use em-dashes.
 
 ### Build notes
 
