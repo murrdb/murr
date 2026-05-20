@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project uses .memory directory as an append-only log of architectural decisions made while developing:
 * before doing planning, read the .memory directory for relevant topics discussed/implemented in the past
 * when a plan has an architectural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
-* update .memory only for important bits of information. also change-remove obsolete sections if the impl drifts too far from the original design.
+* update .memory only for important bits of information. 
+* change-remove obsolete sections if the impl drifts too far from the original design.
 
 ### Tests
 
@@ -15,6 +16,22 @@ The project uses .memory directory as an append-only log of architectural decisi
 * always test happy path
 * for potential failure paths consider the possibility of such failure to happen. If the failure is highly unlikely, it's ok not to make test for it.
 * do not test for obvious things.
+
+### Benchmarks
+
+* when changing benchmark code, do not run them as is - they might take some time to finish. instead ask user to run them with a specific command.
+
+### Code comments
+
+* do not comment obvious things, prefer make the code to look self-explanatory.
+* if there's a gotcha or some non-obvious algorithm, add a one-line comment explaining the reasoning.
+
+### GH PR descriptions
+
+* after you finish implementing a big feature (e.g. using a plan mode), write a 2-3 paragraph comment explaining the reasoning.
+* the comment should be in raw markdown so I can copy-paste it as is. do not over-use formatting.
+* do not go too deep on implementation details, focus on why things were changed and user-visible changes.
+* prefer human language, no AI slop please.
 
 ### Build notes
 
