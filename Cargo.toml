@@ -31,7 +31,7 @@ tonic = "0.14"
 futures = "0.3"
 serde_json = "1"
 serde_yaml_ng = "0.10"
-mimalloc = { version = "0.1", features = ["v3"] }
+tikv-jemallocator = "0.6"
 bytemuck = "1"
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
@@ -41,7 +41,7 @@ lean_string = "0.6"
 rustc-hash = "2"
 bincode = { version = "2", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
-rocksdb = "0.24"
+rocksdb = { version = "0.24", features = ["jemalloc"] }
 itertools = "0.14"
 rayon = "1"
 
@@ -76,6 +76,7 @@ debug = "line-tables-only"
 
 [profile.bench]
 debug = 1         # line tables + symbols (good enough for perf)
+strip = "none"    # release sets strip="symbols"; bench inherits it and would hide .symtab from perf
 lto = false       # optional: makes disasm easier to read
 codegen-units = 1 # optional: more stable codegen
 

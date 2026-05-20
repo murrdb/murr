@@ -6,7 +6,7 @@ set -euo pipefail
 
 BENCH="${1:?Usage: $0 <bench_name>}"
 PROFILE_TIME="${PROFILE_TIME:-30}"
-DELAY_MS="${DELAY_MS:-60000}"
+DELAY_MS="${DELAY_MS:-70000}"
 FREQ="${FREQ:-300}"
 
 PERF_DIR=".perf"
