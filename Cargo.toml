@@ -31,7 +31,6 @@ tonic = "0.14"
 futures = "0.3"
 serde_json = "1"
 serde_yaml_ng = "0.10"
-mimalloc = { version = "0.1", features = ["v3"] }
 bytemuck = "1"
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
@@ -44,6 +43,12 @@ indexmap = { version = "2", features = ["serde"] }
 rocksdb = "0.24"
 itertools = "0.14"
 rayon = "1"
+
+# jemalloc is Linux-only: tikv-jemalloc-sys fails to build on Windows MSVC,
+# and librocksdb-sys treats the jemalloc feature as a no-op on darwin/musl.
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = "0.6"
+rocksdb = { version = "0.24", features = ["jemalloc"] }
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
@@ -76,6 +81,7 @@ debug = "line-tables-only"
 
 [profile.bench]
 debug = 1         # line tables + symbols (good enough for perf)
+strip = "none"    # release sets strip="symbols"; bench inherits it and would hide .symtab from perf
 lto = false       # optional: makes disasm easier to read
 codegen-units = 1 # optional: more stable codegen
 
