@@ -18,7 +18,7 @@ use tonic::{Request, Response, Status, Streaming};
 
 use crate::core::MurrError;
 use crate::service::MurrService;
-
+use log::info;
 use ticket::FetchTicket;
 
 pub struct MurrFlightService {
@@ -39,7 +39,7 @@ impl MurrFlightService {
             .addr()
             .parse()
             .map_err(|e| MurrError::ConfigParsingError(format!("invalid address: {e}")))?;
-
+        info!("Listening for Flight/gRPC requests on {addr}");
         Server::builder()
             .tcp_nodelay(true)
             .add_service(FlightServiceServer::new(self))

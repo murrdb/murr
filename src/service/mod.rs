@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Instant;
 
 use arrow::record_batch::RecordBatch;
 use log::{info, warn};
@@ -25,6 +26,16 @@ impl MurrService {
             ))
         })?;
 
+        let backend_name = match &config.storage.backend {
+            BackendConfig::Mmap(_) => "Mmap",
+            BackendConfig::Block(_) => "Block",
+        };
+        info!(
+            "Opening store at {} ({} backend)",
+            config.storage.path.display(),
+            backend_name
+        );
+        let open_start = Instant::now();
         let store = match &config.storage.backend {
             BackendConfig::Mmap(plain) => {
                 RocksDBStore::open_plain(&config.storage.path, plain)?
@@ -33,6 +44,7 @@ impl MurrService {
                 RocksDBStore::open_block(&config.storage.path, block)?
             }
         };
+        info!("Store opened in {} ms", open_start.elapsed().as_millis());
         let store = Arc::new(RwLock::new(store));
 
         let snapshot: Vec<(String, TableSchema)> = {
@@ -43,17 +55,27 @@ impl MurrService {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect()
         };
+        let total = snapshot.len();
+        info!("Manifest has {} table(s)", total);
 
+        let load_start = Instant::now();
         let mut tables: HashMap<String, Table<RocksDBStore>> = HashMap::new();
         for (name, schema) in snapshot {
+            let column_count = schema.columns.len();
             match Table::open(store.clone(), name.clone(), schema) {
                 Ok(t) => {
-                    info!("loaded table '{}'", name);
+                    info!("loaded table '{}' ({} columns)", name, column_count);
                     tables.insert(name, t);
                 }
                 Err(e) => warn!("skipping table '{}': {}", name, e),
             }
         }
+        info!(
+            "Service ready: {}/{} tables loaded in {} ms",
+            tables.len(),
+            total,
+            load_start.elapsed().as_millis()
+        );
 
         Ok(Self {
             tables: RwLock::new(tables),
