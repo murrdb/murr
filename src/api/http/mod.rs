@@ -6,7 +6,6 @@ mod json;
 use std::sync::Arc;
 
 use crate::core::MurrError;
-use crate::core::shutdown_signal;
 use crate::service::MurrService;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
