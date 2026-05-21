@@ -5,13 +5,14 @@ mod json;
 
 use std::sync::Arc;
 
+use crate::core::MurrError;
+use crate::core::shutdown_signal;
+use crate::service::MurrService;
+use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
 use axum::serve::ListenerExt;
-use axum::Router;
-
-use crate::core::MurrError;
-use crate::service::MurrService;
+use log::info;
 
 pub struct MurrHttpService {
     service: Arc<MurrService>,
@@ -42,10 +43,14 @@ impl MurrHttpService {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| MurrError::IoError(format!("binding to {addr}: {e}")))?
-            .tap_io(|stream| { stream.set_nodelay(true).ok(); });
+            .tap_io(|stream| {
+                stream.set_nodelay(true).ok();
+            });
+        info!("Listening for HTTP requests on {addr}");
         axum::serve(listener, self.router())
             .await
             .map_err(|e| MurrError::IoError(format!("serving: {e}")))?;
+        info!("HTTP server stopped");
         Ok(())
     }
 }

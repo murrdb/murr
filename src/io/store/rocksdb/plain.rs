@@ -28,6 +28,8 @@ pub struct PlainConfig {
     pub disable_auto_compactions: bool,
     #[serde(default = "default_plain_read_method")]
     pub read_method: ReadMethod,
+    #[serde(default)]
+    pub verify_checksums: bool,
 }
 
 impl Default for PlainConfig {
@@ -42,6 +44,7 @@ impl Default for PlainConfig {
             target_file_size_base: default_target_file_size_base(),
             disable_auto_compactions: default_disable_auto_compactions(),
             read_method: default_plain_read_method(),
+            verify_checksums: false,
         }
     }
 }

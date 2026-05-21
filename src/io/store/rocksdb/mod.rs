@@ -12,7 +12,7 @@ use crate::io::store::{KeyValue, Manifest, Store};
 use itertools::Itertools;
 pub mod block;
 pub mod plain;
-
+use log::info;
 const MANIFEST_FILE: &str = "manifest.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,10 +39,13 @@ pub struct RocksDBStore {
 impl RocksDBStore {
     pub fn open_plain(path: &Path, config: &PlainConfig) -> Result<Self, MurrError> {
         let cf_opts: Options = config.into();
+        let mut read_opts = ReadOptions::default();
+        read_opts.set_verify_checksums(config.verify_checksums);
+        info!("Opening RocksDB PlainTable: read_method={:?}", config.read_method);
         Self::open_inner(
             path,
             cf_opts,
-            ReadOptions::default(),
+            read_opts,
             config.write_buffer_size,
             config.read_method,
         )
@@ -53,6 +56,7 @@ impl RocksDBStore {
         let mut read_opts = ReadOptions::default();
         read_opts.set_async_io(config.async_io);
         read_opts.set_verify_checksums(config.verify_checksums);
+        info!("Opening RocksDB BlockTable: read_method={:?}", config.read_method);
         Self::open_inner(
             path,
             cf_opts,
@@ -69,10 +73,18 @@ impl RocksDBStore {
         write_buffer_size: usize,
         read_method: ReadMethod,
     ) -> Result<Self, MurrError> {
+        info!("RocksDB path: {}", path.display());
         let cfs = DB::list_cf(&cf_opts, path).unwrap_or_default();
+        info!("Discovered {} column families: {:?}", cfs.len(), cfs);
         let cf_descriptors = cfs.iter().map(|name| (name.as_str(), cf_opts.clone()));
         let db = DB::open_cf_with_opts(&cf_opts, path, cf_descriptors)?;
-        let manifest = Manifest::from_file(&path.join(MANIFEST_FILE))?;
+        let manifest_path = path.join(MANIFEST_FILE);
+        let manifest = Manifest::from_file(&manifest_path)?;
+        info!(
+            "Manifest at {}: {} table(s)",
+            manifest_path.display(),
+            manifest.tables.len()
+        );
         Ok(Self {
             db,
             cf_opts,
