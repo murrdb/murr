@@ -1,28 +1,78 @@
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, StringArray, StringBuilder};
+use arrow::{
+    array::{Array, ArrayRef, StringArray, StringBuilder},
+    datatypes::DataType,
+};
+use serde_json::Value;
 
 use crate::{
-    core::MurrError,
+    core::{DType, MurrError},
     io::{
-        column::{ColumnDecoder, ColumnEncoder, downcast},
+        codec::{Codec, ColumnDecoder, ColumnEncoder, downcast},
         row::{read::ReadRow, write::WriteRow},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct Utf8Encoder {
-    column: SegmentColumnSchema,
-    builder: StringBuilder,
+pub struct Utf8Codec;
+
+impl Codec for Utf8Codec {
+    fn dtype(&self) -> DType {
+        DType::Utf8
+    }
+    fn arrow_dtype(&self) -> DataType {
+        DataType::Utf8
+    }
+
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
+        let typed = downcast::<StringArray>(arr, "Utf8")?;
+        Ok((0..typed.len())
+            .map(|i| {
+                if typed.is_null(i) {
+                    Value::Null
+                } else {
+                    Value::String(typed.value(i).to_string())
+                }
+            })
+            .collect())
+    }
+
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
+        let arr: StringArray = vals
+            .iter()
+            .map(|v| match v {
+                Value::Null => Ok(None),
+                Value::String(s) => Ok(Some(s.as_str())),
+                _ => Err(MurrError::TableError(format!("expected string, got {v}"))),
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Arc::new(arr))
+    }
+
+    fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
+        Box::new(Utf8Encoder {
+            column: col,
+            builder: StringBuilder::with_capacity(rows, rows * 16),
+        })
+    }
+
+    fn make_decoder(
+        &self,
+        col: SegmentColumnSchema,
+        arr: &dyn Array,
+    ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
+        let typed = downcast::<StringArray>(arr, "Utf8")?;
+        Ok(Box::new(Utf8Decoder {
+            column: col,
+            array: typed.clone(),
+        }))
+    }
 }
 
-impl Utf8Encoder {
-    pub fn new(column: SegmentColumnSchema, rows: usize) -> Self {
-        Self {
-            column,
-            builder: StringBuilder::with_capacity(rows, rows * 16),
-        }
-    }
+struct Utf8Encoder {
+    column: SegmentColumnSchema,
+    builder: StringBuilder,
 }
 
 impl ColumnEncoder for Utf8Encoder {
@@ -37,6 +87,7 @@ impl ColumnEncoder for Utf8Encoder {
         }
         Ok(())
     }
+
     fn add_empty(&mut self) -> Result<(), MurrError> {
         self.builder.append_null();
         Ok(())
@@ -47,19 +98,9 @@ impl ColumnEncoder for Utf8Encoder {
     }
 }
 
-pub struct Utf8Decoder {
+struct Utf8Decoder {
     column: SegmentColumnSchema,
     array: StringArray,
-}
-
-impl Utf8Decoder {
-    pub fn new(column: SegmentColumnSchema, array: &dyn Array) -> Result<Self, MurrError> {
-        let typed = downcast::<StringArray>(array, "Utf8")?;
-        Ok(Self {
-            column,
-            array: typed.clone(),
-        })
-    }
 }
 
 impl ColumnDecoder for Utf8Decoder {
@@ -72,13 +113,9 @@ impl ColumnDecoder for Utf8Decoder {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::Float32Array;
-
     use super::*;
-    use crate::{
-        core::DType,
-        io::{row::read::ReadRow, schema::SegmentSchema},
-    };
+    use crate::io::{codec::codec_for, schema::SegmentSchema};
+    use arrow::array::Float32Array;
 
     fn single() -> (SegmentSchema, SegmentColumnSchema) {
         let c = SegmentColumnSchema {
@@ -91,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_with_nulls_empty_unicode() {
+    fn row_roundtrip_with_nulls_empty_unicode() {
         let (schema, c) = single();
         let input = StringArray::from(vec![
             Some("hello"),
@@ -101,7 +138,7 @@ mod tests {
             Some("world"),
         ]);
 
-        let dec = Utf8Decoder::new(c.clone(), &input).unwrap();
+        let dec = codec_for(c.dtype).make_decoder(c.clone(), &input).unwrap();
         let bufs: Vec<Vec<u8>> = (0..input.len())
             .map(|i| {
                 let mut w = WriteRow::new(&schema, "");
@@ -110,7 +147,7 @@ mod tests {
             })
             .collect();
 
-        let mut enc = Utf8Encoder::new(c, input.len());
+        let mut enc = codec_for(c.dtype).make_encoder(c, input.len());
         for b in &bufs {
             enc.add_row(&ReadRow::new(&schema, b)).unwrap();
         }
@@ -128,7 +165,7 @@ mod tests {
         w.write_dynamic(&c, &[0xFF, 0xFE, 0xFD]);
         let row = ReadRow::new(&schema, &w.bytes);
 
-        let mut enc = Utf8Encoder::new(c, 1);
+        let mut enc = codec_for(c.dtype).make_encoder(c, 1);
         let err = enc.add_row(&row);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
     }
@@ -137,7 +174,22 @@ mod tests {
     fn decoder_rejects_wrong_array_type() {
         let (_schema, c) = single();
         let wrong = Float32Array::from(vec![Some(1.0_f32)]);
-        let err = Utf8Decoder::new(c, &wrong);
+        let err = Utf8Codec.make_decoder(c, &wrong);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        let arr: ArrayRef =
+            Arc::new(StringArray::from(vec![Some("hello"), None, Some("world")]));
+        let json = Utf8Codec.to_json(arr.as_ref()).unwrap();
+        let back = Utf8Codec.from_json(&json).unwrap();
+        assert_eq!(arr.to_data(), back.to_data());
+    }
+
+    #[test]
+    fn json_from_invalid_type() {
+        let values = vec![Value::from(42)];
+        assert!(Utf8Codec.from_json(&values).is_err());
     }
 }

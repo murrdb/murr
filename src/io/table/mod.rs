@@ -6,7 +6,7 @@ use std::{
 use crate::{
     core::{DType, MurrError, TableSchema},
     io::{
-        column::{ColumnDecoder, decoder_for},
+        codec::{ColumnDecoder, codec_for},
         row::{read::ReadBatchBuilder, write::WriteRow},
         schema::{SegmentColumnSchema, SegmentSchema},
         store::Store,
@@ -87,7 +87,7 @@ impl<S: Store> Table<S> {
             let arr_idx = canonical
                 .index_of(&col.name)
                 .map_err(|e| MurrError::ArrowError(e.to_string()))?;
-            decoders.push(decoder_for(col, ordered.column(arr_idx).as_ref())?);
+            decoders.push(codec_for(col.dtype).make_decoder(col.clone(), ordered.column(arr_idx).as_ref())?);
         }
 
         let n = ordered.num_rows();

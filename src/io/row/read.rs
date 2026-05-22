@@ -8,7 +8,7 @@ use arrow::{
 use crate::{
     core::MurrError,
     io::{
-        column::{ColumnEncoder, encoder_for},
+        codec::{ColumnEncoder, codec_for},
         schema::{SegmentColumnSchema, SegmentSchema},
     },
 };
@@ -71,7 +71,10 @@ impl<'a> ReadBatchBuilder<'a> {
         columns: Vec<&'a SegmentColumnSchema>,
         capacity: usize,
     ) -> Self {
-        let encoders = columns.iter().map(|c| encoder_for(c, capacity)).collect();
+        let encoders = columns
+            .iter()
+            .map(|c| codec_for(c.dtype).make_encoder((*c).clone(), capacity))
+            .collect();
         Self {
             segment,
             columns,

@@ -138,7 +138,7 @@ storage:
 
 Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `key`, and `columns` (each with `dtype` and optional `nullable`).
 
-Supported dtypes: `utf8`, `float32`, `float64`
+Supported dtypes: `utf8`, `bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `float32`, `float64`
 
 ### Testing
 
