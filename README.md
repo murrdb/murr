@@ -186,7 +186,7 @@ No ETAs, but at least you can see where things stand:
 - [x] Python embedded murrdb, so we can make a cool demo
 - [x] Benchmarking harness: Redis support, Feast and feature-blob styles
 - [x] Win at your own benchmark (this was surprisingly hard btw)
-- [x] Support for `utf8`, `float32` and `float64` datatypes
+- [x] Support for `utf8`, `bool`, signed/unsigned `int8/16/32/64`, `float32` and `float64` datatypes
 - [x] Python remote API client (sync + async)
 - [x] Docker image
 - [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16, date-time)

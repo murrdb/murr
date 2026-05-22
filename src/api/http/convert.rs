@@ -7,8 +7,8 @@ use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::json::{JsonCodec, downcast_array};
 use crate::core::{DType, MurrError, TableSchema};
+use crate::io::codec::codec_for;
 
 /// Newtype to implement From<&RecordBatch> (orphan rule prevents impl for serde_json::Value).
 pub struct FetchResponse(pub Value);
@@ -22,16 +22,8 @@ impl TryFrom<&RecordBatch> for FetchResponse {
 
         for (i, field) in schema.fields().iter().enumerate() {
             let column = batch.column(i);
-            let values = match field.data_type() {
-                DataType::Float32 => f32::to_json(downcast_array(column)?),
-                DataType::Float64 => f64::to_json(downcast_array(column)?),
-                DataType::Utf8 => String::to_json(downcast_array(column)?),
-                other => {
-                    return Err(MurrError::ArrowError(format!(
-                        "unsupported array type: {other:?}"
-                    )))
-                }
-            };
+            let dtype = DType::try_from(field.data_type())?;
+            let values = codec_for(dtype).to_json(column.as_ref())?;
             columns.insert(field.name().clone(), Value::Array(values));
         }
 
@@ -57,12 +49,9 @@ impl WriteRequest {
             })?;
 
             fields.push(Field::new(name, DataType::from(&config.dtype), config.nullable));
-            let wrap = |e| MurrError::TableError(format!("column '{name}': {e}"));
-            let array: Arc<dyn Array> = match config.dtype {
-                DType::Float32 => Arc::new(f32::from_json(values).map_err(wrap)?),
-                DType::Float64 => Arc::new(f64::from_json(values).map_err(wrap)?),
-                DType::Utf8 => Arc::new(String::from_json(values).map_err(wrap)?),
-            };
+            let array = codec_for(config.dtype)
+                .from_json(values)
+                .map_err(|e| MurrError::TableError(format!("column '{name}': {e}")))?;
             arrays.push(array);
         }
 
@@ -74,8 +63,8 @@ impl WriteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float32Array, Float64Array, StringArray};
     use crate::core::{ColumnSchema, DType};
+    use arrow::array::{Float32Array, Float64Array, StringArray};
 
     fn test_table_schema() -> TableSchema {
         let mut columns = indexmap::IndexMap::new();
@@ -190,10 +179,7 @@ mod tests {
         let original = test_batch();
         let schema = test_table_schema();
 
-        // Batch → JSON
         let FetchResponse(json) = FetchResponse::try_from(&original).unwrap();
-
-        // JSON → WriteRequest → Batch
         let write: WriteRequest = serde_json::from_value(json).unwrap();
         let restored = write.into_record_batch(&schema).unwrap();
 
@@ -242,10 +228,7 @@ mod tests {
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
-        // JSON → Batch
         let batch = write.into_record_batch(&schema).unwrap();
-
-        // Batch → JSON
         let FetchResponse(json) = FetchResponse::try_from(&batch).unwrap();
         let cols = json.get("columns").unwrap().as_object().unwrap();
 

@@ -1,4 +1,4 @@
-pub mod column;
+pub mod codec;
 pub mod fs;
 pub mod row;
 pub mod schema;
