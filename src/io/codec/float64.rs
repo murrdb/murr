@@ -42,14 +42,25 @@ impl Codec for Float64Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Float64Array;
+    use rstest::rstest;
 
-    #[test]
-    fn json_roundtrip() {
-        let arr: ArrayRef =
-            std::sync::Arc::new(Float64Array::from(vec![Some(3.15), None, Some(2.72)]));
-        let json = Float64Codec.to_json(arr.as_ref()).unwrap();
-        let back = Float64Codec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
+    #[rstest]
+    #[case::pos(Some(3.15))]
+    #[case::null(None)]
+    #[case::neg(Some(-1e10))]
+    #[case::zero(Some(0.0))]
+    fn row_roundtrip(#[case] v: Option<f64>) {
+        assert_row_roundtrip(DType::Float64, &Float64Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::pos(Some(3.15))]
+    #[case::null(None)]
+    #[case::neg(Some(-1e10))]
+    #[case::zero(Some(0.0))]
+    fn json_roundtrip(#[case] v: Option<f64>) {
+        assert_json_roundtrip(DType::Float64, &Float64Array::from(vec![v]));
     }
 }

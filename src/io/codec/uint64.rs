@@ -42,21 +42,36 @@ impl Codec for UInt64Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::UInt64Array;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::null(None)]
+    #[case::zero(Some(0))]
+    #[case::max(Some(u64::MAX))]
+    #[case::mid(Some(7))]
+    #[case::above_2_53(Some((1u64 << 53) + 1))]
+    fn row_roundtrip(#[case] v: Option<u64>) {
+        assert_row_roundtrip(DType::UInt64, &UInt64Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::null(None)]
+    #[case::zero(Some(0))]
+    #[case::max(Some(u64::MAX))]
+    #[case::mid(Some(7))]
+    #[case::above_2_53(Some((1u64 << 53) + 1))]
+    fn json_roundtrip(#[case] v: Option<u64>) {
+        assert_json_roundtrip(DType::UInt64, &UInt64Array::from(vec![v]));
+    }
 
     #[test]
     fn json_preserves_precision_above_2_53() {
         // 2^53 + 1 cannot survive an f64 detour; serde_json's Number::as_u64 keeps it exact.
         let big: u64 = (1u64 << 53) + 1;
-        let arr: ArrayRef = std::sync::Arc::new(UInt64Array::from(vec![
-            Some(0),
-            Some(big),
-            None,
-            Some(u64::MAX),
-        ]));
-        let json = UInt64Codec.to_json(arr.as_ref()).unwrap();
-        assert_eq!(json[1], Value::from(big));
-        let back = UInt64Codec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
+        let arr = UInt64Array::from(vec![Some(big)]);
+        let json = UInt64Codec.to_json(&arr).unwrap();
+        assert_eq!(json[0], Value::from(big));
     }
 }

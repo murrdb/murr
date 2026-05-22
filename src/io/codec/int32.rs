@@ -42,18 +42,27 @@ impl Codec for Int32Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Int32Array;
+    use rstest::rstest;
 
-    #[test]
-    fn json_roundtrip() {
-        let arr: ArrayRef = std::sync::Arc::new(Int32Array::from(vec![
-            Some(-7),
-            None,
-            Some(i32::MAX),
-            Some(0),
-        ]));
-        let json = Int32Codec.to_json(arr.as_ref()).unwrap();
-        let back = Int32Codec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i32::MIN))]
+    #[case::max(Some(i32::MAX))]
+    #[case::zero(Some(0))]
+    fn row_roundtrip(#[case] v: Option<i32>) {
+        assert_row_roundtrip(DType::Int32, &Int32Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i32::MIN))]
+    #[case::max(Some(i32::MAX))]
+    #[case::zero(Some(0))]
+    fn json_roundtrip(#[case] v: Option<i32>) {
+        assert_json_roundtrip(DType::Int32, &Int32Array::from(vec![v]));
     }
 }

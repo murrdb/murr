@@ -38,3 +38,29 @@ impl Codec for UInt8Codec {
         Ok(Box::new(primitive::Decoder::<UInt8Type>::new(col, arr)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
+    use arrow::array::UInt8Array;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::null(None)]
+    #[case::zero(Some(0))]
+    #[case::max(Some(u8::MAX))]
+    #[case::mid(Some(7))]
+    fn row_roundtrip(#[case] v: Option<u8>) {
+        assert_row_roundtrip(DType::UInt8, &UInt8Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::null(None)]
+    #[case::zero(Some(0))]
+    #[case::max(Some(u8::MAX))]
+    #[case::mid(Some(7))]
+    fn json_roundtrip(#[case] v: Option<u8>) {
+        assert_json_roundtrip(DType::UInt8, &UInt8Array::from(vec![v]));
+    }
+}

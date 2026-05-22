@@ -42,15 +42,26 @@ impl Codec for Float32Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Float32Array;
+    use rstest::rstest;
 
-    #[test]
-    fn json_roundtrip() {
-        let arr: ArrayRef =
-            std::sync::Arc::new(Float32Array::from(vec![Some(1.5), None, Some(3.0)]));
-        let json = Float32Codec.to_json(arr.as_ref()).unwrap();
-        let back = Float32Codec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
+    #[rstest]
+    #[case::pos(Some(1.5))]
+    #[case::null(None)]
+    #[case::neg(Some(-2.5))]
+    #[case::zero(Some(0.0))]
+    fn row_roundtrip(#[case] v: Option<f32>) {
+        assert_row_roundtrip(DType::Float32, &Float32Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::pos(Some(1.5))]
+    #[case::null(None)]
+    #[case::neg(Some(-2.5))]
+    #[case::zero(Some(0.0))]
+    fn json_roundtrip(#[case] v: Option<f32>) {
+        assert_json_roundtrip(DType::Float32, &Float32Array::from(vec![v]));
     }
 
     #[test]
@@ -60,7 +71,8 @@ mod tests {
     }
 
     #[test]
-    fn row_roundtrip_with_nulls_and_nan() {
+    fn row_roundtrip_nan() {
+        // NaN bit-pattern doesn't compare equal under to_data(); needs custom check.
         use crate::io::{
             codec::codec_for,
             row::{read::ReadRow, write::WriteRow},
@@ -73,33 +85,14 @@ mod tests {
             offset: 0,
         };
         let schema = SegmentSchema::new(std::slice::from_ref(&c));
-        let input = Float32Array::from(vec![Some(1.5_f32), None, Some(-2.5), Some(f32::NAN)]);
-
+        let input = Float32Array::from(vec![Some(f32::NAN)]);
         let dec = codec_for(c.dtype).make_decoder(c.clone(), &input).unwrap();
-        let bufs: Vec<Vec<u8>> = (0..input.len())
-            .map(|i| {
-                let mut w = WriteRow::new(&schema, "");
-                dec.write_to_row(i, &mut w);
-                w.bytes
-            })
-            .collect();
-
-        let mut enc = codec_for(c.dtype).make_encoder(c, input.len());
-        for b in &bufs {
-            enc.add_row(&ReadRow::new(&schema, b)).unwrap();
-        }
-        let out_arr = enc.build();
-        let out = out_arr.as_any().downcast_ref::<Float32Array>().unwrap();
-        for i in 0..input.len() {
-            assert_eq!(out.is_null(i), input.is_null(i));
-            if !input.is_null(i) {
-                let (v, vb) = (input.value(i), out.value(i));
-                if v.is_nan() {
-                    assert!(vb.is_nan());
-                } else {
-                    assert_eq!(v, vb);
-                }
-            }
-        }
+        let mut w = WriteRow::new(&schema, "");
+        dec.write_to_row(0, &mut w);
+        let mut enc = codec_for(c.dtype).make_encoder(c, 1);
+        enc.add_row(&ReadRow::new(&schema, &w.bytes)).unwrap();
+        let out = enc.build();
+        let out = out.as_any().downcast_ref::<Float32Array>().unwrap();
+        assert!(out.value(0).is_nan());
     }
 }

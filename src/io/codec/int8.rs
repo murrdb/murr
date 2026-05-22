@@ -42,25 +42,34 @@ impl Codec for Int8Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Int8Array;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i8::MIN))]
+    #[case::max(Some(i8::MAX))]
+    #[case::zero(Some(0))]
+    fn row_roundtrip(#[case] v: Option<i8>) {
+        assert_row_roundtrip(DType::Int8, &Int8Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i8::MIN))]
+    #[case::max(Some(i8::MAX))]
+    #[case::zero(Some(0))]
+    fn json_roundtrip(#[case] v: Option<i8>) {
+        assert_json_roundtrip(DType::Int8, &Int8Array::from(vec![v]));
+    }
 
     #[test]
     fn json_overflow_rejected() {
         // serde_json deserializer enforces range; 200 doesn't fit in i8.
         let values = vec![Value::from(200i64)];
         assert!(Int8Codec.from_json(&values).is_err());
-    }
-
-    #[test]
-    fn json_roundtrip() {
-        let arr: ArrayRef = std::sync::Arc::new(Int8Array::from(vec![
-            Some(-7),
-            None,
-            Some(i8::MAX),
-            Some(0),
-        ]));
-        let json = Int8Codec.to_json(arr.as_ref()).unwrap();
-        let back = Int8Codec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
     }
 }

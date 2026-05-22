@@ -112,63 +112,37 @@ impl ColumnDecoder for BoolDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::{codec::codec_for, schema::SegmentSchema};
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Float32Array;
+    use rstest::rstest;
 
-    fn single() -> (SegmentSchema, SegmentColumnSchema) {
+    #[rstest]
+    #[case::t(Some(true))]
+    #[case::null(None)]
+    #[case::f(Some(false))]
+    fn row_roundtrip(#[case] v: Option<bool>) {
+        assert_row_roundtrip(DType::Bool, &BooleanArray::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::t(Some(true))]
+    #[case::null(None)]
+    #[case::f(Some(false))]
+    fn json_roundtrip(#[case] v: Option<bool>) {
+        assert_json_roundtrip(DType::Bool, &BooleanArray::from(vec![v]));
+    }
+
+    #[test]
+    fn decoder_rejects_wrong_array_type() {
         let c = SegmentColumnSchema {
             index: 0,
             dtype: DType::Bool,
             name: "b".into(),
             offset: 0,
         };
-        (SegmentSchema::new(std::slice::from_ref(&c)), c)
-    }
-
-    #[test]
-    fn row_roundtrip_with_nulls() {
-        let (schema, c) = single();
-        let input = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
-
-        let dec = codec_for(c.dtype).make_decoder(c.clone(), &input).unwrap();
-        let bufs: Vec<Vec<u8>> = (0..input.len())
-            .map(|i| {
-                let mut w = WriteRow::new(&schema, "");
-                dec.write_to_row(i, &mut w);
-                w.bytes
-            })
-            .collect();
-
-        let mut enc = codec_for(c.dtype).make_encoder(c, input.len());
-        for b in &bufs {
-            enc.add_row(&ReadRow::new(&schema, b)).unwrap();
-        }
-        let out_arr = enc.build();
-        assert_eq!(
-            out_arr.as_any().downcast_ref::<BooleanArray>().unwrap(),
-            &input
-        );
-    }
-
-    #[test]
-    fn decoder_rejects_wrong_array_type() {
-        let (_schema, c) = single();
         let wrong = Float32Array::from(vec![Some(1.0_f32)]);
         let err = BoolCodec.make_decoder(c, &wrong);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
-    }
-
-    #[test]
-    fn json_roundtrip() {
-        let arr: ArrayRef = Arc::new(BooleanArray::from(vec![
-            Some(true),
-            None,
-            Some(false),
-            Some(true),
-        ]));
-        let json = BoolCodec.to_json(arr.as_ref()).unwrap();
-        let back = BoolCodec.from_json(&json).unwrap();
-        assert_eq!(arr.to_data(), back.to_data());
     }
 
     #[test]

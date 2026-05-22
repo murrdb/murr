@@ -38,3 +38,31 @@ impl Codec for Int16Codec {
         Ok(Box::new(primitive::Decoder::<Int16Type>::new(col, arr)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
+    use arrow::array::Int16Array;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i16::MIN))]
+    #[case::max(Some(i16::MAX))]
+    #[case::zero(Some(0))]
+    fn row_roundtrip(#[case] v: Option<i16>) {
+        assert_row_roundtrip(DType::Int16, &Int16Array::from(vec![v]));
+    }
+
+    #[rstest]
+    #[case::neg(Some(-7))]
+    #[case::null(None)]
+    #[case::min(Some(i16::MIN))]
+    #[case::max(Some(i16::MAX))]
+    #[case::zero(Some(0))]
+    fn json_roundtrip(#[case] v: Option<i16>) {
+        assert_json_roundtrip(DType::Int16, &Int16Array::from(vec![v]));
+    }
+}
