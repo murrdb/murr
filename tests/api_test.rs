@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use arrow::array::{Float32Array, StringArray};
+use arrow::array::{Float32Array, Float64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
@@ -292,4 +292,103 @@ async fn test_write_parquet() {
     assert_eq!(scores[0].as_f64().unwrap() as f32, 10.0);
     assert_eq!(scores[1].as_f64().unwrap() as f32, 20.0);
     assert_eq!(scores[2].as_f64().unwrap() as f32, 30.0);
+}
+
+fn arrow_ipc_batch_f64(keys: &[&str], scores: &[f64]) -> Vec<u8> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("score", DataType::Float64, true),
+    ]));
+    let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
+    let score_array: Float64Array = scores.iter().map(|v| Some(*v)).collect();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(key_array), Arc::new(score_array)],
+    )
+    .unwrap();
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, &schema).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+    buf
+}
+
+#[tokio::test]
+async fn test_write_arrow_ipc_cast_float64_to_float32() {
+    let (_dir, router) = setup().await;
+
+    // schema declares score as float32 with cast: true
+    let schema = json!({
+        "key": "id",
+        "columns": {
+            "id": {"dtype": "utf8", "nullable": false},
+            "score": {"dtype": "float32", "nullable": true, "cast": true}
+        }
+    });
+    let create_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/table/cast_test")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&schema).unwrap()))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), create_req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // write Arrow IPC batch with float64 score column
+    let ipc = arrow_ipc_batch_f64(&["a", "b"], &[1.5, 2.5]);
+    let write_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/table/cast_test/write")
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(ipc))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), write_req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // fetch and verify values came through (cast float64 → float32)
+    let fetch_body = json!({"keys": ["a", "b"], "columns": ["score"]});
+    let fetch_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/table/cast_test/fetch")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&fetch_body).unwrap()))
+        .unwrap();
+    let (status, json) = body_json(router, fetch_req).await;
+    assert_eq!(status, StatusCode::OK);
+    let scores = json["columns"]["score"].as_array().unwrap();
+    assert!((scores[0].as_f64().unwrap() as f32 - 1.5_f32).abs() < 1e-5);
+    assert!((scores[1].as_f64().unwrap() as f32 - 2.5_f32).abs() < 1e-5);
+}
+
+#[tokio::test]
+async fn test_write_arrow_ipc_type_mismatch_without_cast_fails() {
+    let (_dir, router) = setup().await;
+
+    // schema declares score as float32 with cast: false (default)
+    let schema = json!({
+        "key": "id",
+        "columns": {
+            "id": {"dtype": "utf8", "nullable": false},
+            "score": {"dtype": "float32", "nullable": true}
+        }
+    });
+    let create_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/table/strict_test")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&schema).unwrap()))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), create_req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // write Arrow IPC batch with float64 — should fail without cast
+    let ipc = arrow_ipc_batch_f64(&["a"], &[1.5]);
+    let write_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/table/strict_test/write")
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(ipc))
+        .unwrap();
+    let (status, _) = body_bytes(router, write_req).await;
+    assert_ne!(status, StatusCode::OK);
 }

@@ -48,6 +48,10 @@ pub struct ColumnSchema {
     pub dtype: DType,
     #[serde(default = "ColumnSchema::default_nullable")]
     pub nullable: bool,
+    /// When true, incoming data with a compatible but different Arrow type is silently cast
+    /// to the schema dtype (e.g. Float64 → Float32). Defaults to false (strict).
+    #[serde(default)]
+    pub cast: bool,
 }
 
 impl ColumnSchema {
