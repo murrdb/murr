@@ -76,6 +76,10 @@ harness = false
 name = "read_block"
 harness = false
 
+[[bench]]
+name = "write"
+harness = false
+
 [profile.dev.package.librocksdb-sys]
 debug = "line-tables-only"
 

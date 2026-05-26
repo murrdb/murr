@@ -10,7 +10,7 @@
 <a href="#what-is-murr">🐱 What is Murr?</a> &middot; <a href="#why-murr">🚀 Why Murr?</a> &middot; <a href="#why-not-murr">🚫 Why NOT Murr?</a> &middot; <a href="#quickstart">⚡ Quickstart</a> &middot; <a href="#benchmarks">📊 Benchmarks</a> &middot; <a href="#roadmap">🗺 Roadmap</a>
 </p>
 
-**Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
+**Murrdb**: A RocksDB-based NVMe/S3 cache for AI inference workloads. A faster Redis replacement, optimized for batch low-latency zero-copy reads and writes.
 
 > This `README.md` is 99%[^1] human written.
 
@@ -35,7 +35,7 @@ curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
 print(result.to_pandas())  # look mom, zero copy!
 ```
-- **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
+- **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets evicted, you're cooked. Murr just self-bootstraps from block storage.
 
 Murr shines when:
 * **your data is heavy and tabular**: that giant Parquet dump on S3 your AI inference or ML prep job produces? Perfect fit.
@@ -140,25 +140,43 @@ We benchmark a typical `ML Ranking` use case: 100M rows, 10 `float32` columns, 1
 * **Python (pyperf)** — measures end-to-end latency as experienced by a Python ML client. Performs the same random-key reads but includes full protocol decoding and conversion into a `pd.DataFrame`. This captures the real cost a user pays: protocol parsing, byte deserialization, and DataFrame construction.
 
 Backends and data layouts tested:
-* **murr** (columnar, Arrow IPC) — native columnar format with zero-copy reads and projection pushdown.
-* **Redis blob** — all features packed into a single 40-byte `MGET` blob. Compact and cache-friendly, but always reads all columns.
-* **Redis HSET** — [Feast](https://feast.dev/)-style hash-per-row: each feature is a separate HSET field. Flexible, but per-field overhead adds up.
-* **RocksDB blob** — embedded key-value store with the same packed binary layout as Redis blob.
+* **murr** (native, Arrow IPC) — row-wise storage on top of RocksDB SSTables, with zero-copy reads and projection pushdown. Two modes: `mmap` (PlainTable, in-memory) and `block` (BlockTable, NVMe-backed).
+* **Redis / Valkey / Dragonfly, blob** — all features packed into a single `MGET` blob. Compact and cache-friendly, but always reads all columns.
+* **Redis / Valkey / Dragonfly, HSET** — [Feast](https://feast.dev/)-style hash-per-row: each feature is a separate HSET field. Flexible, but per-field overhead adds up.
 * **PostgreSQL blob** — BYTEA column with packed features.
 * **PostgreSQL col-per-feature** — explicit typed columns, one per feature.
 
 ### Rust time-to-last-byte
 
-All backends run on the same machine; container-backed ones use Docker via `testcontainers`. Memory is measured via Docker cgroup stats (container backends) or `/proc/self/statm` (embedded backends) as a before/after delta around the data load phase.
+All backends run on the same machine; container-backed ones use Docker via `testcontainers`. Memory is the container `TOTAL` (RSS+SHR) delta around the load phase. Net TX is server-to-client bytes per read. `disk` variants are cgroup-capped at 2 GiB RAM to force disk reads.
 
-| Engine | Layout | Disk | Memory | Ingestion | p95 read latency |
-|--------|--------|-----:|-------:|----------:|-----------------:|
-| murr 0.1.8 | columnar | 4.8 GiB | 9.5 GiB | 2.76M rows/s | 443 us |
-| Redis 8.6.1 | blob | 1.3 GiB | 10.6 GiB | 1.31M rows/s | 998 us |
-| Redis 8.6.1 | HSET | 8.2 GiB | 21.2 GiB | 381K rows/s | 4.30 ms |
-| RocksDB | blob | 4.3 GiB | 2.5 GiB | 2.40M rows/s | 3.85 ms |
-| PostgreSQL 17 | blob | 12.8 GiB | 13.7 GiB | 283K rows/s | 9.75 ms |
-| PostgreSQL 17 | col-per-feature | 12.7 GiB | 13.5 GiB | 138K rows/s | 8.79 ms |
+#### Blob layouts
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 mmap | native | 7.5 GiB | 5.9 GiB | 948K rows/s | 268 µs | 42 KiB |
+| Dragonfly 1.31 | blob | 7.3 GiB | — | 4.01M rows/s | 296 µs | 46 KiB |
+| Valkey 8.1 | blob | 8.9 GiB | — | 1.58M rows/s | 657 µs | 46 KiB |
+| Redis 8.6.3 | blob | 9.6 GiB | — | 1.43M rows/s | 815 µs | 46 KiB |
+| pgsql 18.4 | blob | 24.0 GiB | 12.8 GiB | 400K rows/s | 5.69 ms | 62 KiB |
+
+#### Hash / col-per-feature layouts
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 mmap | native | 7.5 GiB | 5.9 GiB | 948K rows/s | 268 µs | 42 KiB |
+| Dragonfly 1.31 | hash | 20.1 GiB | — | 650K rows/s | 2.82 ms | 213 KiB |
+| Valkey 8.1 | hash | 19.4 GiB | — | 378K rows/s | 3.20 ms | 210 KiB |
+| Redis 8.6.3 | hash | 20.1 GiB | — | 398K rows/s | 3.25 ms | 210 KiB |
+| pgsql 18.4 | col | 23.4 GiB | 12.7 GiB | 384K rows/s | 6.54 ms | 86 KiB |
+
+#### Disk mode (2 GiB RAM cap)
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 block | native | 1.7 GiB | 5.8 GiB | 1.00M rows/s | 6.33 ms | 42 KiB |
+| pgsql 18.4 | blob | 2.0 GiB | 12.8 GiB | 329K rows/s | 189 ms | 62 KiB |
+| pgsql 18.4 | col | 2.0 GiB | 12.7 GiB | 327K rows/s | 217 ms | 86 KiB |
 
 ### Python end-to-end
 
@@ -173,7 +191,7 @@ Measures full round-trip latency including protocol decoding and `pd.DataFrame` 
 | PostgreSQL 17 | blob | 356K rows/s | 10.8 ms |
 | PostgreSQL 17 | col-per-feature | 143K rows/s | 10.6 ms |
 
-Murr is ~2.3x faster than the best Redis layout (MGET with packed blobs) on raw read latency, and ~17x faster on Python end-to-end ingestion throughput.
+Murr is ~3x faster than Redis on packed-blob reads and ~12x faster on Feast-style HSET layout, while using ~3x less RAM than the HSET equivalent. Dragonfly's packed-blob mode is close on latency, but still pays the protocol-parsing cost on the client.
 
 ## Roadmap
 
