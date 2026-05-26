@@ -270,6 +270,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         columns.insert(
@@ -277,6 +278,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: true,
+                cast: false,
             },
         );
         TableSchema {

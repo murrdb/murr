@@ -173,6 +173,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         columns.insert(
@@ -180,6 +181,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
+                cast: false,
             },
         );
         TableSchema {
@@ -249,6 +251,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         columns.insert(
@@ -256,6 +259,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
+                cast: false,
             },
         );
         columns.insert(
@@ -263,6 +267,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: true,
+                cast: false,
             },
         );
         let schema = TableSchema {
@@ -381,6 +386,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         columns.insert(
@@ -388,6 +394,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
+                cast: false,
             },
         );
         columns.insert(
@@ -395,6 +402,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float64,
                 nullable: true,
+                cast: false,
             },
         );
         columns.insert(
@@ -402,6 +410,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: true,
+                cast: false,
             },
         );
         let schema = TableSchema {
@@ -489,6 +498,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float32,
                 nullable: false,
+                cast: false,
             },
         );
         let schema = TableSchema {

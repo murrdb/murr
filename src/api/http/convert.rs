@@ -101,6 +101,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         columns.insert(
@@ -108,6 +109,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float32,
                 nullable: true,
+                cast: false,
             },
         );
         columns.insert(
@@ -115,6 +117,7 @@ mod tests {
             ColumnSchema {
                 dtype: DType::Float64,
                 nullable: true,
+                cast: false,
             },
         );
         TableSchema {
