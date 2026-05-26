@@ -48,6 +48,7 @@ async fn setup() -> TestHarness {
                 ColumnSchema {
                     dtype: DType::Utf8,
                     nullable: false,
+                    cast: false,
                 },
             ),
             (
@@ -55,6 +56,7 @@ async fn setup() -> TestHarness {
                 ColumnSchema {
                     dtype: DType::Float32,
                     nullable: true,
+                    cast: false,
                 },
             ),
         ]),

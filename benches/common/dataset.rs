@@ -28,6 +28,7 @@ impl Dataset {
             ColumnSchema {
                 dtype: DType::Utf8,
                 nullable: false,
+                cast: false,
             },
         );
         for i in 0..num_cols {
@@ -36,6 +37,7 @@ impl Dataset {
                 ColumnSchema {
                     dtype: DType::Float32,
                     nullable: false,
+                    cast: false,
                 },
             );
         }

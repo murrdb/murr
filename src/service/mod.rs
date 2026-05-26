@@ -158,11 +158,11 @@ mod tests {
         let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnSchema { dtype: DType::Utf8, nullable: false },
+            ColumnSchema { dtype: DType::Utf8, nullable: false, cast: false },
         );
         columns.insert(
             "score".to_string(),
-            ColumnSchema { dtype: DType::Float32, nullable: true },
+            ColumnSchema { dtype: DType::Float32, nullable: true, cast: false },
         );
         TableSchema { key: "key".to_string(), columns }
     }
