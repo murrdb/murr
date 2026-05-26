@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use arrow::array::RecordBatch;
 use rocksdb::{ColumnFamily, DB, DBPinnableSlice, Options, ReadOptions, WriteBatch, WriteOptions};
 use serde::{Deserialize, Serialize};
 
+use crate::conf::{BackendConfig, StorageConfig};
 use crate::core::{MurrError, TableSchema};
 use crate::io::row::read::ReadBatchBuilder;
 use crate::io::store::rocksdb::block::BlockConfig;
@@ -52,6 +54,31 @@ impl RocksDBStore {
             config.write_buffer_size,
             config.read_method,
         )
+    }
+
+    pub fn open_from_config(storage: &StorageConfig) -> Result<Self, MurrError> {
+        std::fs::create_dir_all(&storage.path).map_err(|e| {
+            MurrError::IoError(format!(
+                "creating storage path {}: {e}",
+                storage.path.display()
+            ))
+        })?;
+        let backend_name = match &storage.backend {
+            BackendConfig::Mmap(_) => "Mmap",
+            BackendConfig::Block(_) => "Block",
+        };
+        info!(
+            "Opening store at {} ({} backend)",
+            storage.path.display(),
+            backend_name
+        );
+        let open_start = Instant::now();
+        let store = match &storage.backend {
+            BackendConfig::Mmap(plain) => Self::open_plain(&storage.path, plain)?,
+            BackendConfig::Block(block) => Self::open_block(&storage.path, block)?,
+        };
+        info!("Store opened in {} ms", open_start.elapsed().as_millis());
+        Ok(store)
     }
 
     pub fn open_block(path: &Path, config: &BlockConfig) -> Result<Self, MurrError> {

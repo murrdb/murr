@@ -12,6 +12,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
+use crate::io::store::Store;
 use crate::service::MurrService;
 
 use super::convert::{FetchResponse, WriteRequest};
@@ -33,8 +34,8 @@ pub async fn health() -> &'static str {
     "OK"
 }
 
-pub async fn list_tables(
-    State(service): State<Arc<MurrService>>,
+pub async fn list_tables<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
 ) -> Result<Json<std::collections::HashMap<String, TableSchema>>, ApiError> {
     let svc = service.clone();
     let tables = tokio::task::spawn_blocking(move || svc.list_tables())
@@ -43,8 +44,8 @@ pub async fn list_tables(
     Ok(Json(tables))
 }
 
-pub async fn get_schema(
-    State(service): State<Arc<MurrService>>,
+pub async fn get_schema<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
 ) -> Result<Json<TableSchema>, ApiError> {
     let svc = service.clone();
@@ -54,8 +55,8 @@ pub async fn get_schema(
     Ok(Json(schema))
 }
 
-pub async fn create_table(
-    State(service): State<Arc<MurrService>>,
+pub async fn create_table<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
     Json(schema): Json<TableSchema>,
 ) -> Result<StatusCode, ApiError> {
@@ -72,8 +73,8 @@ pub struct FetchRequest {
     pub columns: Vec<String>,
 }
 
-pub async fn fetch(
-    State(service): State<Arc<MurrService>>,
+pub async fn fetch<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
     headers: HeaderMap,
     Json(req): Json<FetchRequest>,
@@ -107,8 +108,8 @@ pub async fn fetch(
     .map_err(join_to_api_error)?
 }
 
-pub async fn write_table(
-    State(service): State<Arc<MurrService>>,
+pub async fn write_table<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
     headers: HeaderMap,
     body: Bytes,

@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arrow::array::{Float32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -17,6 +17,7 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{BackendConfig, Config, StorageConfig};
+use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
@@ -29,7 +30,10 @@ async fn setup() -> (TempDir, Router) {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).unwrap());
+    let store = Arc::new(RwLock::new(
+        RocksDBStore::open_from_config(&config.storage).unwrap(),
+    ));
+    let service = Arc::new(MurrService::new(store, config).unwrap());
     let api = MurrHttpService::new(service);
     let router = api.router();
     (dir, router)

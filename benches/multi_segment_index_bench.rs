@@ -3,7 +3,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use indexmap::IndexMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use arrow::datatypes::Schema;
@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DTypeName, TableSchema};
+use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
@@ -76,7 +77,10 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                         },
                         ..Config::default()
                     };
-                    let svc = MurrService::new(config).unwrap();
+                    let store = Arc::new(RwLock::new(
+                        RocksDBStore::open_from_config(&config.storage).unwrap(),
+                    ));
+                    let svc = MurrService::new(store, config).unwrap();
                     svc.create("bench", schema).unwrap();
                     for _ in 0..n {
                         svc.write("bench", &batch).unwrap();
