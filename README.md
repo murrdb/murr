@@ -182,14 +182,33 @@ All backends run on the same machine; container-backed ones use Docker via `test
 
 Measures full round-trip latency including protocol decoding and `pd.DataFrame` conversion. Ingestion throughput includes Python-side serialization and batch writes.
 
+#### Blob layouts
+
 | Engine | Layout | Ingestion | Read latency |
 |--------|--------|----------:|-------------:|
-| murr 0.1.8 | columnar | 2.34M rows/s | 1.38 ms |
-| Redis 8.6.1 | blob | 136K rows/s | 2.42 ms |
-| Redis 8.6.1 | HSET | 61K rows/s | 9.39 ms |
-| RocksDB | blob | 622K rows/s | 4.90 ms |
-| PostgreSQL 17 | blob | 356K rows/s | 10.8 ms |
-| PostgreSQL 17 | col-per-feature | 143K rows/s | 10.6 ms |
+| murr 0.2.0 mmap | native | 1.06M rows/s | 1.08 ms |
+| Dragonfly | blob | 524K rows/s | 1.68 ms |
+| Valkey 8.1 | blob | 436K rows/s | 2.04 ms |
+| Redis 8.6.3 | blob | 421K rows/s | 2.46 ms |
+| pgsql 18.4 | blob | 298K rows/s | 28.6 ms |
+
+#### Hash / col-per-feature layouts
+
+| Engine | Layout | Ingestion | Read latency |
+|--------|--------|----------:|-------------:|
+| murr 0.2.0 mmap | native | 1.06M rows/s | 1.08 ms |
+| Dragonfly | hash | 64K rows/s | 8.25 ms |
+| Valkey 8.1 | hash | 62K rows/s | 8.63 ms |
+| Redis 8.6.3 | hash | 62K rows/s | 8.50 ms |
+| pgsql 18.4 | col | 271K rows/s | 13.8 ms |
+
+#### Disk mode (2 GiB RAM cap)
+
+| Engine | Layout | Ingestion | Read latency |
+|--------|--------|----------:|-------------:|
+| murr 0.2.0 block | native | 662K rows/s | 6.69 ms |
+| pgsql 18.4 | blob | 317K rows/s | 171 ms |
+| pgsql 18.4 | col | 303K rows/s | 153 ms |
 
 Murr is ~3x faster than Redis on packed-blob reads and ~12x faster on Feast-style HSET layout, while using ~3x less RAM than the HSET equivalent. Dragonfly's packed-blob mode is close on latency, but still pays the protocol-parsing cost on the client.
 
