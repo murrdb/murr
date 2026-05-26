@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use arrow::{
     array::{ArrayRef, RecordBatch},
-    datatypes::{DataType, Field, Schema},
+    datatypes::{Field, Schema},
 };
 
 use crate::{
     core::MurrError,
     io::{
-        codec::{ColumnEncoder, codec_for},
+        codec::ColumnEncoder,
         schema::{SegmentColumnSchema, SegmentSchema},
     },
 };
@@ -73,7 +73,7 @@ impl<'a> ReadBatchBuilder<'a> {
     ) -> Self {
         let encoders = columns
             .iter()
-            .map(|c| codec_for(c.dtype).make_encoder((*c).clone(), capacity))
+            .map(|c| c.dtype.codec().make_encoder((*c).clone(), capacity))
             .collect();
         Self {
             segment,
@@ -102,7 +102,7 @@ impl<'a> ReadBatchBuilder<'a> {
         let fields: Vec<Field> = self
             .columns
             .iter()
-            .map(|c| Field::new(&c.name, DataType::from(&c.dtype), true))
+            .map(|c| Field::new(&c.name, c.dtype.codec().arrow_dtype(), true))
             .collect();
         RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
             .map_err(|e| MurrError::ArrowError(e.to_string()))

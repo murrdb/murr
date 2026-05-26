@@ -5,28 +5,28 @@ use arrow::{
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
-        codec::{Codec, ColumnDecoder, ColumnEncoder, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct UInt8Codec;
+pub struct UInt8;
 
-impl Codec for UInt8Codec {
-    fn dtype(&self) -> DType {
-        DType::UInt8
+impl DType for UInt8 {
+    fn name(&self) -> DTypeName {
+        DTypeName::UInt8
     }
     fn arrow_dtype(&self) -> DataType {
         DataType::UInt8
     }
-    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
-        primitive::to_json::<UInt8Type>(arr)
+    fn size(&self) -> usize {
+        1
     }
-    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
-        primitive::from_json::<UInt8Type>(vals)
-    }
+}
+
+impl ArrowCodec for UInt8 {
     fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
         Box::new(primitive::Encoder::<UInt8Type>::new(col, rows))
     }
@@ -39,9 +39,18 @@ impl Codec for UInt8Codec {
     }
 }
 
+impl JsonCodec for UInt8 {
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
+        primitive::to_json::<UInt8Type>(arr)
+    }
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
+        primitive::from_json::<UInt8Type>(vals)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::core::DTypeName;
     use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::UInt8Array;
     use rstest::rstest;
@@ -52,7 +61,7 @@ mod tests {
     #[case::max(Some(u8::MAX))]
     #[case::mid(Some(7))]
     fn row_roundtrip(#[case] v: Option<u8>) {
-        assert_row_roundtrip(DType::UInt8, &UInt8Array::from(vec![v]));
+        assert_row_roundtrip(DTypeName::UInt8, &UInt8Array::from(vec![v]));
     }
 
     #[rstest]
@@ -61,6 +70,6 @@ mod tests {
     #[case::max(Some(u8::MAX))]
     #[case::mid(Some(7))]
     fn json_roundtrip(#[case] v: Option<u8>) {
-        assert_json_roundtrip(DType::UInt8, &UInt8Array::from(vec![v]));
+        assert_json_roundtrip(DTypeName::UInt8, &UInt8Array::from(vec![v]));
     }
 }

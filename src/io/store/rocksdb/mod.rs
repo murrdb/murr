@@ -41,7 +41,10 @@ impl RocksDBStore {
         let cf_opts: Options = config.into();
         let mut read_opts = ReadOptions::default();
         read_opts.set_verify_checksums(config.verify_checksums);
-        info!("Opening RocksDB PlainTable: read_method={:?}", config.read_method);
+        info!(
+            "Opening RocksDB PlainTable: read_method={:?}",
+            config.read_method
+        );
         Self::open_inner(
             path,
             cf_opts,
@@ -56,7 +59,10 @@ impl RocksDBStore {
         let mut read_opts = ReadOptions::default();
         read_opts.set_async_io(config.async_io);
         read_opts.set_verify_checksums(config.verify_checksums);
-        info!("Opening RocksDB BlockTable: read_method={:?}", config.read_method);
+        info!(
+            "Opening RocksDB BlockTable: read_method={:?}",
+            config.read_method
+        );
         Self::open_inner(
             path,
             cf_opts,
@@ -246,7 +252,7 @@ impl Store for RocksDBStore {
 #[cfg(all(test, feature = "testutil"))]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
     use rstest::rstest;
@@ -268,14 +274,14 @@ mod tests {
         columns.insert(
             key.to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "payload".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: true,
             },
         );

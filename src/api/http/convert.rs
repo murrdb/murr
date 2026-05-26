@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::Array;
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{Field, Schema};
 use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::core::{DType, MurrError, TableSchema};
-use crate::io::codec::codec_for;
+use crate::core::{DTypeName, MurrError, TableSchema};
 
 /// Newtype to implement From<&RecordBatch> (orphan rule prevents impl for serde_json::Value).
 pub struct FetchResponse(pub Value);
@@ -22,8 +21,8 @@ impl TryFrom<&RecordBatch> for FetchResponse {
 
         for (i, field) in schema.fields().iter().enumerate() {
             let column = batch.column(i);
-            let dtype = DType::try_from(field.data_type())?;
-            let values = codec_for(dtype).to_json(column.as_ref())?;
+            let dtype = DTypeName::try_from(field.data_type())?;
+            let values = dtype.codec().to_json(column.as_ref())?;
             columns.insert(field.name().clone(), Value::Array(values));
         }
 
@@ -48,8 +47,9 @@ impl WriteRequest {
                 MurrError::TableError(format!("missing column '{}' in write payload", name))
             })?;
 
-            fields.push(Field::new(name, DataType::from(&config.dtype), config.nullable));
-            let array = codec_for(config.dtype)
+            let codec = config.dtype.codec();
+            fields.push(Field::new(name, codec.arrow_dtype(), config.nullable));
+            let array = codec
                 .from_json(values)
                 .map_err(|e| MurrError::TableError(format!("column '{name}': {e}")))?;
             arrays.push(array);
@@ -63,29 +63,30 @@ impl WriteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use arrow::array::{Float32Array, Float64Array, StringArray};
+    use arrow::datatypes::DataType;
 
     fn test_table_schema() -> TableSchema {
         let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "name".to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
             },
         );
         columns.insert(
             "weight".to_string(),
             ColumnSchema {
-                dtype: DType::Float64,
+                dtype: DTypeName::Float64,
                 nullable: true,
             },
         );
@@ -138,7 +139,10 @@ mod tests {
             vec![Value::String("alice".into()), Value::String("bob".into())],
         );
         columns.insert("score".to_string(), vec![Value::from(1.5), Value::Null]);
-        columns.insert("weight".to_string(), vec![Value::from(3.15), Value::from(2.72)]);
+        columns.insert(
+            "weight".to_string(),
+            vec![Value::from(3.15), Value::from(2.72)],
+        );
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
@@ -210,8 +214,14 @@ mod tests {
 
         let orig_weights = original.column_by_name("weight").unwrap();
         let rest_weights = restored.column_by_name("weight").unwrap();
-        let orig_w = orig_weights.as_any().downcast_ref::<Float64Array>().unwrap();
-        let rest_w = rest_weights.as_any().downcast_ref::<Float64Array>().unwrap();
+        let orig_w = orig_weights
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let rest_w = rest_weights
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_eq!(orig_w.value(0), rest_w.value(0));
         assert_eq!(orig_w.value(1), rest_w.value(1));
     }

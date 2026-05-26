@@ -37,12 +37,8 @@ impl MurrService {
         );
         let open_start = Instant::now();
         let store = match &config.storage.backend {
-            BackendConfig::Mmap(plain) => {
-                RocksDBStore::open_plain(&config.storage.path, plain)?
-            }
-            BackendConfig::Block(block) => {
-                RocksDBStore::open_block(&config.storage.path, block)?
-            }
+            BackendConfig::Mmap(plain) => RocksDBStore::open_plain(&config.storage.path, plain)?,
+            BackendConfig::Block(block) => RocksDBStore::open_block(&config.storage.path, block)?,
         };
         info!("Store opened in {} ms", open_start.elapsed().as_millis());
         let store = Arc::new(RwLock::new(store));
@@ -108,7 +104,10 @@ impl MurrService {
 
     pub fn list_tables(&self) -> HashMap<String, TableSchema> {
         let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
-        tables.iter().map(|(k, v)| (k.clone(), v.schema().clone())).collect()
+        tables
+            .iter()
+            .map(|(k, v)| (k.clone(), v.schema().clone()))
+            .collect()
     }
 
     pub fn get_schema(&self, table_name: &str) -> Result<TableSchema, MurrError> {
@@ -137,7 +136,7 @@ impl MurrService {
 mod tests {
     use super::*;
     use crate::conf::StorageConfig;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use crate::io::store::rocksdb::plain::PlainConfig;
     use arrow::array::{Array, Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
@@ -158,13 +157,22 @@ mod tests {
         let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
-            ColumnSchema { dtype: DType::Utf8, nullable: false },
+            ColumnSchema {
+                dtype: DTypeName::Utf8,
+                nullable: false,
+            },
         );
         columns.insert(
             "score".to_string(),
-            ColumnSchema { dtype: DType::Float32, nullable: true },
+            ColumnSchema {
+                dtype: DTypeName::Float32,
+                nullable: true,
+            },
         );
-        TableSchema { key: "key".to_string(), columns }
+        TableSchema {
+            key: "key".to_string(),
+            columns,
+        }
     }
 
     fn test_batch(keys: &[&str], scores: &[f32]) -> RecordBatch {

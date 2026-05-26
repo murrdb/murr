@@ -5,28 +5,28 @@ use arrow::{
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
-        codec::{Codec, ColumnDecoder, ColumnEncoder, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct Int16Codec;
+pub struct Int16;
 
-impl Codec for Int16Codec {
-    fn dtype(&self) -> DType {
-        DType::Int16
+impl DType for Int16 {
+    fn name(&self) -> DTypeName {
+        DTypeName::Int16
     }
     fn arrow_dtype(&self) -> DataType {
         DataType::Int16
     }
-    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
-        primitive::to_json::<Int16Type>(arr)
+    fn size(&self) -> usize {
+        2
     }
-    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
-        primitive::from_json::<Int16Type>(vals)
-    }
+}
+
+impl ArrowCodec for Int16 {
     fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
         Box::new(primitive::Encoder::<Int16Type>::new(col, rows))
     }
@@ -39,9 +39,18 @@ impl Codec for Int16Codec {
     }
 }
 
+impl JsonCodec for Int16 {
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
+        primitive::to_json::<Int16Type>(arr)
+    }
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
+        primitive::from_json::<Int16Type>(vals)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::core::DTypeName;
     use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Int16Array;
     use rstest::rstest;
@@ -53,7 +62,7 @@ mod tests {
     #[case::max(Some(i16::MAX))]
     #[case::zero(Some(0))]
     fn row_roundtrip(#[case] v: Option<i16>) {
-        assert_row_roundtrip(DType::Int16, &Int16Array::from(vec![v]));
+        assert_row_roundtrip(DTypeName::Int16, &Int16Array::from(vec![v]));
     }
 
     #[rstest]
@@ -63,6 +72,6 @@ mod tests {
     #[case::max(Some(i16::MAX))]
     #[case::zero(Some(0))]
     fn json_roundtrip(#[case] v: Option<i16>) {
-        assert_json_roundtrip(DType::Int16, &Int16Array::from(vec![v]));
+        assert_json_roundtrip(DTypeName::Int16, &Int16Array::from(vec![v]));
     }
 }

@@ -69,7 +69,9 @@ pub fn run_read_bench<B: ReadBench>(
 ) {
     eprintln!(
         "[{}] writing {} rows in chunks of {}...",
-        opts.group_name, dataset.num_rows(), opts.write_batch_size
+        opts.group_name,
+        dataset.num_rows(),
+        opts.write_batch_size
     );
     bench
         .write(dataset, opts.write_batch_size)

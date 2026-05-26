@@ -5,28 +5,28 @@ use arrow::{
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
-        codec::{Codec, ColumnDecoder, ColumnEncoder, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct Int64Codec;
+pub struct Int64;
 
-impl Codec for Int64Codec {
-    fn dtype(&self) -> DType {
-        DType::Int64
+impl DType for Int64 {
+    fn name(&self) -> DTypeName {
+        DTypeName::Int64
     }
     fn arrow_dtype(&self) -> DataType {
         DataType::Int64
     }
-    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
-        primitive::to_json::<Int64Type>(arr)
+    fn size(&self) -> usize {
+        8
     }
-    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
-        primitive::from_json::<Int64Type>(vals)
-    }
+}
+
+impl ArrowCodec for Int64 {
     fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
         Box::new(primitive::Encoder::<Int64Type>::new(col, rows))
     }
@@ -39,9 +39,18 @@ impl Codec for Int64Codec {
     }
 }
 
+impl JsonCodec for Int64 {
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
+        primitive::to_json::<Int64Type>(arr)
+    }
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
+        primitive::from_json::<Int64Type>(vals)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::core::DTypeName;
     use crate::io::codec::test_util::{assert_json_roundtrip, assert_row_roundtrip};
     use arrow::array::Int64Array;
     use rstest::rstest;
@@ -53,7 +62,7 @@ mod tests {
     #[case::max(Some(i64::MAX))]
     #[case::zero(Some(0))]
     fn row_roundtrip(#[case] v: Option<i64>) {
-        assert_row_roundtrip(DType::Int64, &Int64Array::from(vec![v]));
+        assert_row_roundtrip(DTypeName::Int64, &Int64Array::from(vec![v]));
     }
 
     #[rstest]
@@ -63,6 +72,6 @@ mod tests {
     #[case::max(Some(i64::MAX))]
     #[case::zero(Some(0))]
     fn json_roundtrip(#[case] v: Option<i64>) {
-        assert_json_roundtrip(DType::Int64, &Int64Array::from(vec![v]));
+        assert_json_roundtrip(DTypeName::Int64, &Int64Array::from(vec![v]));
     }
 }
