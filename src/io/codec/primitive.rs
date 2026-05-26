@@ -105,8 +105,7 @@ where
             if typed.is_null(i) {
                 Value::Null
             } else {
-                serde_json::to_value(typed.value(i))
-                    .expect("native scalar serializes to JSON")
+                serde_json::to_value(typed.value(i)).expect("native scalar serializes to JSON")
             }
         })
         .collect())

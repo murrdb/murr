@@ -1,15 +1,14 @@
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock};
 
-
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::Deserialize;
 
 use crate::core::{MurrError, TableSchema};
@@ -124,8 +123,7 @@ pub async fn write_table(
     tokio::task::spawn_blocking(move || -> Result<StatusCode, ApiError> {
         let batch = if content_type.contains(ARROW_IPC_MIME) {
             let cursor = Cursor::new(&body);
-            let mut reader = StreamReader::try_new(cursor, None)
-                .map_err(|e| ApiError(e.into()))?;
+            let mut reader = StreamReader::try_new(cursor, None).map_err(|e| ApiError(e.into()))?;
             reader
                 .next()
                 .ok_or_else(|| ApiError(MurrError::TableError("empty Arrow IPC stream".into())))?
@@ -138,11 +136,8 @@ pub async fn write_table(
             let batches: Vec<_> = reader
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| ApiError(e.into()))?;
-            arrow::compute::concat_batches(
-                &batches[0].schema(),
-                &batches,
-            )
-            .map_err(|e| ApiError(e.into()))?
+            arrow::compute::concat_batches(&batches[0].schema(), &batches)
+                .map_err(|e| ApiError(e.into()))?
         } else {
             let write: WriteRequest = serde_json::from_slice(&body)
                 .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;

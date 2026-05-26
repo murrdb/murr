@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 
 use crate::core::MurrError;
@@ -19,9 +19,9 @@ impl IntoResponse for ApiError {
             MurrError::TableNotFound(_) => StatusCode::NOT_FOUND,
             MurrError::TableAlreadyExists(_) => StatusCode::CONFLICT,
             MurrError::TableError(_) | MurrError::SegmentError(_) => StatusCode::BAD_REQUEST,
-            MurrError::IoError(_)
-            | MurrError::ArrowError(_)
-            | MurrError::ConfigParsingError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            MurrError::IoError(_) | MurrError::ArrowError(_) | MurrError::ConfigParsingError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         let message = self.0.to_string();
 

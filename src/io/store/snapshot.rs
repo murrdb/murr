@@ -5,7 +5,7 @@ use crate::core::TableSchema;
 pub struct Snapshot {
     sst: Vec<PathBuf>,
     metadata: Vec<PathBuf>,
-    schema: TableSchema
+    schema: TableSchema,
 }
 
 impl Snapshot {

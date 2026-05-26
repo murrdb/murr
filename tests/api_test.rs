@@ -6,12 +6,12 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::arrow_writer::ArrowWriter;
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::Router;
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use parquet::arrow::arrow_writer::ArrowWriter;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -38,7 +38,13 @@ async fn setup() -> (TempDir, Router) {
 async fn body_bytes(router: Router, req: Request<Body>) -> (StatusCode, Vec<u8>) {
     let response = router.oneshot(req).await.unwrap();
     let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, bytes)
 }
 
@@ -65,9 +71,11 @@ fn arrow_ipc_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
     ]));
     let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
     let score_array: Float32Array = scores.iter().map(|v| Some(*v)).collect();
-    let batch =
-        RecordBatch::try_new(schema.clone(), vec![Arc::new(key_array), Arc::new(score_array)])
-            .unwrap();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(key_array), Arc::new(score_array)],
+    )
+    .unwrap();
 
     let mut buf = Vec::new();
     let mut writer = StreamWriter::try_new(&mut buf, &schema).unwrap();
@@ -79,9 +87,7 @@ fn arrow_ipc_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
 #[tokio::test]
 async fn test_openapi() {
     let (_dir, router) = setup().await;
-    let req = Request::get("/openapi.json")
-        .body(Body::empty())
-        .unwrap();
+    let req = Request::get("/openapi.json").body(Body::empty()).unwrap();
     let (status, json) = body_json(router, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["openapi"], "3.1.0");
@@ -143,9 +149,7 @@ async fn test_list_and_get_table() {
     assert_eq!(status, StatusCode::CREATED);
 
     // List tables
-    let req = Request::get("/api/v1/table")
-        .body(Body::empty())
-        .unwrap();
+    let req = Request::get("/api/v1/table").body(Body::empty()).unwrap();
     let (status, json) = body_json(router.clone(), req).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json.get("features").is_some());
@@ -245,9 +249,11 @@ fn parquet_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
     ]));
     let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
     let score_array: Float32Array = scores.iter().map(|v| Some(*v)).collect();
-    let batch =
-        RecordBatch::try_new(schema.clone(), vec![Arc::new(key_array), Arc::new(score_array)])
-            .unwrap();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(key_array), Arc::new(score_array)],
+    )
+    .unwrap();
 
     let mut buf = Vec::new();
     let mut writer = ArrowWriter::try_new(&mut buf, schema, None).unwrap();

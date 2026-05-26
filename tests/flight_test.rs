@@ -7,13 +7,13 @@ use arrow::record_batch::RecordBatch;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::FlightServiceServer;
-use arrow_flight::{FlightDescriptor, FlightData, Ticket};
+use arrow_flight::{FlightData, FlightDescriptor, Ticket};
 use futures::TryStreamExt;
 use tempfile::TempDir;
 use tonic::transport::{Channel, Server};
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
-use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::core::{ColumnSchema, DTypeName, TableSchema};
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
@@ -46,14 +46,14 @@ async fn setup() -> TestHarness {
             (
                 "id".to_string(),
                 ColumnSchema {
-                    dtype: DType::Utf8,
+                    dtype: DTypeName::Utf8,
                     nullable: false,
                 },
             ),
             (
                 "score".to_string(),
                 ColumnSchema {
-                    dtype: DType::Float32,
+                    dtype: DTypeName::Float32,
                     nullable: true,
                 },
             ),
@@ -67,8 +67,7 @@ async fn setup() -> TestHarness {
     ]));
     let ids: StringArray = vec![Some("a"), Some("b"), Some("c")].into_iter().collect();
     let scores: Float32Array = vec![Some(1.0), Some(2.0), None].into_iter().collect();
-    let batch =
-        RecordBatch::try_new(arrow_schema, vec![Arc::new(ids), Arc::new(scores)]).unwrap();
+    let batch = RecordBatch::try_new(arrow_schema, vec![Arc::new(ids), Arc::new(scores)]).unwrap();
     service.write("features", &batch).unwrap();
 
     // Start Flight server on OS-assigned port with shutdown signal
@@ -83,7 +82,9 @@ async fn setup() -> TestHarness {
             .add_service(FlightServiceServer::new(flight_svc))
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
-                async { let _ = shutdown_rx.await; },
+                async {
+                    let _ = shutdown_rx.await;
+                },
             )
             .await
             .unwrap();
@@ -98,7 +99,9 @@ async fn setup() -> TestHarness {
 
     TestHarness {
         _dir: dir,
-        _guard: ServerGuard { _shutdown: shutdown_tx },
+        _guard: ServerGuard {
+            _shutdown: shutdown_tx,
+        },
         client,
     }
 }
@@ -116,7 +119,9 @@ async fn test_do_get_round_trip() {
 
     let response = harness.client.do_get(Ticket::new(ticket)).await.unwrap();
     let stream = FlightRecordBatchStream::new_from_flight_data(
-        response.into_inner().map_err(|e| arrow_flight::error::FlightError::Tonic(Box::new(e))),
+        response
+            .into_inner()
+            .map_err(|e| arrow_flight::error::FlightError::Tonic(Box::new(e))),
     );
     let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
 
@@ -154,7 +159,10 @@ async fn test_do_get_not_found() {
 async fn test_do_get_invalid_ticket() {
     let mut harness = setup().await;
 
-    let result = harness.client.do_get(Ticket::new(b"not json".to_vec())).await;
+    let result = harness
+        .client
+        .do_get(Ticket::new(b"not json".to_vec()))
+        .await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
 }
@@ -168,8 +176,7 @@ async fn test_list_flights() {
         .list_flights(arrow_flight::Criteria::default())
         .await
         .unwrap();
-    let infos: Vec<arrow_flight::FlightInfo> =
-        response.into_inner().try_collect().await.unwrap();
+    let infos: Vec<arrow_flight::FlightInfo> = response.into_inner().try_collect().await.unwrap();
 
     assert_eq!(infos.len(), 1);
     let info = &infos[0];
@@ -189,7 +196,12 @@ async fn test_get_flight_info() {
     let mut harness = setup().await;
 
     let descriptor = FlightDescriptor::new_path(vec!["features".to_string()]);
-    let info = harness.client.get_flight_info(descriptor).await.unwrap().into_inner();
+    let info = harness
+        .client
+        .get_flight_info(descriptor)
+        .await
+        .unwrap()
+        .into_inner();
 
     let schema = Schema::try_from(info).unwrap();
     let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
@@ -202,7 +214,12 @@ async fn test_get_flight_info_has_key_metadata() {
     let mut harness = setup().await;
 
     let descriptor = FlightDescriptor::new_path(vec!["features".to_string()]);
-    let info = harness.client.get_flight_info(descriptor).await.unwrap().into_inner();
+    let info = harness
+        .client
+        .get_flight_info(descriptor)
+        .await
+        .unwrap()
+        .into_inner();
 
     let schema = Schema::try_from(info).unwrap();
     assert_eq!(schema.metadata().get("key").map(|s| s.as_str()), Some("id"));
@@ -213,7 +230,12 @@ async fn test_get_schema() {
     let mut harness = setup().await;
 
     let descriptor = FlightDescriptor::new_path(vec!["features".to_string()]);
-    let result = harness.client.get_schema(descriptor).await.unwrap().into_inner();
+    let result = harness
+        .client
+        .get_schema(descriptor)
+        .await
+        .unwrap()
+        .into_inner();
 
     let schema = Schema::try_from(&result).unwrap();
     let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
