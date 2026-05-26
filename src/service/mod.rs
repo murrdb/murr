@@ -5,44 +5,19 @@ use std::time::Instant;
 use arrow::record_batch::RecordBatch;
 use log::{info, warn};
 
-use crate::conf::{BackendConfig, Config};
+use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
 use crate::io::store::Store;
-use crate::io::store::rocksdb::RocksDBStore;
 use crate::io::table::Table;
 
-pub struct MurrService {
-    tables: RwLock<HashMap<String, Table<RocksDBStore>>>,
-    store: Arc<RwLock<RocksDBStore>>,
+pub struct MurrService<S: Store> {
+    tables: RwLock<HashMap<String, Table<S>>>,
+    store: Arc<RwLock<S>>,
     config: Config,
 }
 
-impl MurrService {
-    pub fn new(config: Config) -> Result<Self, MurrError> {
-        std::fs::create_dir_all(&config.storage.path).map_err(|e| {
-            MurrError::IoError(format!(
-                "creating storage path {}: {e}",
-                config.storage.path.display()
-            ))
-        })?;
-
-        let backend_name = match &config.storage.backend {
-            BackendConfig::Mmap(_) => "Mmap",
-            BackendConfig::Block(_) => "Block",
-        };
-        info!(
-            "Opening store at {} ({} backend)",
-            config.storage.path.display(),
-            backend_name
-        );
-        let open_start = Instant::now();
-        let store = match &config.storage.backend {
-            BackendConfig::Mmap(plain) => RocksDBStore::open_plain(&config.storage.path, plain)?,
-            BackendConfig::Block(block) => RocksDBStore::open_block(&config.storage.path, block)?,
-        };
-        info!("Store opened in {} ms", open_start.elapsed().as_millis());
-        let store = Arc::new(RwLock::new(store));
-
+impl<S: Store> MurrService<S> {
+    pub fn new(store: Arc<RwLock<S>>, config: Config) -> Result<Self, MurrError> {
         let snapshot: Vec<(String, TableSchema)> = {
             let s = store.read().unwrap_or_else(PoisonError::into_inner);
             s.manifest()
@@ -55,7 +30,7 @@ impl MurrService {
         info!("Manifest has {} table(s)", total);
 
         let load_start = Instant::now();
-        let mut tables: HashMap<String, Table<RocksDBStore>> = HashMap::new();
+        let mut tables: HashMap<String, Table<S>> = HashMap::new();
         for (name, schema) in snapshot {
             let column_count = schema.columns.len();
             match Table::open(store.clone(), name.clone(), schema) {
@@ -135,8 +110,9 @@ impl MurrService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::StorageConfig;
+    use crate::conf::{BackendConfig, StorageConfig};
     use crate::core::{ColumnSchema, DTypeName};
+    use crate::io::store::rocksdb::RocksDBStore;
     use crate::io::store::rocksdb::plain::PlainConfig;
     use arrow::array::{Array, Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
@@ -151,6 +127,13 @@ mod tests {
             },
             ..Config::default()
         }
+    }
+
+    fn build_service(config: Config) -> MurrService<RocksDBStore> {
+        let store = Arc::new(RwLock::new(
+            RocksDBStore::open_from_config(&config.storage).unwrap(),
+        ));
+        MurrService::new(store, config).unwrap()
     }
 
     fn test_schema() -> TableSchema {
@@ -192,7 +175,7 @@ mod tests {
     #[test]
     fn test_create_write_read_round_trip() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
 
         svc.create("users", test_schema()).unwrap();
 
@@ -214,7 +197,7 @@ mod tests {
     #[test]
     fn test_create_duplicate_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
 
         svc.create("t", test_schema()).unwrap();
         let err = svc.create("t", test_schema());
@@ -224,7 +207,7 @@ mod tests {
     #[test]
     fn test_read_nonexistent_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
 
         let err = svc.read("nope", &["a"], &["score"]);
         assert!(err.is_err());
@@ -233,7 +216,7 @@ mod tests {
     #[test]
     fn test_read_empty_table_returns_nulls() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
 
         svc.create("empty", test_schema()).unwrap();
         let result = svc.read("empty", &["a"], &["score"]).unwrap();
@@ -249,7 +232,7 @@ mod tests {
     #[test]
     fn test_multiple_writes_accumulate() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
 
         svc.create("t", test_schema()).unwrap();
 
@@ -277,13 +260,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         {
-            let svc = MurrService::new(test_config(&dir)).unwrap();
+            let svc = build_service(test_config(&dir));
             svc.create("users", test_schema()).unwrap();
             let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
             svc.write("users", &batch).unwrap();
         }
 
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
         let tables = svc.list_tables();
         assert!(tables.contains_key("users"));
 
@@ -304,11 +287,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         {
-            let svc = MurrService::new(test_config(&dir)).unwrap();
+            let svc = build_service(test_config(&dir));
             svc.create("empty", test_schema()).unwrap();
         }
 
-        let svc = MurrService::new(test_config(&dir)).unwrap();
+        let svc = build_service(test_config(&dir));
         let tables = svc.list_tables();
         assert!(tables.contains_key("empty"));
 

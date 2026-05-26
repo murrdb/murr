@@ -5,6 +5,7 @@ mod handlers;
 use std::sync::Arc;
 
 use crate::core::MurrError;
+use crate::io::store::Store;
 use crate::service::MurrService;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -12,12 +13,12 @@ use axum::routing::{get, post, put};
 use axum::serve::ListenerExt;
 use log::info;
 
-pub struct MurrHttpService {
-    service: Arc<MurrService>,
+pub struct MurrHttpService<S: Store> {
+    service: Arc<MurrService<S>>,
 }
 
-impl MurrHttpService {
-    pub fn new(service: Arc<MurrService>) -> Self {
+impl<S: Store> MurrHttpService<S> {
+    pub fn new(service: Arc<MurrService<S>>) -> Self {
         Self { service }
     }
 
@@ -25,11 +26,11 @@ impl MurrHttpService {
         Router::new()
             .route("/openapi.json", get(handlers::openapi))
             .route("/health", get(handlers::health))
-            .route("/api/v1/table", get(handlers::list_tables))
-            .route("/api/v1/table/{name}/schema", get(handlers::get_schema))
-            .route("/api/v1/table/{name}", put(handlers::create_table))
-            .route("/api/v1/table/{name}/fetch", post(handlers::fetch))
-            .route("/api/v1/table/{name}/write", put(handlers::write_table))
+            .route("/api/v1/table", get(handlers::list_tables::<S>))
+            .route("/api/v1/table/{name}/schema", get(handlers::get_schema::<S>))
+            .route("/api/v1/table/{name}", put(handlers::create_table::<S>))
+            .route("/api/v1/table/{name}/fetch", post(handlers::fetch::<S>))
+            .route("/api/v1/table/{name}/write", put(handlers::write_table::<S>))
             .layer(DefaultBodyLimit::max(
                 self.service.config().server.http.max_payload_size,
             ))

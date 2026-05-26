@@ -23,16 +23,26 @@ Inner keys nest the corresponding RocksDB tunables. Specifying both is rejected 
 ## Service shape
 
 ```rust
-pub struct MurrService {
-    tables: std::sync::RwLock<HashMap<String, io::table::Table<RocksDBStore>>>,
-    store: Arc<std::sync::RwLock<RocksDBStore>>,
+pub trait Store: Send + Sync + 'static { /* ... */ }
+
+pub struct MurrService<S: Store> {
+    tables: std::sync::RwLock<HashMap<String, io::table::Table<S>>>,
+    store: Arc<std::sync::RwLock<S>>,
     config: Config,
+}
+
+impl<S: Store> MurrService<S> {
+    pub fn new(store: Arc<RwLock<S>>, config: Config) -> Result<Self, MurrError> { ... }
 }
 ```
 
-One `Arc<StdRwLock<RocksDBStore>>` shared across all tables (one RocksDB DB, many CFs). Each table holds its own clone of the `Arc` and locks it internally per call. The service's public methods (`new`, `create`, `write`, `read`, `list_tables`, `get_schema`) are all **sync**.
+One `Arc<StdRwLock<S>>` shared across all tables (one DB, many CFs when backed by RocksDB). Each table holds its own clone of the `Arc` and locks it internally per call. The service's public methods (`new`, `create`, `write`, `read`, `list_tables`, `get_schema`) are all **sync**.
 
-**Why no `TableOps` trait, no `Box<dyn ...>`** — only one concrete backend exists (`RocksDBStore`), and `io::Table::read`/`write` already take `&self` (the store-level RwLock handles serialisation). Trait erasure plus `&mut self` would have forced HashMap-write-lock during writes; concrete `Table<RocksDBStore>` lets the HashMap stay at a read lock for both reads and writes, so writes on different tables run concurrently. Same-table serialisation comes from the store's internal RwLock.
+**Why generic over `S: Store` rather than concrete `RocksDBStore`** — leaves room for future backends (the trait-level abstraction was the only reason to do it; no second impl exists today). Constructor is **pure-generic**: the caller builds `Arc<RwLock<S>>` and hands it in. RocksDB-specific `Config → Store` wiring lives in `RocksDBStore::open_from_config(&config.storage)`; the service layer no longer matches on `BackendConfig`. `main.rs` monomorphises to `MurrService<RocksDBStore>`; tests/benches do the same explicitly via `RocksDBStore::open_from_config`.
+
+**Why `Send + Sync + 'static` are supertraits of `Store`, not per-bound** — every consumer (axum `State<Arc<MurrService<S>>>`, tonic `FlightService` impl, `Arc<RwLock<S>>` shared across the blocking-pool, the spawn_blocking closures) needs all three. Pushing them onto the trait keeps `<S: Store>` clean at every callsite.
+
+**Why no `TableOps` trait, no `Box<dyn ...>`** — `io::Table::read`/`write` already take `&self` (the store-level RwLock handles serialisation), so the generic `S` parameter does the work that erasure would have. Trait erasure plus `&mut self` would have forced HashMap-write-lock during writes; concrete `Table<S>` lets the HashMap stay at a read lock for both reads and writes, so writes on different tables run concurrently. Same-table serialisation comes from the store's internal RwLock.
 
 **Why std::sync::RwLock both inside and outside** — the only async work in the service was the `.await` on the outer tables-registry lock, which guards a HashMap lookup. With RocksDB sync, the entire method body is CPU/blocking work; pretending it's async invited holding std locks across `.await` boundaries. The crossing point now lives one level up at the API handlers (see below).
 
@@ -52,10 +62,13 @@ HTTP handlers (`api/http/handlers.rs`), Flight RPCs (`api/flight/mod.rs`), and `
 
 ## Startup rehydration
 
-On `MurrService::new`, the service:
+`RocksDBStore::open_from_config(&storage)` is the one place that knows about `BackendConfig`:
 1. `mkdir -p` the storage path (RocksDB needs the parent dir to exist).
 2. Picks `RocksDBStore::open_plain` or `open_block` based on the variant.
-3. Snapshots `store.manifest().tables` (clones the schemas), drops the manifest read lock, and constructs an `io::Table::open` per entry. Failures get logged + skipped; the service still comes up.
+3. Logs the "Opening store at … (Mmap/Block backend)" line and the open-elapsed-ms line.
+
+Then `MurrService::new(store, config)`:
+4. Snapshots `store.manifest().tables` (clones the schemas), drops the manifest read lock, and constructs an `io::Table::open` per entry. Failures get logged + skipped; the service still comes up.
 
 The manifest is the source of truth for which CFs the service wraps — `RocksDBStore::open_inner` already calls `DB::list_cf` so the underlying CFs are picked up regardless. A CF without a manifest entry is invisible to the service (intentional — keeps schema discovery and CF discovery in lockstep).
 

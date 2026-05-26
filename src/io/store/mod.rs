@@ -27,7 +27,7 @@ impl KeyValue {
     }
 }
 
-pub trait Store {
+pub trait Store: Send + Sync + 'static {
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError>;
     fn write(
         &mut self,

@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arrow::array::{Array, Float32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -14,6 +14,7 @@ use tonic::transport::{Channel, Server};
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
 use murr::core::{ColumnSchema, DTypeName, TableSchema};
+use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
@@ -37,7 +38,10 @@ async fn setup() -> TestHarness {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).unwrap());
+    let store = Arc::new(RwLock::new(
+        RocksDBStore::open_from_config(&config.storage).unwrap(),
+    ));
+    let service = Arc::new(MurrService::new(store, config).unwrap());
 
     // Create and populate a table
     let schema = TableSchema {
