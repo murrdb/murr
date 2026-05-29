@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use arrow::array::RecordBatch;
 use rocksdb::{ColumnFamily, DB, DBPinnableSlice, Options, ReadOptions, WriteBatch, WriteOptions};
 use serde::{Deserialize, Serialize};
 
+use crate::conf::{BackendConfig, StorageConfig};
 use crate::core::{MurrError, TableSchema};
 use crate::io::row::read::ReadBatchBuilder;
 use crate::io::store::rocksdb::block::BlockConfig;
@@ -41,7 +43,10 @@ impl RocksDBStore {
         let cf_opts: Options = config.into();
         let mut read_opts = ReadOptions::default();
         read_opts.set_verify_checksums(config.verify_checksums);
-        info!("Opening RocksDB PlainTable: read_method={:?}", config.read_method);
+        info!(
+            "Opening RocksDB PlainTable: read_method={:?}",
+            config.read_method
+        );
         Self::open_inner(
             path,
             cf_opts,
@@ -51,12 +56,40 @@ impl RocksDBStore {
         )
     }
 
+    pub fn open_from_config(storage: &StorageConfig) -> Result<Self, MurrError> {
+        std::fs::create_dir_all(&storage.path).map_err(|e| {
+            MurrError::IoError(format!(
+                "creating storage path {}: {e}",
+                storage.path.display()
+            ))
+        })?;
+        let backend_name = match &storage.backend {
+            BackendConfig::Mmap(_) => "Mmap",
+            BackendConfig::Block(_) => "Block",
+        };
+        info!(
+            "Opening store at {} ({} backend)",
+            storage.path.display(),
+            backend_name
+        );
+        let open_start = Instant::now();
+        let store = match &storage.backend {
+            BackendConfig::Mmap(plain) => Self::open_plain(&storage.path, plain)?,
+            BackendConfig::Block(block) => Self::open_block(&storage.path, block)?,
+        };
+        info!("Store opened in {} ms", open_start.elapsed().as_millis());
+        Ok(store)
+    }
+
     pub fn open_block(path: &Path, config: &BlockConfig) -> Result<Self, MurrError> {
         let cf_opts: Options = config.into();
         let mut read_opts = ReadOptions::default();
         read_opts.set_async_io(config.async_io);
         read_opts.set_verify_checksums(config.verify_checksums);
-        info!("Opening RocksDB BlockTable: read_method={:?}", config.read_method);
+        info!(
+            "Opening RocksDB BlockTable: read_method={:?}",
+            config.read_method
+        );
         Self::open_inner(
             path,
             cf_opts,
@@ -246,7 +279,7 @@ impl Store for RocksDBStore {
 #[cfg(all(test, feature = "testutil"))]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
     use rstest::rstest;
@@ -268,7 +301,7 @@ mod tests {
         columns.insert(
             key.to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -276,7 +309,7 @@ mod tests {
         columns.insert(
             "payload".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: true,
                 cast: false,
             },

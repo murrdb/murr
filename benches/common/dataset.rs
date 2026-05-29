@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::core::{ColumnSchema, DTypeName, TableSchema};
 
 use super::data::generate_batch;
 
@@ -26,7 +26,7 @@ impl Dataset {
         columns.insert(
             "key".to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -35,7 +35,7 @@ impl Dataset {
             columns.insert(
                 format!("col_{}", i),
                 ColumnSchema {
-                    dtype: DType::Float32,
+                    dtype: DTypeName::Float32,
                     nullable: false,
                     cast: false,
                 },

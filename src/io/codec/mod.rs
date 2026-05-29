@@ -15,37 +15,29 @@ pub mod utf8;
 #[cfg(test)]
 pub(crate) mod test_util;
 
-use arrow::{
-    array::{Array, ArrayRef},
-    datatypes::DataType,
-};
+use arrow::array::{Array, ArrayRef};
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
         row::{read::ReadRow, write::WriteRow},
         schema::SegmentColumnSchema,
     },
 };
 
-pub trait Codec: Send + Sync {
-    fn dtype(&self) -> DType;
-    fn arrow_dtype(&self) -> DataType;
-
-    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError>;
-    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError>;
-
-    fn make_encoder(
-        &self,
-        col: SegmentColumnSchema,
-        rows: usize,
-    ) -> Box<dyn ColumnEncoder>;
+pub trait ArrowCodec: Send + Sync {
+    fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder>;
     fn make_decoder(
         &self,
         col: SegmentColumnSchema,
         arr: &dyn Array,
     ) -> Result<Box<dyn ColumnDecoder>, MurrError>;
+}
+
+pub trait JsonCodec: Send + Sync {
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError>;
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError>;
 }
 
 pub trait ColumnEncoder: Send {
@@ -58,20 +50,28 @@ pub trait ColumnDecoder: Send + Sync {
     fn write_to_row(&self, index: usize, row: &mut WriteRow);
 }
 
-pub fn codec_for(dtype: DType) -> &'static dyn Codec {
-    match dtype {
-        DType::Utf8 => &utf8::Utf8Codec,
-        DType::Bool => &bool_::BoolCodec,
-        DType::Int8 => &int8::Int8Codec,
-        DType::Int16 => &int16::Int16Codec,
-        DType::Int32 => &int32::Int32Codec,
-        DType::Int64 => &int64::Int64Codec,
-        DType::UInt8 => &uint8::UInt8Codec,
-        DType::UInt16 => &uint16::UInt16Codec,
-        DType::UInt32 => &uint32::UInt32Codec,
-        DType::UInt64 => &uint64::UInt64Codec,
-        DType::Float32 => &float32::Float32Codec,
-        DType::Float64 => &float64::Float64Codec,
+/// Aggregate trait exposing the three per-dtype roles through one trait object.
+/// A blanket impl wires every concrete per-type struct that already implements
+/// `DType + ArrowCodec + JsonCodec`.
+pub trait Codec: DType + ArrowCodec + JsonCodec {}
+impl<T: DType + ArrowCodec + JsonCodec> Codec for T {}
+
+impl DTypeName {
+    pub fn codec(self) -> Box<dyn Codec> {
+        match self {
+            DTypeName::Utf8 => Box::new(utf8::Utf8),
+            DTypeName::Bool => Box::new(bool_::Bool),
+            DTypeName::Int8 => Box::new(int8::Int8),
+            DTypeName::Int16 => Box::new(int16::Int16),
+            DTypeName::Int32 => Box::new(int32::Int32),
+            DTypeName::Int64 => Box::new(int64::Int64),
+            DTypeName::UInt8 => Box::new(uint8::UInt8),
+            DTypeName::UInt16 => Box::new(uint16::UInt16),
+            DTypeName::UInt32 => Box::new(uint32::UInt32),
+            DTypeName::UInt64 => Box::new(uint64::UInt64),
+            DTypeName::Float32 => Box::new(float32::Float32),
+            DTypeName::Float64 => Box::new(float64::Float64),
+        }
     }
 }
 
@@ -96,12 +96,12 @@ mod tests {
     fn make_decoder_rejects_dtype_mismatch() {
         let c = SegmentColumnSchema {
             index: 0,
-            dtype: DType::Float32,
+            dtype: DTypeName::Float32,
             name: "x".into(),
             offset: 0,
         };
         let wrong: ArrayRef = Arc::new(StringArray::from(vec!["nope"]));
-        let err = codec_for(c.dtype).make_decoder(c.clone(), wrong.as_ref());
+        let err = c.dtype.codec().make_decoder(c.clone(), wrong.as_ref());
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
     }
 }

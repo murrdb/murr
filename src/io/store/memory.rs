@@ -71,7 +71,7 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use crate::io::store::test_util::{fetch, put};
     use indexmap::IndexMap;
 
@@ -80,7 +80,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -88,7 +88,7 @@ mod tests {
         columns.insert(
             "payload".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: true,
                 cast: false,
             },

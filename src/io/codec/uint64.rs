@@ -5,28 +5,28 @@ use arrow::{
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
-        codec::{Codec, ColumnDecoder, ColumnEncoder, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct UInt64Codec;
+pub struct UInt64;
 
-impl Codec for UInt64Codec {
-    fn dtype(&self) -> DType {
-        DType::UInt64
+impl DType for UInt64 {
+    fn name(&self) -> DTypeName {
+        DTypeName::UInt64
     }
     fn arrow_dtype(&self) -> DataType {
         DataType::UInt64
     }
-    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
-        primitive::to_json::<UInt64Type>(arr)
+    fn size(&self) -> usize {
+        8
     }
-    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
-        primitive::from_json::<UInt64Type>(vals)
-    }
+}
+
+impl ArrowCodec for UInt64 {
     fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
         Box::new(primitive::Encoder::<UInt64Type>::new(col, rows))
     }
@@ -36,6 +36,15 @@ impl Codec for UInt64Codec {
         arr: &dyn Array,
     ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
         Ok(Box::new(primitive::Decoder::<UInt64Type>::new(col, arr)?))
+    }
+}
+
+impl JsonCodec for UInt64 {
+    fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
+        primitive::to_json::<UInt64Type>(arr)
+    }
+    fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError> {
+        primitive::from_json::<UInt64Type>(vals)
     }
 }
 
@@ -53,7 +62,7 @@ mod tests {
     #[case::mid(Some(7))]
     #[case::above_2_53(Some((1u64 << 53) + 1))]
     fn row_roundtrip(#[case] v: Option<u64>) {
-        assert_row_roundtrip(DType::UInt64, &UInt64Array::from(vec![v]));
+        assert_row_roundtrip(DTypeName::UInt64, &UInt64Array::from(vec![v]));
     }
 
     #[rstest]
@@ -63,7 +72,7 @@ mod tests {
     #[case::mid(Some(7))]
     #[case::above_2_53(Some((1u64 << 53) + 1))]
     fn json_roundtrip(#[case] v: Option<u64>) {
-        assert_json_roundtrip(DType::UInt64, &UInt64Array::from(vec![v]));
+        assert_json_roundtrip(DTypeName::UInt64, &UInt64Array::from(vec![v]));
     }
 
     #[test]
@@ -71,7 +80,7 @@ mod tests {
         // 2^53 + 1 cannot survive an f64 detour; serde_json's Number::as_u64 keeps it exact.
         let big: u64 = (1u64 << 53) + 1;
         let arr = UInt64Array::from(vec![Some(big)]);
-        let json = UInt64Codec.to_json(&arr).unwrap();
+        let json = UInt64.to_json(&arr).unwrap();
         assert_eq!(json[0], Value::from(big));
     }
 }

@@ -16,6 +16,7 @@ use murr::util::logo::ASCII_LOGO;
 use crate::api::{MurrFlightService, MurrHttpService};
 use crate::conf::{BackendConfig, Config};
 use crate::core::{CliArgs, setup_logging};
+use crate::io::store::rocksdb::RocksDBStore;
 use crate::service::MurrService;
 use log::info;
 
@@ -26,7 +27,11 @@ async fn main() {
     let config = Config::from_args(&args).expect("failed to load config");
 
     info!("{ASCII_LOGO}");
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     info!("murr v{} ({} build)", env!("CARGO_PKG_VERSION"), profile);
     info!(
         "HTTP listen: {}, max_payload: {} MiB",
@@ -52,7 +57,10 @@ async fn main() {
         ),
     }
 
-    let service = Arc::new(MurrService::new(config).expect("failed to load tables"));
+    let store = Arc::new(std::sync::RwLock::new(
+        RocksDBStore::open_from_config(&config.storage).expect("failed to open store"),
+    ));
+    let service = Arc::new(MurrService::new(store, config).expect("failed to load tables"));
     info!("Service initialized, starting listeners");
 
     let http = MurrHttpService::new(service.clone());

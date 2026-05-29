@@ -3,7 +3,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use indexmap::IndexMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use arrow::datatypes::Schema;
@@ -11,7 +11,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use tempfile::TempDir;
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
-use murr::core::{ColumnSchema, DType, TableSchema};
+use murr::core::{ColumnSchema, DTypeName, TableSchema};
+use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
 
@@ -27,7 +28,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
     columns.insert(
         "key".to_string(),
         ColumnSchema {
-            dtype: DType::Utf8,
+            dtype: DTypeName::Utf8,
             nullable: false,
             cast: false,
         },
@@ -36,7 +37,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
         columns.insert(
             name.clone(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: false,
                 cast: false,
             },
@@ -59,7 +60,9 @@ fn bench_multi_segment_write(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(30));
 
     for &num_segments in SEGMENT_COUNTS {
-        group.throughput(Throughput::Elements((num_segments * ROWS_PER_SEGMENT) as u64));
+        group.throughput(Throughput::Elements(
+            (num_segments * ROWS_PER_SEGMENT) as u64,
+        ));
 
         group.bench_with_input(
             BenchmarkId::new("segments", num_segments),
@@ -76,7 +79,10 @@ fn bench_multi_segment_write(c: &mut Criterion) {
                         },
                         ..Config::default()
                     };
-                    let svc = MurrService::new(config).unwrap();
+                    let store = Arc::new(RwLock::new(
+                        RocksDBStore::open_from_config(&config.storage).unwrap(),
+                    ));
+                    let svc = MurrService::new(store, config).unwrap();
                     svc.create("bench", schema).unwrap();
                     for _ in 0..n {
                         svc.write("bench", &batch).unwrap();

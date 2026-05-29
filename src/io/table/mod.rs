@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    core::{DType, MurrError, TableSchema},
+    core::{DTypeName, MurrError, TableSchema},
     io::{
-        codec::{ColumnDecoder, codec_for},
+        codec::ColumnDecoder,
         row::{read::ReadBatchBuilder, write::WriteRow},
         schema::{SegmentColumnSchema, SegmentSchema},
         store::Store,
@@ -87,7 +87,11 @@ impl<S: Store> Table<S> {
             let arr_idx = canonical
                 .index_of(&col.name)
                 .map_err(|e| MurrError::ArrowError(e.to_string()))?;
-            decoders.push(codec_for(col.dtype).make_decoder(col.clone(), ordered.column(arr_idx).as_ref())?);
+            decoders.push(
+                col.dtype
+                    .codec()
+                    .make_decoder(col.clone(), ordered.column(arr_idx).as_ref())?,
+            );
         }
 
         let n = ordered.num_rows();
@@ -128,7 +132,7 @@ impl<S: Store> Table<S> {
         let key_col = table.columns.get(&table.key).ok_or_else(|| {
             MurrError::TableError(format!("key column '{}' not in schema", table.key))
         })?;
-        if key_col.dtype != DType::Utf8 {
+        if key_col.dtype != DTypeName::Utf8 {
             return Err(MurrError::TableError(
                 "io currently supports Utf8 keys only".into(),
             ));
@@ -159,7 +163,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::core::{ColumnSchema, DType, TableSchema};
+    use crate::core::{ColumnSchema, DTypeName, TableSchema};
     use crate::io::store::memory::MemoryStore;
 
     fn store() -> Arc<RwLock<MemoryStore>> {
@@ -171,7 +175,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -179,7 +183,7 @@ mod tests {
         columns.insert(
             "score".into(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
                 cast: false,
             },
@@ -249,7 +253,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -257,7 +261,7 @@ mod tests {
         columns.insert(
             "score".into(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
                 cast: false,
             },
@@ -265,7 +269,7 @@ mod tests {
         columns.insert(
             "label".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: true,
                 cast: false,
             },
@@ -384,7 +388,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -392,7 +396,7 @@ mod tests {
         columns.insert(
             "f32".into(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
                 cast: false,
             },
@@ -400,7 +404,7 @@ mod tests {
         columns.insert(
             "f64".into(),
             ColumnSchema {
-                dtype: DType::Float64,
+                dtype: DTypeName::Float64,
                 nullable: true,
                 cast: false,
             },
@@ -408,7 +412,7 @@ mod tests {
         columns.insert(
             "label".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: true,
                 cast: false,
             },
@@ -496,7 +500,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: false,
                 cast: false,
             },

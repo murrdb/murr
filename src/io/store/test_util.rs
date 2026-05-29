@@ -1,6 +1,6 @@
 use arrow::array::{Array, StringArray};
 
-use crate::core::DType;
+use crate::core::DTypeName;
 use crate::io::row::read::ReadBatchBuilder;
 use crate::io::row::write::WriteRow;
 use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
@@ -9,7 +9,7 @@ use crate::io::store::{KeyValue, Store};
 pub fn payload_segment() -> SegmentSchema {
     SegmentSchema::new(&[SegmentColumnSchema {
         index: 0,
-        dtype: DType::Utf8,
+        dtype: DTypeName::Utf8,
         name: "payload".into(),
         offset: 0,
     }])

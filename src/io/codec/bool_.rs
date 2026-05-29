@@ -7,24 +7,50 @@ use arrow::{
 use serde_json::Value;
 
 use crate::{
-    core::{DType, MurrError},
+    core::{DType, DTypeName, MurrError},
     io::{
-        codec::{Codec, ColumnDecoder, ColumnEncoder, downcast},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, downcast},
         row::{read::ReadRow, write::WriteRow},
         schema::SegmentColumnSchema,
     },
 };
 
-pub struct BoolCodec;
+pub struct Bool;
 
-impl Codec for BoolCodec {
-    fn dtype(&self) -> DType {
-        DType::Bool
+impl DType for Bool {
+    fn name(&self) -> DTypeName {
+        DTypeName::Bool
     }
     fn arrow_dtype(&self) -> DataType {
         DataType::Boolean
     }
+    fn size(&self) -> usize {
+        1
+    }
+}
 
+impl ArrowCodec for Bool {
+    fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
+        Box::new(BoolEncoder {
+            column: col,
+            builder: BooleanBuilder::with_capacity(rows),
+        })
+    }
+
+    fn make_decoder(
+        &self,
+        col: SegmentColumnSchema,
+        arr: &dyn Array,
+    ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
+        let typed = downcast::<BooleanArray>(arr, "Boolean")?;
+        Ok(Box::new(BoolDecoder {
+            column: col,
+            array: typed.clone(),
+        }))
+    }
+}
+
+impl JsonCodec for Bool {
     fn to_json(&self, arr: &dyn Array) -> Result<Vec<Value>, MurrError> {
         let typed = downcast::<BooleanArray>(arr, "Boolean")?;
         Ok((0..typed.len())
@@ -48,25 +74,6 @@ impl Codec for BoolCodec {
             }
         }
         Ok(Arc::new(builder.finish()))
-    }
-
-    fn make_encoder(&self, col: SegmentColumnSchema, rows: usize) -> Box<dyn ColumnEncoder> {
-        Box::new(BoolEncoder {
-            column: col,
-            builder: BooleanBuilder::with_capacity(rows),
-        })
-    }
-
-    fn make_decoder(
-        &self,
-        col: SegmentColumnSchema,
-        arr: &dyn Array,
-    ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
-        let typed = downcast::<BooleanArray>(arr, "Boolean")?;
-        Ok(Box::new(BoolDecoder {
-            column: col,
-            array: typed.clone(),
-        }))
     }
 }
 
@@ -121,7 +128,7 @@ mod tests {
     #[case::null(None)]
     #[case::f(Some(false))]
     fn row_roundtrip(#[case] v: Option<bool>) {
-        assert_row_roundtrip(DType::Bool, &BooleanArray::from(vec![v]));
+        assert_row_roundtrip(DTypeName::Bool, &BooleanArray::from(vec![v]));
     }
 
     #[rstest]
@@ -129,25 +136,25 @@ mod tests {
     #[case::null(None)]
     #[case::f(Some(false))]
     fn json_roundtrip(#[case] v: Option<bool>) {
-        assert_json_roundtrip(DType::Bool, &BooleanArray::from(vec![v]));
+        assert_json_roundtrip(DTypeName::Bool, &BooleanArray::from(vec![v]));
     }
 
     #[test]
     fn decoder_rejects_wrong_array_type() {
         let c = SegmentColumnSchema {
             index: 0,
-            dtype: DType::Bool,
+            dtype: DTypeName::Bool,
             name: "b".into(),
             offset: 0,
         };
         let wrong = Float32Array::from(vec![Some(1.0_f32)]);
-        let err = BoolCodec.make_decoder(c, &wrong);
+        let err = Bool.make_decoder(c, &wrong);
         assert!(matches!(err, Err(MurrError::SegmentError(_))));
     }
 
     #[test]
     fn json_from_invalid_type() {
         let values = vec![Value::from(42)];
-        assert!(BoolCodec.from_json(&values).is_err());
+        assert!(Bool.from_json(&values).is_err());
     }
 }

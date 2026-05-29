@@ -6,7 +6,7 @@ set -euo pipefail
 
 BENCH="${1:?Usage: $0 <bench_name>}"
 PROFILE_TIME="${PROFILE_TIME:-30}"
-DELAY_MS="${DELAY_MS:-70000}"
+DELAY_MS="${DELAY_MS:-0}"
 FREQ="${FREQ:-300}"
 
 PERF_DIR=".perf"
@@ -32,14 +32,21 @@ echo "Building bench '$BENCH' (with frame pointers)..." >&2
 # tokio stacks: frames have a uniform shape so .eh_frame rows always apply.
 # This isn't a stable Cargo.toml profile field, so we pass it via RUSTFLAGS;
 # the bench profile already has debug=1, lto=off, codegen-units=1.
+BUILD_JSON=$(mktemp)
+trap 'rm -f "$BUILD_JSON"' EXIT
 RUSTFLAGS="${RUSTFLAGS:-} -Cforce-frame-pointers=yes" \
-    cargo bench --no-run --bench "$BENCH" >&2
+    cargo bench --no-run --message-format=json --bench "$BENCH" > "$BUILD_JSON"
 
-BIN=$(ls -t target/release/deps/${BENCH}-* 2>/dev/null \
-        | grep -vE '\.(d|o|rmeta)$' \
-        | head -n1 || true)
+# Ask cargo where it put the binary instead of guessing — respects
+# CARGO_TARGET_DIR / .cargo/config.toml `build.target-dir` / workspace layout.
+# Cargo emits one JSON object per line; the bench artifact carries
+# "executable":"<target-dir>/release/deps/<bench>-<hash>".
+BIN=$(grep -o '"executable":"[^"]*"' "$BUILD_JSON" \
+        | sed 's/^"executable":"//;s/"$//' \
+        | grep "/${BENCH}-" \
+        | head -n1)
 [ -n "${BIN:-}" ] && [ -x "$BIN" ] \
-    || { echo "Failed to locate bench binary for '$BENCH' in target/release/deps/" >&2; exit 1; }
+    || { echo "Failed to locate bench binary for '$BENCH' in cargo JSON output" >&2; exit 1; }
 echo "Binary: $BIN" >&2
 
 delay_arg=()

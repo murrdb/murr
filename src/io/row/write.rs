@@ -55,10 +55,10 @@ impl<'a> WriteRow<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::DType;
+    use crate::core::DTypeName;
     use crate::io::row::read::ReadRow;
 
-    fn col(index: u32, dtype: DType, name: &str, offset: u32) -> SegmentColumnSchema {
+    fn col(index: u32, dtype: DTypeName, name: &str, offset: u32) -> SegmentColumnSchema {
         SegmentColumnSchema {
             index,
             dtype,
@@ -70,8 +70,8 @@ mod tests {
     #[test]
     fn roundtrip_static_f32_f64() {
         let cols = vec![
-            col(0, DType::Float32, "x", 0),
-            col(1, DType::Float64, "y", 4),
+            col(0, DTypeName::Float32, "x", 0),
+            col(1, DTypeName::Float64, "y", 4),
         ];
         let schema = SegmentSchema::new(&cols);
         let mut w = WriteRow::new(&schema, "");
@@ -86,8 +86,8 @@ mod tests {
     #[test]
     fn roundtrip_dynamic_utf8() {
         let cols = vec![
-            col(0, DType::Utf8, "a", 0),
-            col(1, DType::Utf8, "b", 4),
+            col(0, DTypeName::Utf8, "a", 0),
+            col(1, DTypeName::Utf8, "b", 4),
         ];
         let schema = SegmentSchema::new(&cols);
         let mut w = WriteRow::new(&schema, "");
@@ -102,8 +102,8 @@ mod tests {
     #[test]
     fn roundtrip_mixed_f32_utf8() {
         let cols = vec![
-            col(0, DType::Float32, "x", 0),
-            col(1, DType::Utf8, "s", 4),
+            col(0, DTypeName::Float32, "x", 0),
+            col(1, DTypeName::Utf8, "s", 4),
         ];
         let schema = SegmentSchema::new(&cols);
         let mut w = WriteRow::new(&schema, "");
@@ -120,8 +120,8 @@ mod tests {
     #[test]
     fn roundtrip_with_nulls() {
         let cols = vec![
-            col(0, DType::Float32, "x", 0),
-            col(1, DType::Utf8, "s", 4),
+            col(0, DTypeName::Float32, "x", 0),
+            col(1, DTypeName::Utf8, "s", 4),
         ];
         let schema = SegmentSchema::new(&cols);
 

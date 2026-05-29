@@ -7,8 +7,7 @@ use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::core::{DType, MurrError, TableSchema};
-use crate::io::codec::codec_for;
+use crate::core::{DTypeName, MurrError, TableSchema};
 
 /// For each column in `schema` that has `cast: true`, casts the corresponding column in `batch`
 /// to the schema's dtype if the incoming Arrow type differs. Columns not present in `schema` or
@@ -50,8 +49,8 @@ impl TryFrom<&RecordBatch> for FetchResponse {
 
         for (i, field) in schema.fields().iter().enumerate() {
             let column = batch.column(i);
-            let dtype = DType::try_from(field.data_type())?;
-            let values = codec_for(dtype).to_json(column.as_ref())?;
+            let dtype = DTypeName::try_from(field.data_type())?;
+            let values = dtype.codec().to_json(column.as_ref())?;
             columns.insert(field.name().clone(), Value::Array(values));
         }
 
@@ -76,8 +75,9 @@ impl WriteRequest {
                 MurrError::TableError(format!("missing column '{}' in write payload", name))
             })?;
 
-            fields.push(Field::new(name, DataType::from(&config.dtype), config.nullable));
-            let array = codec_for(config.dtype)
+            let codec = config.dtype.codec();
+            fields.push(Field::new(name, codec.arrow_dtype(), config.nullable));
+            let array = codec
                 .from_json(values)
                 .map_err(|e| MurrError::TableError(format!("column '{name}': {e}")))?;
             arrays.push(array);
@@ -91,15 +91,16 @@ impl WriteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType};
+    use crate::core::{ColumnSchema, DTypeName};
     use arrow::array::{Float32Array, Float64Array, Int32Array, Int64Array, StringArray};
+    use arrow::datatypes::DataType;
 
     fn test_table_schema() -> TableSchema {
         let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "name".to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -107,7 +108,7 @@ mod tests {
         columns.insert(
             "score".to_string(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
                 cast: false,
             },
@@ -115,7 +116,7 @@ mod tests {
         columns.insert(
             "weight".to_string(),
             ColumnSchema {
-                dtype: DType::Float64,
+                dtype: DTypeName::Float64,
                 nullable: true,
                 cast: false,
             },
@@ -169,7 +170,10 @@ mod tests {
             vec![Value::String("alice".into()), Value::String("bob".into())],
         );
         columns.insert("score".to_string(), vec![Value::from(1.5), Value::Null]);
-        columns.insert("weight".to_string(), vec![Value::from(3.15), Value::from(2.72)]);
+        columns.insert(
+            "weight".to_string(),
+            vec![Value::from(3.15), Value::from(2.72)],
+        );
         let write = WriteRequest { columns };
         let schema = test_table_schema();
 
@@ -241,8 +245,14 @@ mod tests {
 
         let orig_weights = original.column_by_name("weight").unwrap();
         let rest_weights = restored.column_by_name("weight").unwrap();
-        let orig_w = orig_weights.as_any().downcast_ref::<Float64Array>().unwrap();
-        let rest_w = rest_weights.as_any().downcast_ref::<Float64Array>().unwrap();
+        let orig_w = orig_weights
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let rest_w = rest_weights
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_eq!(orig_w.value(0), rest_w.value(0));
         assert_eq!(orig_w.value(1), rest_w.value(1));
     }
@@ -278,9 +288,9 @@ mod tests {
         assert!(weight_vals[1].is_null());
     }
 
-    fn cast_schema(dtype: DType, cast: bool) -> TableSchema {
+    fn cast_schema(dtype: DTypeName, cast: bool) -> TableSchema {
         let mut columns = indexmap::IndexMap::new();
-        columns.insert("id".to_string(), ColumnSchema { dtype: DType::Utf8, nullable: false, cast: false });
+        columns.insert("id".to_string(), ColumnSchema { dtype: DTypeName::Utf8, nullable: false, cast: false });
         columns.insert("val".to_string(), ColumnSchema { dtype, nullable: true, cast });
         TableSchema { key: "id".to_string(), columns }
     }
@@ -298,7 +308,7 @@ mod tests {
     fn cast_float64_column_to_float32() {
         let input_vals: Arc<dyn Array> = Arc::new(Float64Array::from(vec![Some(1.5_f64)]));
         let batch = batch_with_types(DataType::Float64, input_vals);
-        let schema = cast_schema(DType::Float32, true);
+        let schema = cast_schema(DTypeName::Float32, true);
 
         let result = apply_schema_casts(batch, &schema).unwrap();
         assert_eq!(result.schema().field_with_name("val").unwrap().data_type(), &DataType::Float32);
@@ -311,7 +321,7 @@ mod tests {
     fn cast_int32_column_to_int64() {
         let input_vals: Arc<dyn Array> = Arc::new(Int32Array::from(vec![Some(42_i32)]));
         let batch = batch_with_types(DataType::Int32, input_vals);
-        let schema = cast_schema(DType::Int64, true);
+        let schema = cast_schema(DTypeName::Int64, true);
 
         let result = apply_schema_casts(batch, &schema).unwrap();
         assert_eq!(result.schema().field_with_name("val").unwrap().data_type(), &DataType::Int64);
@@ -324,7 +334,7 @@ mod tests {
     fn cast_disabled_leaves_type_unchanged() {
         let input_vals: Arc<dyn Array> = Arc::new(Float64Array::from(vec![Some(1.5_f64)]));
         let batch = batch_with_types(DataType::Float64, input_vals);
-        let schema = cast_schema(DType::Float32, false); // cast: false
+        let schema = cast_schema(DTypeName::Float32, false); // cast: false
 
         let result = apply_schema_casts(batch, &schema).unwrap();
         // type must remain Float64 — no cast was requested
@@ -335,7 +345,7 @@ mod tests {
     fn cast_already_matching_type_is_noop() {
         let input_vals: Arc<dyn Array> = Arc::new(Float32Array::from(vec![Some(3.14_f32)]));
         let batch = batch_with_types(DataType::Float32, input_vals);
-        let schema = cast_schema(DType::Float32, true);
+        let schema = cast_schema(DTypeName::Float32, true);
 
         let result = apply_schema_casts(batch, &schema).unwrap();
         assert_eq!(result.schema().field_with_name("val").unwrap().data_type(), &DataType::Float32);
@@ -346,7 +356,7 @@ mod tests {
         // Utf8 → Float32 is not a valid Arrow cast
         let input_vals: Arc<dyn Array> = Arc::new(StringArray::from(vec![Some("not-a-number")]));
         let batch = batch_with_types(DataType::Utf8, input_vals);
-        let schema = cast_schema(DType::Float32, true);
+        let schema = cast_schema(DTypeName::Float32, true);
 
         assert!(apply_schema_casts(batch, &schema).is_err());
     }
@@ -355,7 +365,7 @@ mod tests {
     fn cast_preserves_nulls() {
         let input_vals: Arc<dyn Array> = Arc::new(Float64Array::from(vec![None, Some(2.0_f64)]));
         let batch = batch_with_types(DataType::Float64, input_vals);
-        let schema = cast_schema(DType::Float32, true);
+        let schema = cast_schema(DTypeName::Float32, true);
 
         let result = apply_schema_casts(batch, &schema).unwrap();
         let col = result.column_by_name("val").unwrap();

@@ -90,7 +90,7 @@ fn now_secs() -> u64 {
 #[cfg(all(test, feature = "testutil"))]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DType, TableSchema};
+    use crate::core::{ColumnSchema, DTypeName, TableSchema};
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
@@ -99,7 +99,7 @@ mod tests {
         columns.insert(
             "id".into(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
                 cast: false,
             },
@@ -107,7 +107,7 @@ mod tests {
         columns.insert(
             "score".into(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
                 cast: false,
             },

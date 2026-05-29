@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arrow::array::{Float32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -8,6 +8,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -118,7 +119,10 @@ async fn setup() -> (TempDir, Router, HashMap<String, AnimeRow>) {
         },
         ..Config::default()
     };
-    let service = Arc::new(MurrService::new(config).unwrap());
+    let store = Arc::new(RwLock::new(
+        RocksDBStore::open_from_config(&config.storage).unwrap(),
+    ));
+    let service = Arc::new(MurrService::new(store, config).unwrap());
     let api = MurrHttpService::new(service);
     let router = api.router();
 

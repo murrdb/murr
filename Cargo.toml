@@ -1,6 +1,6 @@
 [package]
 name = "murr"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Columnar in-memory cache for AI/ML inference workloads"
 license = "Apache-2.0"
@@ -74,6 +74,10 @@ harness = false
 
 [[bench]]
 name = "read_block"
+harness = false
+
+[[bench]]
+name = "write"
 harness = false
 
 [profile.dev.package.librocksdb-sys]
