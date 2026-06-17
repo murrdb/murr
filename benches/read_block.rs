@@ -35,7 +35,7 @@ fn bench(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().with_profiler(common::profiler::PProfProfiler::new());
+    config = common::criterion();
     targets = bench
 }
 criterion_main!(benches);

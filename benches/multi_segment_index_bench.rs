@@ -94,7 +94,7 @@ fn bench_multi_segment_write(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().with_profiler(common::profiler::PProfProfiler::new());
+    config = common::criterion();
     targets = bench_multi_segment_write
 }
 criterion_main!(benches);

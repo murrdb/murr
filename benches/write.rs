@@ -78,7 +78,7 @@ fn bench_write_encode(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().with_profiler(common::profiler::PProfProfiler::new());
+    config = common::criterion();
     targets = bench_write_encode
 }
 criterion_main!(benches);

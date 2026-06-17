@@ -40,3 +40,10 @@ Decisions and reasoning:
   time (io_uring waits, blocking syscalls) is invisible in the profile, unlike
   perf. Fine for hotspot work; use perf manually if wall-clock attribution is
   ever needed.
+* **Linux-only gating**: pprof depends on Unix-only `nix`/`libc` and fails to
+  build on Windows MSVC (where `cargo test` compiles the bench targets and their
+  dev-deps), so the `pprof` dev-dependency and the `profiler` module are both
+  gated to `cfg(target_os = "linux")`. Bench files build their Criterion via
+  `common::criterion()`, which attaches `PProfProfiler` on Linux and returns a
+  plain `Criterion` elsewhere — mirroring the jemalloc Linux gating in
+  `allocator.md`.
