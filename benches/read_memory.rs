@@ -26,5 +26,9 @@ fn bench(c: &mut Criterion) {
     run_read_bench(c, &table, &dataset, &opts);
 }
 
-criterion_group!(benches, bench);
+criterion_group! {
+    name = benches;
+    config = common::criterion();
+    targets = bench
+}
 criterion_main!(benches);

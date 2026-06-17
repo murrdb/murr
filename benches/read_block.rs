@@ -33,5 +33,9 @@ fn bench(c: &mut Criterion) {
     drop(tmp);
 }
 
-criterion_group!(benches, bench);
+criterion_group! {
+    name = benches;
+    config = common::criterion();
+    targets = bench
+}
 criterion_main!(benches);

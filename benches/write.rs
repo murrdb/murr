@@ -76,5 +76,9 @@ fn bench_write_encode(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_write_encode);
+criterion_group! {
+    name = benches;
+    config = common::criterion();
+    targets = bench_write_encode
+}
 criterion_main!(benches);
