@@ -26,5 +26,9 @@ fn bench(c: &mut Criterion) {
     run_read_bench(c, &table, &dataset, &opts);
 }
 
-criterion_group!(benches, bench);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().with_profiler(common::profiler::PProfProfiler::new());
+    targets = bench
+}
 criterion_main!(benches);

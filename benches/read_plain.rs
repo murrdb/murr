@@ -16,7 +16,7 @@ use common::dataset::Dataset;
 use common::read_bench::{BenchOpts, run_read_bench};
 
 fn bench(c: &mut Criterion) {
-    let dataset = Dataset::new(100_000_000, 10);
+    let dataset = Dataset::new(10_000_000, 10);
     let tmp = TempDir::new().unwrap();
     let mut config = PlainConfig::default();
     config.read_method = murr::io::store::rocksdb::ReadMethod::ParGet;
@@ -33,5 +33,9 @@ fn bench(c: &mut Criterion) {
     drop(tmp);
 }
 
-criterion_group!(benches, bench);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().with_profiler(common::profiler::PProfProfiler::new());
+    targets = bench
+}
 criterion_main!(benches);

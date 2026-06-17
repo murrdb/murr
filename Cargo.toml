@@ -59,6 +59,7 @@ tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 rstest = "0.26.1"
 csv = "1"
+pprof = { version = "0.14", features = ["prost-codec"] }
 
 [[bench]]
 name = "multi_segment_index_bench"

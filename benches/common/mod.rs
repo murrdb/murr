@@ -2,4 +2,5 @@
 
 pub mod data;
 pub mod dataset;
+pub mod profiler;
 pub mod read_bench;
