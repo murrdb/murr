@@ -63,7 +63,7 @@ csv = "1"
 # pprof is Unix-only (depends on nix/libc) and fails to build on Windows MSVC;
 # it's only used by the bench profiler hook, which is itself Linux-gated.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-pprof = { version = "0.14", features = ["prost-codec"] }
+pprof = { version = "0.15", features = ["prost-codec"] }
 
 [[bench]]
 name = "multi_segment_index_bench"
