@@ -15,7 +15,7 @@ use crate::core::{MurrError, TableSchema};
 use crate::io::store::Store;
 use crate::service::MurrService;
 
-use super::convert::{FetchResponse, WriteRequest};
+use super::convert::{FetchResponse, WriteRequest, apply_schema_casts};
 use super::error::ApiError;
 
 const ARROW_IPC_MIME: &str = "application/vnd.apache.arrow.stream";
@@ -122,6 +122,8 @@ pub async fn write_table<S: Store>(
 
     let svc = service.clone();
     tokio::task::spawn_blocking(move || -> Result<StatusCode, ApiError> {
+        let table_schema = svc.get_schema(&name)?;
+
         let batch = if content_type.contains(ARROW_IPC_MIME) {
             let cursor = Cursor::new(&body);
             let mut reader = StreamReader::try_new(cursor, None).map_err(|e| ApiError(e.into()))?;
@@ -142,10 +144,10 @@ pub async fn write_table<S: Store>(
         } else {
             let write: WriteRequest = serde_json::from_slice(&body)
                 .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
-            let schema = svc.get_schema(&name)?;
-            write.into_record_batch(&schema).map_err(ApiError)?
+            write.into_record_batch(&table_schema).map_err(ApiError)?
         };
 
+        let batch = apply_schema_casts(batch, &table_schema).map_err(ApiError)?;
         svc.write(&name, &batch)?;
         Ok(StatusCode::OK)
     })

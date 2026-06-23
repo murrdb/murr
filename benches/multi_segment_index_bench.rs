@@ -30,6 +30,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
         ColumnSchema {
             dtype: DTypeName::Utf8,
             nullable: false,
+            cast: false,
         },
     );
     for name in &col_names {
@@ -38,6 +39,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: false,
+                cast: false,
             },
         );
     }
