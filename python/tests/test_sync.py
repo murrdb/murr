@@ -6,16 +6,16 @@ import pytest
 from murr import ColumnSchema, DType, TableSchema
 from murr.sync import Murr
 
-from conftest import free_port, user_batch, user_schema
+from conftest import free_port, local_config, user_batch, user_schema
 
 
 @pytest.fixture(params=["local", "http"])
 def murr_client(request, tmp_path):
     if request.param == "local":
-        yield Murr.start_local(cache_dir=str(tmp_path))
+        yield Murr.start_local(config=local_config(tmp_path))
     else:
         port = free_port()
-        server = Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+        server = Murr.start_local(config=local_config(tmp_path, port), serve_http=True)
         time.sleep(0.1)
         client = Murr.connect(f"http://127.0.0.1:{port}")
         yield client
@@ -109,12 +109,12 @@ def test_persistence_across_instances(tmp_path):
     cache_dir = str(tmp_path)
     schema = user_schema()
 
-    client1 = Murr.start_local(cache_dir=cache_dir)
+    client1 = Murr.start_local(config=local_config(cache_dir))
     client1.create_table("t", schema)
     client1.write("t", user_batch())
     del client1
 
-    client2 = Murr.start_local(cache_dir=cache_dir)
+    client2 = Murr.start_local(config=local_config(cache_dir))
     result = client2.read("t", ["c"], ["score"])
     assert result.column("score").to_pylist() == [3.0]
 
@@ -123,7 +123,7 @@ def test_start_local_with_http(tmp_path):
     import urllib.request
 
     port = free_port()
-    client = Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+    client = Murr.start_local(config=local_config(tmp_path, port), serve_http=True)
     time.sleep(0.1)
 
     resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/health")

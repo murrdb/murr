@@ -7,16 +7,18 @@ import pytest_asyncio
 from murr import ColumnSchema, DType, TableSchema
 from murr.aio import Murr
 
-from conftest import free_port, user_batch, user_schema
+from conftest import free_port, local_config, user_batch, user_schema
 
 
 @pytest_asyncio.fixture(params=["local", "http"])
 async def murr_client(request, tmp_path):
     if request.param == "local":
-        yield await Murr.start_local(cache_dir=str(tmp_path))
+        yield await Murr.start_local(config=local_config(tmp_path))
     else:
         port = free_port()
-        server = await Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+        server = await Murr.start_local(
+            config=local_config(tmp_path, port), serve_http=True
+        )
         await asyncio.sleep(0.1)
         client = await Murr.connect(f"http://127.0.0.1:{port}")
         yield client
@@ -119,12 +121,12 @@ async def test_persistence_across_instances(tmp_path):
     cache_dir = str(tmp_path)
     schema = user_schema()
 
-    client1 = await Murr.start_local(cache_dir=cache_dir)
+    client1 = await Murr.start_local(config=local_config(cache_dir))
     await client1.create_table("t", schema)
     await client1.write("t", user_batch())
     del client1
 
-    client2 = await Murr.start_local(cache_dir=cache_dir)
+    client2 = await Murr.start_local(config=local_config(cache_dir))
     result = await client2.read("t", ["c"], ["score"])
     assert result.column("score").to_pylist() == [3.0]
 
@@ -134,7 +136,9 @@ async def test_start_local_with_http(tmp_path):
     import urllib.request
 
     port = free_port()
-    client = await Murr.start_local(cache_dir=str(tmp_path), http_port=port)
+    client = await Murr.start_local(
+        config=local_config(tmp_path, port), serve_http=True
+    )
     await asyncio.sleep(0.1)
 
     resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/health")
