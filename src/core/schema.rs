@@ -1,12 +1,19 @@
-use std::collections::HashMap;
-
-use arrow::datatypes::{DataType, Field, Schema};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
-pub enum DType {
+pub enum DTypeName {
     Utf8,
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
     Float32,
     Float64,
 }
@@ -14,7 +21,7 @@ pub enum DType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnSchema {
-    pub dtype: DType,
+    pub dtype: DTypeName,
     #[serde(default = "ColumnSchema::default_nullable")]
     pub nullable: bool,
 }
@@ -28,27 +35,5 @@ impl ColumnSchema {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
     pub key: String,
-    pub columns: HashMap<String, ColumnSchema>,
-}
-
-impl From<&DType> for DataType {
-    fn from(dtype: &DType) -> Self {
-        match dtype {
-            DType::Utf8 => DataType::Utf8,
-            DType::Float32 => DataType::Float32,
-            DType::Float64 => DataType::Float64,
-        }
-    }
-}
-
-impl From<&TableSchema> for Schema {
-    fn from(schema: &TableSchema) -> Self {
-        let fields: Vec<Field> = schema
-            .columns
-            .iter()
-            .map(|(name, config)| Field::new(name, DataType::from(&config.dtype), config.nullable))
-            .collect();
-        let metadata = HashMap::from([("key".to_string(), schema.key.clone())]);
-        Schema::new_with_metadata(fields, metadata)
-    }
+    pub columns: IndexMap<String, ColumnSchema>,
 }

@@ -1,66 +1,56 @@
-mod state;
-
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Instant;
 
 use arrow::record_batch::RecordBatch;
-use log::info;
-use tokio::sync::RwLock;
+use log::{info, warn};
 
 use crate::conf::Config;
 use crate::core::{MurrError, TableSchema};
-use crate::io::directory::mmap::directory::MMapDirectory;
-use crate::io::directory::Directory;
+use crate::io::store::Store;
 use crate::io::table::Table;
-use crate::io::url::LocalUrl;
 
-use state::TableState;
-
-pub struct MurrService {
-    tables: RwLock<HashMap<String, TableState>>,
-    url: LocalUrl,
+pub struct MurrService<S: Store> {
+    tables: RwLock<HashMap<String, Table<S>>>,
+    store: Arc<RwLock<S>>,
     config: Config,
 }
 
-impl MurrService {
-    pub async fn new(config: Config) -> Result<Self, MurrError> {
-        let url = LocalUrl {
-            path: config.storage.cache_dir.clone(),
+impl<S: Store> MurrService<S> {
+    pub fn new(store: Arc<RwLock<S>>, config: Config) -> Result<Self, MurrError> {
+        let snapshot: Vec<(String, TableSchema)> = {
+            let s = store.read().unwrap_or_else(PoisonError::into_inner);
+            s.manifest()
+                .tables
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
         };
-        let mut tables = HashMap::new();
+        let total = snapshot.len();
+        info!("Manifest has {} table(s)", total);
 
-        for index in MMapDirectory::list_indexes(&url) {
-            let dir = match MMapDirectory::open(&url, &index, 4096, false) {
-                Ok(dir) => dir,
-                Err(e) => {
-                    info!("skipping index '{}': {}", index, e);
-                    continue;
+        let load_start = Instant::now();
+        let mut tables: HashMap<String, Table<S>> = HashMap::new();
+        for (name, schema) in snapshot {
+            let column_count = schema.columns.len();
+            match Table::open(store.clone(), name.clone(), schema) {
+                Ok(t) => {
+                    info!("loaded table '{}' ({} columns)", name, column_count);
+                    tables.insert(name, t);
                 }
-            };
-            let schema = dir.schema().clone();
-            let dir = Arc::new(dir);
-            let table = Table::new(dir);
-
-            let has_segments = !schema.columns.is_empty();
-            let reader = if has_segments {
-                match table.open_reader().await {
-                    Ok(reader) => Some(reader),
-                    Err(e) => {
-                        info!("table '{}' has no readable data: {}", index, e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            info!("loaded table '{}'", index);
-            tables.insert(index, TableState { table, reader });
+                Err(e) => warn!("skipping table '{}': {}", name, e),
+            }
         }
+        info!(
+            "Service ready: {}/{} tables loaded in {} ms",
+            tables.len(),
+            total,
+            load_start.elapsed().as_millis()
+        );
 
         Ok(Self {
             tables: RwLock::new(tables),
-            url,
+            store,
             config,
         })
     }
@@ -69,92 +59,62 @@ impl MurrService {
         &self.config
     }
 
-    pub async fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
-        let mut tables = self.tables.write().await;
-
+    pub fn create(&self, table_name: &str, schema: TableSchema) -> Result<(), MurrError> {
+        let mut tables = self.tables.write().unwrap_or_else(PoisonError::into_inner);
         if tables.contains_key(table_name) {
             return Err(MurrError::TableAlreadyExists(table_name.to_string()));
         }
-
-        let dir = MMapDirectory::create(&self.url, table_name, schema, 4096, false)?;
-        let table = Table::new(Arc::new(dir));
-
-        tables.insert(
-            table_name.to_string(),
-            TableState {
-                table,
-                reader: None,
-            },
-        );
-
+        let table = Table::create(self.store.clone(), table_name, schema)?;
+        tables.insert(table_name.to_string(), table);
         Ok(())
     }
 
-    pub async fn write(
-        &self,
-        table_name: &str,
-        batch: &RecordBatch,
-    ) -> Result<(), MurrError> {
-        let mut tables = self.tables.write().await;
-
-        let state = tables.get_mut(table_name).ok_or_else(|| {
-            MurrError::TableNotFound(table_name.to_string())
-        })?;
-
-        let writer = state.table.open_writer().await?;
-        writer.write(batch).await?;
-
-        let reader = match state.reader.take() {
-            Some(existing) => existing.reopen().await?,
-            None => state.table.open_reader().await?,
-        };
-        state.reader = Some(reader);
-
-        Ok(())
+    pub fn write(&self, table_name: &str, batch: &RecordBatch) -> Result<(), MurrError> {
+        let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
+        let table = tables
+            .get(table_name)
+            .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
+        table.write(batch)
     }
 
-    pub async fn list_tables(&self) -> HashMap<String, TableSchema> {
-        let tables = self.tables.read().await;
+    pub fn list_tables(&self) -> HashMap<String, TableSchema> {
+        let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
         tables
             .iter()
-            .map(|(k, v)| (k.clone(), v.table.schema().clone()))
+            .map(|(k, v)| (k.clone(), v.schema().clone()))
             .collect()
     }
 
-    pub async fn get_schema(&self, table_name: &str) -> Result<TableSchema, MurrError> {
-        let tables = self.tables.read().await;
-        let state = tables.get(table_name).ok_or_else(|| {
-            MurrError::TableNotFound(table_name.to_string())
-        })?;
-        Ok(state.table.schema().clone())
+    pub fn get_schema(&self, table_name: &str) -> Result<TableSchema, MurrError> {
+        let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
+        let table = tables
+            .get(table_name)
+            .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
+        Ok(table.schema().clone())
     }
 
-    pub async fn read(
+    pub fn read(
         &self,
         table_name: &str,
         keys: &[&str],
         columns: &[&str],
     ) -> Result<RecordBatch, MurrError> {
-        let tables = self.tables.read().await;
-
-        let state = tables.get(table_name).ok_or_else(|| {
-            MurrError::TableNotFound(table_name.to_string())
-        })?;
-
-        let reader = state.reader.as_ref().ok_or_else(|| {
-            MurrError::TableError(format!("table '{}' has no data", table_name))
-        })?;
-
-        reader.read(keys, columns).await
+        let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
+        let table = tables
+            .get(table_name)
+            .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
+        table.read(keys, columns)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf::StorageConfig;
-    use crate::core::{ColumnSchema, DType};
-    use arrow::array::{Float32Array, StringArray};
+    use crate::conf::{BackendConfig, StorageConfig};
+    use crate::core::{ColumnSchema, DTypeName};
+    use crate::io::store::rocksdb::RocksDBStore;
+    use crate::io::store::rocksdb::plain::PlainConfig;
+    use arrow::array::{Array, Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -162,25 +122,33 @@ mod tests {
     fn test_config(dir: &TempDir) -> Config {
         Config {
             storage: StorageConfig {
-                cache_dir: dir.path().to_path_buf(),
+                path: dir.path().to_path_buf(),
+                backend: BackendConfig::Mmap(PlainConfig::default()),
             },
             ..Config::default()
         }
     }
 
+    fn build_service(config: Config) -> MurrService<RocksDBStore> {
+        let store = Arc::new(RwLock::new(
+            RocksDBStore::open_from_config(&config.storage).unwrap(),
+        ));
+        MurrService::new(store, config).unwrap()
+    }
+
     fn test_schema() -> TableSchema {
-        let mut columns = HashMap::new();
+        let mut columns = indexmap::IndexMap::new();
         columns.insert(
             "key".to_string(),
             ColumnSchema {
-                dtype: DType::Utf8,
+                dtype: DTypeName::Utf8,
                 nullable: false,
             },
         );
         columns.insert(
             "score".to_string(),
             ColumnSchema {
-                dtype: DType::Float32,
+                dtype: DTypeName::Float32,
                 nullable: true,
             },
         );
@@ -204,17 +172,17 @@ mod tests {
         .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_create_write_read_round_trip() {
+    #[test]
+    fn test_create_write_read_round_trip() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let svc = build_service(test_config(&dir));
 
-        svc.create("users", test_schema()).await.unwrap();
+        svc.create("users", test_schema()).unwrap();
 
         let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
-        svc.write("users", &batch).await.unwrap();
+        svc.write("users", &batch).unwrap();
 
-        let result = svc.read("users", &["c", "a"], &["score"]).await.unwrap();
+        let result = svc.read("users", &["c", "a"], &["score"]).unwrap();
         assert_eq!(result.num_rows(), 2);
 
         let vals = result
@@ -226,49 +194,55 @@ mod tests {
         assert_eq!(vals.value(1), 1.0);
     }
 
-    #[tokio::test]
-    async fn test_create_duplicate_errors() {
+    #[test]
+    fn test_create_duplicate_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let svc = build_service(test_config(&dir));
 
-        svc.create("t", test_schema()).await.unwrap();
-        let err = svc.create("t", test_schema()).await;
+        svc.create("t", test_schema()).unwrap();
+        let err = svc.create("t", test_schema());
         assert!(err.is_err());
     }
 
-    #[tokio::test]
-    async fn test_read_nonexistent_table_errors() {
+    #[test]
+    fn test_read_nonexistent_table_errors() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let svc = build_service(test_config(&dir));
 
-        let err = svc.read("nope", &["a"], &["score"]).await;
+        let err = svc.read("nope", &["a"], &["score"]);
         assert!(err.is_err());
     }
 
-    #[tokio::test]
-    async fn test_read_empty_table_errors() {
+    #[test]
+    fn test_read_empty_table_returns_nulls() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let svc = build_service(test_config(&dir));
 
-        svc.create("empty", test_schema()).await.unwrap();
-        let err = svc.read("empty", &["a"], &["score"]).await;
-        assert!(err.is_err());
+        svc.create("empty", test_schema()).unwrap();
+        let result = svc.read("empty", &["a"], &["score"]).unwrap();
+        assert_eq!(result.num_rows(), 1);
+        let vals = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert!(vals.is_null(0));
     }
 
-    #[tokio::test]
-    async fn test_multiple_writes_accumulate() {
+    #[test]
+    fn test_multiple_writes_accumulate() {
         let dir = TempDir::new().unwrap();
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
+        let svc = build_service(test_config(&dir));
 
-        svc.create("t", test_schema()).await.unwrap();
+        svc.create("t", test_schema()).unwrap();
 
         let batch1 = test_batch(&["a", "b"], &[1.0, 2.0]);
-        svc.write("t", &batch1).await.unwrap();
+        svc.write("t", &batch1).unwrap();
 
         let batch2 = test_batch(&["c"], &[3.0]);
-        svc.write("t", &batch2).await.unwrap();
+        svc.write("t", &batch2).unwrap();
 
-        let result = svc.read("t", &["a", "b", "c"], &["score"]).await.unwrap();
+        let result = svc.read("t", &["a", "b", "c"], &["score"]).unwrap();
         assert_eq!(result.num_rows(), 3);
 
         let vals = result
@@ -281,24 +255,22 @@ mod tests {
         assert_eq!(vals.value(2), 3.0);
     }
 
-    #[tokio::test]
-    async fn test_loads_existing_tables_on_startup() {
+    #[test]
+    fn test_loads_existing_tables_on_startup() {
         let dir = TempDir::new().unwrap();
 
-        // Create and populate a table, then drop the service
         {
-            let svc = MurrService::new(test_config(&dir)).await.unwrap();
-            svc.create("users", test_schema()).await.unwrap();
+            let svc = build_service(test_config(&dir));
+            svc.create("users", test_schema()).unwrap();
             let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
-            svc.write("users", &batch).await.unwrap();
+            svc.write("users", &batch).unwrap();
         }
 
-        // New service should discover the existing table
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
-        let tables = svc.list_tables().await;
+        let svc = build_service(test_config(&dir));
+        let tables = svc.list_tables();
         assert!(tables.contains_key("users"));
 
-        let result = svc.read("users", &["c", "a"], &["score"]).await.unwrap();
+        let result = svc.read("users", &["c", "a"], &["score"]).unwrap();
         assert_eq!(result.num_rows(), 2);
 
         let vals = result
@@ -310,21 +282,26 @@ mod tests {
         assert_eq!(vals.value(1), 1.0);
     }
 
-    #[tokio::test]
-    async fn test_loads_empty_table_on_startup() {
+    #[test]
+    fn test_loads_empty_table_on_startup() {
         let dir = TempDir::new().unwrap();
 
         {
-            let svc = MurrService::new(test_config(&dir)).await.unwrap();
-            svc.create("empty", test_schema()).await.unwrap();
+            let svc = build_service(test_config(&dir));
+            svc.create("empty", test_schema()).unwrap();
         }
 
-        let svc = MurrService::new(test_config(&dir)).await.unwrap();
-        let tables = svc.list_tables().await;
+        let svc = build_service(test_config(&dir));
+        let tables = svc.list_tables();
         assert!(tables.contains_key("empty"));
 
-        // Table exists but has no data
-        let err = svc.read("empty", &["a"], &["score"]).await;
-        assert!(err.is_err());
+        let result = svc.read("empty", &["a"], &["score"]).unwrap();
+        assert_eq!(result.num_rows(), 1);
+        let vals = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert!(vals.is_null(0));
     }
 }

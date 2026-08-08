@@ -10,7 +10,7 @@
 <a href="#what-is-murr">🐱 What is Murr?</a> &middot; <a href="#why-murr">🚀 Why Murr?</a> &middot; <a href="#why-not-murr">🚫 Why NOT Murr?</a> &middot; <a href="#quickstart">⚡ Quickstart</a> &middot; <a href="#benchmarks">📊 Benchmarks</a> &middot; <a href="#roadmap">🗺 Roadmap</a>
 </p>
 
-**Murrdb**: A columnar in-memory cache for AI inference workloads. A faster Redis/RocksDB replacement, optimized for batch low-latency zero-copy reads and writes.
+**Murrdb**: A RocksDB-based NVMe/S3 cache for AI inference workloads. A faster Redis replacement, optimized for batch low-latency zero-copy reads and writes.
 
 > This `README.md` is 99%[^1] human written.
 
@@ -35,7 +35,7 @@ curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
 result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
 print(result.to_pandas())  # look mom, zero copy!
 ```
-- **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets restarted, you're cooked. Murr just self-bootstraps from block storage.
+- **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets evicted, you're cooked. Murr just self-bootstraps from block storage.
 
 Murr shines when:
 * **your data is heavy and tabular**: that giant Parquet dump on S3 your AI inference or ML prep job produces? Perfect fit.
@@ -141,40 +141,77 @@ We benchmark a typical `ML Ranking` use case: 100M rows, 10 `float32` columns, 1
 * **Python (pyperf)** — measures end-to-end latency as experienced by a Python ML client. Performs the same random-key reads but includes full protocol decoding and conversion into a `pd.DataFrame`. This captures the real cost a user pays: protocol parsing, byte deserialization, and DataFrame construction.
 
 Backends and data layouts tested:
-* **murr** (columnar, Arrow IPC) — native columnar format with zero-copy reads and projection pushdown.
-* **Redis blob** — all features packed into a single 40-byte `MGET` blob. Compact and cache-friendly, but always reads all columns.
-* **Redis HSET** — [Feast](https://feast.dev/)-style hash-per-row: each feature is a separate HSET field. Flexible, but per-field overhead adds up.
-* **RocksDB blob** — embedded key-value store with the same packed binary layout as Redis blob.
+* **murr** (native, Arrow IPC) — row-wise storage on top of RocksDB SSTables, with zero-copy reads and projection pushdown. Two modes: `mmap` (PlainTable, in-memory) and `block` (BlockTable, NVMe-backed).
+* **Redis / Valkey / Dragonfly, blob** — all features packed into a single `MGET` blob. Compact and cache-friendly, but always reads all columns.
+* **Redis / Valkey / Dragonfly, HSET** — [Feast](https://feast.dev/)-style hash-per-row: each feature is a separate HSET field. Flexible, but per-field overhead adds up.
 * **PostgreSQL blob** — BYTEA column with packed features.
 * **PostgreSQL col-per-feature** — explicit typed columns, one per feature.
 
 ### Rust time-to-last-byte
 
-All backends run on the same machine; container-backed ones use Docker via `testcontainers`. Memory is measured via Docker cgroup stats (container backends) or `/proc/self/statm` (embedded backends) as a before/after delta around the data load phase.
+All backends run on the same machine; container-backed ones use Docker via `testcontainers`. Memory is the container `TOTAL` (RSS+SHR) delta around the load phase. Net TX is server-to-client bytes per read. `disk` variants are cgroup-capped at 2 GiB RAM to force disk reads.
 
-| Engine | Layout | Disk | Memory | Ingestion | p95 read latency |
-|--------|--------|-----:|-------:|----------:|-----------------:|
-| murr 0.1.8 | columnar | 4.8 GiB | 9.5 GiB | 2.76M rows/s | 443 us |
-| Redis 8.6.1 | blob | 1.3 GiB | 10.6 GiB | 1.31M rows/s | 998 us |
-| Redis 8.6.1 | HSET | 8.2 GiB | 21.2 GiB | 381K rows/s | 4.30 ms |
-| RocksDB | blob | 4.3 GiB | 2.5 GiB | 2.40M rows/s | 3.85 ms |
-| PostgreSQL 17 | blob | 12.8 GiB | 13.7 GiB | 283K rows/s | 9.75 ms |
-| PostgreSQL 17 | col-per-feature | 12.7 GiB | 13.5 GiB | 138K rows/s | 8.79 ms |
+#### Blob layouts
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 mmap | native | 7.5 GiB | 5.9 GiB | 948K rows/s | 268 µs | 42 KiB |
+| Dragonfly 1.31 | blob | 7.3 GiB | — | 4.01M rows/s | 296 µs | 46 KiB |
+| Valkey 8.1 | blob | 8.9 GiB | — | 1.58M rows/s | 657 µs | 46 KiB |
+| Redis 8.6.3 | blob | 9.6 GiB | — | 1.43M rows/s | 815 µs | 46 KiB |
+| pgsql 18.4 | blob | 24.0 GiB | 12.8 GiB | 400K rows/s | 5.69 ms | 62 KiB |
+
+#### Hash / col-per-feature layouts
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 mmap | native | 7.5 GiB | 5.9 GiB | 948K rows/s | 268 µs | 42 KiB |
+| Dragonfly 1.31 | hash | 20.1 GiB | — | 650K rows/s | 2.82 ms | 213 KiB |
+| Valkey 8.1 | hash | 19.4 GiB | — | 378K rows/s | 3.20 ms | 210 KiB |
+| Redis 8.6.3 | hash | 20.1 GiB | — | 398K rows/s | 3.25 ms | 210 KiB |
+| pgsql 18.4 | col | 23.4 GiB | 12.7 GiB | 384K rows/s | 6.54 ms | 86 KiB |
+
+#### Disk mode (2 GiB RAM cap)
+
+| Engine | Layout | Memory | Disk | Ingestion | p50 latency | Net TX/read |
+|--------|--------|-------:|-----:|----------:|------------:|------------:|
+| murr 0.2.0 block | native | 1.7 GiB | 5.8 GiB | 1.00M rows/s | 6.33 ms | 42 KiB |
+| pgsql 18.4 | blob | 2.0 GiB | 12.8 GiB | 329K rows/s | 189 ms | 62 KiB |
+| pgsql 18.4 | col | 2.0 GiB | 12.7 GiB | 327K rows/s | 217 ms | 86 KiB |
 
 ### Python end-to-end
 
 Measures full round-trip latency including protocol decoding and `pd.DataFrame` conversion. Ingestion throughput includes Python-side serialization and batch writes.
 
+#### Blob layouts
+
 | Engine | Layout | Ingestion | Read latency |
 |--------|--------|----------:|-------------:|
-| murr 0.1.8 | columnar | 2.34M rows/s | 1.38 ms |
-| Redis 8.6.1 | blob | 136K rows/s | 2.42 ms |
-| Redis 8.6.1 | HSET | 61K rows/s | 9.39 ms |
-| RocksDB | blob | 622K rows/s | 4.90 ms |
-| PostgreSQL 17 | blob | 356K rows/s | 10.8 ms |
-| PostgreSQL 17 | col-per-feature | 143K rows/s | 10.6 ms |
+| murr 0.2.0 mmap | native | 1.06M rows/s | 1.08 ms |
+| Dragonfly | blob | 524K rows/s | 1.68 ms |
+| Valkey 8.1 | blob | 436K rows/s | 2.04 ms |
+| Redis 8.6.3 | blob | 421K rows/s | 2.46 ms |
+| pgsql 18.4 | blob | 298K rows/s | 28.6 ms |
 
-Murr is ~2.3x faster than the best Redis layout (MGET with packed blobs) on raw read latency, and ~17x faster on Python end-to-end ingestion throughput.
+#### Hash / col-per-feature layouts
+
+| Engine | Layout | Ingestion | Read latency |
+|--------|--------|----------:|-------------:|
+| murr 0.2.0 mmap | native | 1.06M rows/s | 1.08 ms |
+| Dragonfly | hash | 64K rows/s | 8.25 ms |
+| Valkey 8.1 | hash | 62K rows/s | 8.63 ms |
+| Redis 8.6.3 | hash | 62K rows/s | 8.50 ms |
+| pgsql 18.4 | col | 271K rows/s | 13.8 ms |
+
+#### Disk mode (2 GiB RAM cap)
+
+| Engine | Layout | Ingestion | Read latency |
+|--------|--------|----------:|-------------:|
+| murr 0.2.0 block | native | 662K rows/s | 6.69 ms |
+| pgsql 18.4 | blob | 317K rows/s | 171 ms |
+| pgsql 18.4 | col | 303K rows/s | 153 ms |
+
+Murr is ~3x faster than Redis on packed-blob reads and ~12x faster on Feast-style HSET layout, while using ~3x less RAM than the HSET equivalent. Dragonfly's packed-blob mode is close on latency, but still pays the protocol-parsing cost on the client.
 
 ## Roadmap
 
@@ -187,89 +224,15 @@ No ETAs, but at least you can see where things stand:
 - [x] Python embedded murrdb, so we can make a cool demo
 - [x] Benchmarking harness: Redis support, Feast and feature-blob styles
 - [x] Win at your own benchmark (this was surprisingly hard btw)
-- [x] Support for `utf8` and `float32` datatypes
+- [x] Support for `utf8`, `bool`, signed/unsigned `int8/16/32/64`, `float32` and `float64` datatypes
 - [x] Python remote API client (sync + async)
 - [x] Docker image
-- [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16/64, date-time)
+- [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16, date-time)
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
 - [ ] Sparse columns
 - [x] Add RocksDB and Postgres to the benchmark harness
 - [ ] [Apache Iceberg](https://iceberg.apache.org/) and the very popular `parquet dump on S3` data catalog support
 
-
-## Architecture
-
-### Storage Engine
-
-The storage subsystem is a custom columnar format heavily inspired by [Apache Lucene](https://lucene.apache.org/)'s immutable segment model:
-
-- **[Segments](src/io/segment/)** (`.seg` files) are the atomic unit of write -- one batch of data becomes one immutable segment. No in-place modifications, which simplifies concurrency and maps naturally to object storage.
-- **[Directory abstraction](src/io/directory/)** keeps logical data organization separate from physical storage (local filesystem for now, S3 later).
-- **Memory-mapped reads** via [`memmap2`](https://crates.io/crates/memmap2) -- the OS takes care of page caching, segment data is accessed as zero-copy byte slices.
-- **Last-write-wins** key resolution: newer segments shadow older ones for the same key, so you get incremental updates without rewriting old data.
-
-<details>
-<summary>Segment wire format</summary>
-
-```
-[MURR magic (4B)][version u32 LE]
-[column payloads, 4-byte aligned]
-[footer entries: name_len|name|offset|size per column]
-[footer_size u32 LE]
-```
-
-The footer-at-the-end layout follows the same pattern as Lucene's compound file format.
-</details>
-
-<details>
-<summary><h3>Column Types</h3></summary>
-
-Each column type has its own binary encoding tuned for scatter-gather reads. We tried using Arrow for the in-memory representation early on, and it turned out surprisingly slow compared to a hand-rolled implementation:
-
-| Type | Status | Description |
-|------|--------|-------------|
-| `float32` | Implemented | 16-byte header, 8-byte aligned f32 payload, optional null bitmap |
-| `utf8` | Implemented | 20-byte header, i32 value offsets, concatenated strings, optional null bitmap |
-| `int16`, `int32`, `int64`, `uint16`, `uint32`, `uint64`, `float64`, `bool` | Planned |   |
-
-Null bitmaps are u64-word bit arrays (bit set = valid). Non-nullable columns skip bitmap checks entirely.
-</details>
-
-<details>
-<summary><h3>REST API (port 8080)</h3></summary>
-
-Served by the [Axum HTTP layer](src/api/http/).
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| GET | `/openapi.json` | OpenAPI spec |
-| GET | `/api/v1/table` | List all tables with schemas |
-| GET | `/api/v1/table/{name}/schema` | Get table schema |
-| PUT | `/api/v1/table/{name}` | Create a table |
-| POST | `/api/v1/table/{name}/fetch` | Read data (JSON or Arrow IPC response) |
-| PUT | `/api/v1/table/{name}/write` | Write data (JSON, Parquet or Arrow IPC request) |
-
-Fetch responses respect the `Accept` header (`application/json` or `application/vnd.apache.arrow.stream`). Write requests use `Content-Type` for the same formats.
-</details>
-
-<details>
-<summary><h3>Arrow Flight gRPC API (port 8081)</h3></summary>
-
-A read-only [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) endpoint for native Arrow integration without the HTTP overhead. Source: [`src/api/flight/`](src/api/flight/).
-
-| RPC | Description |
-|-----|-------------|
-| `do_get` | Fetch rows by keys and columns (JSON-encoded `FetchTicket`) |
-| `get_flight_info` | Get table schema and metadata |
-| `get_schema` | Get schema in Arrow IPC format |
-| `list_flights` | List all available tables |
-
-Ticket format for `do_get`:
-```json
-{"table": "user_features", "keys": ["user_1", "user_2"], "columns": ["click_rate_7d"]}
-```
-</details>
 
 ## Development
 
@@ -279,7 +242,7 @@ cargo test                   # Run all tests
 cargo check                  # Fast syntax/type check
 cargo clippy                 # Linting
 cargo fmt                    # Format code
-cargo bench --bench <name>   # Run a benchmark (table_bench, http_bench, flight_bench, hashmap_bench, hashmap_row_bench, redis_feast_bench, redis_featureblob_bench)
+cargo bench --bench <name>   # Run a benchmark (multi_segment_index_bench, row_vs_col_bench)
 ```
 
 ## License

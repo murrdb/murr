@@ -1,12 +1,6 @@
-[workspace]
-members = ["python"]
-
-[workspace.package]
-version = "0.2.0-rc1"
-
 [package]
 name = "murr"
-version.workspace = true
+version = "0.2.1"
 edition = "2024"
 description = "Columnar in-memory cache for AI/ML inference workloads"
 license = "Apache-2.0"
@@ -15,12 +9,12 @@ license = "Apache-2.0"
 testutil = ["dep:tempfile", "dep:rand"]
 
 [dependencies]
-config = "0.15.22"
+config = "0.15.23"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
-log = { version = "0.4.29", features = ["kv"] }
+log = { version = "0.4.30", features = ["kv"] }
 env_logger = "0.11"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 arrow = { version = "58", default-features = true, features = ["ipc"] }
 parquet = { version = "58", default-features = false, features = ["arrow"] }
 tokio = { version = "1", features = [
@@ -37,14 +31,24 @@ tonic = "0.14"
 futures = "0.3"
 serde_json = "1"
 serde_yaml_ng = "0.10"
-mimalloc = { version = "0.1", features = ["v3"] }
 bytemuck = "1"
 tempfile = { version = "3", optional = true }
 rand = { version = "0.10", optional = true }
 async-trait = "0.1"
-hashbrown = "0.17.0"
+hashbrown = "0.17.1"
 lean_string = "0.6"
 rustc-hash = "2"
+bincode = { version = "2", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
+rocksdb = "0.24"
+itertools = "0.14"
+rayon = "1"
+
+# jemalloc is Linux-only: tikv-jemalloc-sys fails to build on Windows MSVC,
+# and librocksdb-sys treats the jemalloc feature as a no-op on darwin/musl.
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = "0.6"
+rocksdb = { version = "0.24", features = ["jemalloc"] }
 
 [dev-dependencies]
 murr = { path = ".", features = ["testutil"] }
@@ -53,20 +57,52 @@ rand = "0.10"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
+rstest = "0.26.1"
+csv = "1"
+
+# pprof is Unix-only (depends on nix/libc) and fails to build on Windows MSVC;
+# it's only used by the bench profiler hook, which is itself Linux-gated.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+pprof = { version = "0.14", features = ["prost-codec"] }
 
 [[bench]]
 name = "multi_segment_index_bench"
 harness = false
 
+[[bench]]
+name = "read_memory"
+harness = false
+
+[[bench]]
+name = "read_plain"
+harness = false
+
+[[bench]]
+name = "read_block"
+harness = false
+
+[[bench]]
+name = "write"
+harness = false
+
+[profile.dev.package.librocksdb-sys]
+debug = "line-tables-only"
+
 [profile.bench]
 debug = 1         # line tables + symbols (good enough for perf)
+strip = "none"    # release sets strip="symbols"; bench inherits it and would hide .symtab from perf
 lto = false       # optional: makes disasm easier to read
 codegen-units = 1 # optional: more stable codegen
 
 [profile.bench.build-override]
 debug = true
-# force-frame-pointers = true
 
 [profile.bench.package."*"]
 debug = true
-# force-frame-pointers = true
+
+[profile.release]
+opt-level = 3
+debug = "none"
+strip = "symbols"
+lto = "fat"
+codegen-units = 1

@@ -29,3 +29,9 @@ impl From<arrow::error::ArrowError> for MurrError {
         MurrError::ArrowError(err.to_string())
     }
 }
+
+impl From<rocksdb::Error> for MurrError {
+    fn from(err: rocksdb::Error) -> Self {
+        MurrError::IoError(err.to_string())
+    }
+}

@@ -1,84 +1,44 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use log::info;
 use serde::{Deserialize, Serialize};
 
-use crate::core::MurrError;
+use crate::conf::path::resolve_cache_dir;
+use crate::io::store::rocksdb::block::BlockConfig;
+use crate::io::store::rocksdb::plain::PlainConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
-    #[serde(default = "StorageConfig::default_cache_dir")]
-    pub cache_dir: PathBuf,
+    #[serde(default = "default_path")]
+    pub path: PathBuf,
+    #[serde(default, flatten)]
+    pub backend: BackendConfig,
 }
 
-impl StorageConfig {
-    fn default_cache_dir() -> PathBuf {
-        resolve_cache_dir()
-            .expect("failed to resolve cache dir — set storage.cache_dir or MURR_STORAGE_CACHE__DIR")
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendConfig {
+    Mmap(PlainConfig),
+    Block(BlockConfig),
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            cache_dir: Self::default_cache_dir(),
+            path: default_path(),
+            backend: BackendConfig::default(),
         }
     }
 }
 
-fn is_dir_writable(path: &Path) -> bool {
-    if !path.is_dir() {
-        return false;
+impl Default for BackendConfig {
+    fn default() -> Self {
+        BackendConfig::Mmap(PlainConfig::default())
     }
-    let probe = path.join(".murr_write_probe");
-    let ok = std::fs::write(&probe, b"").is_ok();
-    let _ = std::fs::remove_file(&probe);
-    ok
 }
 
-fn resolve_cache_dir() -> Result<PathBuf, MurrError> {
-    let candidates: Vec<PathBuf> = vec![
-        std::env::current_dir().unwrap_or_default(),
-        PathBuf::from("/var/lib/murr"),
-        PathBuf::from("/data"),
-        std::env::temp_dir(),
-    ];
-
-    let mut errors: Vec<String> = Vec::new();
-
-    for parent in &candidates {
-        if parent.as_os_str().is_empty() {
-            continue;
-        }
-        if !is_dir_writable(parent) {
-            errors.push(format!("{}: not writable", parent.display()));
-            continue;
-        }
-        let murr_dir = parent.join("murr");
-        if murr_dir.is_dir() {
-            if is_dir_writable(&murr_dir) {
-                info!("Using cache dir: {}", murr_dir.display());
-                return Ok(murr_dir);
-            }
-            errors.push(format!("{}: exists but not writable", murr_dir.display()));
-            continue;
-        }
-        match std::fs::create_dir_all(&murr_dir) {
-            Ok(_) => {
-                info!("Using cache dir: {}", murr_dir.display());
-                return Ok(murr_dir);
-            }
-            Err(e) => {
-                errors.push(format!("{}: failed to create: {e}", murr_dir.display()));
-            }
-        }
-    }
-
-    Err(MurrError::ConfigParsingError(format!(
-        "no writable cache directory found. Tried: {}",
-        errors.join("; ")
-    )))
+fn default_path() -> PathBuf {
+    resolve_cache_dir()
+        .expect("failed to resolve cache dir — set storage.path or MURR_STORAGE_PATH")
 }
 
 #[cfg(test)]
@@ -86,17 +46,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_cache_dir_resolves() {
+    fn default_is_mmap() {
         let config = StorageConfig::default();
-        assert!(!config.cache_dir.as_os_str().is_empty());
-        assert_eq!(config.cache_dir.file_name().unwrap(), "murr");
+        assert!(matches!(config.backend, BackendConfig::Mmap(_)));
+        assert!(!config.path.as_os_str().is_empty());
+        assert_eq!(config.path.file_name().unwrap(), "murr");
     }
 
     #[test]
-    fn test_explicit_cache_dir_preserved() {
-        let config = StorageConfig {
-            cache_dir: PathBuf::from("/custom/path"),
-        };
-        assert_eq!(config.cache_dir, PathBuf::from("/custom/path"));
+    fn parses_mmap_yaml() {
+        let yaml = "
+path: /custom/path
+mmap:
+  bloom_bits_per_key: 20
+";
+        let cfg: StorageConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(cfg.path, PathBuf::from("/custom/path"));
+        match cfg.backend {
+            BackendConfig::Mmap(p) => assert_eq!(p.bloom_bits_per_key, 20),
+            _ => panic!("expected mmap"),
+        }
+    }
+
+    #[test]
+    fn parses_block_yaml() {
+        let yaml = "
+path: /custom/path
+block:
+  block_size: 8192
+";
+        let cfg: StorageConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(cfg.path, PathBuf::from("/custom/path"));
+        match cfg.backend {
+            BackendConfig::Block(b) => assert_eq!(b.block_size, 8192),
+            _ => panic!("expected block"),
+        }
     }
 }

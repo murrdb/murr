@@ -1,5 +1,6 @@
+#[cfg(target_os = "linux")]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod api;
 mod conf;
@@ -13,8 +14,9 @@ use clap::Parser;
 use murr::util::logo::ASCII_LOGO;
 
 use crate::api::{MurrFlightService, MurrHttpService};
-use crate::conf::Config;
+use crate::conf::{BackendConfig, Config};
 use crate::core::{CliArgs, setup_logging};
+use crate::io::store::rocksdb::RocksDBStore;
 use crate::service::MurrService;
 use log::info;
 
@@ -23,13 +25,43 @@ async fn main() {
     setup_logging();
     let args = CliArgs::parse();
     let config = Config::from_args(&args).expect("failed to load config");
-    info!("Starting murr with config: {config:?}");
-    info!("{ASCII_LOGO}");
 
-    let service = MurrService::new(config)
-        .await
-        .expect("failed to load tables");
-    let service = Arc::new(service);
+    info!("{ASCII_LOGO}");
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    info!("murr v{} ({} build)", env!("CARGO_PKG_VERSION"), profile);
+    info!(
+        "HTTP listen: {}, max_payload: {} MiB",
+        config.server.http.addr(),
+        config.server.http.max_payload_size >> 20
+    );
+    info!("gRPC listen: {}", config.server.grpc.addr());
+    info!("Storage path: {}", config.storage.path.display());
+    match &config.storage.backend {
+        BackendConfig::Mmap(p) => info!(
+            "Storage backend: Mmap (read_method={:?}, write_buffer_size={} MiB, bloom_bits_per_key={})",
+            p.read_method,
+            p.write_buffer_size >> 20,
+            p.bloom_bits_per_key
+        ),
+        BackendConfig::Block(b) => info!(
+            "Storage backend: Block (read_method={:?}, write_buffer_size={} MiB, bloom_filter_bits_per_key={:?}, mmap_reads={}, use_direct_reads={})",
+            b.read_method,
+            b.write_buffer_size >> 20,
+            b.bloom_filter_bits_per_key,
+            b.mmap_reads,
+            b.use_direct_reads
+        ),
+    }
+
+    let store = Arc::new(std::sync::RwLock::new(
+        RocksDBStore::open_from_config(&config.storage).expect("failed to open store"),
+    ));
+    let service = Arc::new(MurrService::new(store, config).expect("failed to load tables"));
+    info!("Service initialized, starting listeners");
 
     let http = MurrHttpService::new(service.clone());
     let flight = MurrFlightService::new(service.clone());

@@ -1,6 +1,10 @@
+.cargo
 /target
 stackcollapse-perf.pl
 .venv/
 __pycache__/
 *.so
 *.egg-info/
+.pi
+.perf/
+.pprof/
