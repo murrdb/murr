@@ -69,6 +69,18 @@ impl<S: Store> MurrService<S> {
         Ok(())
     }
 
+    pub fn drop_table(&self, table_name: &str) -> Result<(), MurrError> {
+        let mut tables = self.tables.write().unwrap_or_else(PoisonError::into_inner);
+        // Unregister first so no reader can grab a Table whose CF is being torn down.
+        tables
+            .remove(table_name)
+            .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
+        self.store
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drop_table(table_name)
+    }
+
     pub fn write(&self, table_name: &str, batch: &RecordBatch) -> Result<(), MurrError> {
         let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
         let table = tables
@@ -253,6 +265,62 @@ mod tests {
         assert_eq!(vals.value(0), 1.0);
         assert_eq!(vals.value(1), 2.0);
         assert_eq!(vals.value(2), 3.0);
+    }
+
+    #[test]
+    fn test_drop_table_then_recreate_with_new_schema() {
+        let dir = TempDir::new().unwrap();
+        let svc = build_service(test_config(&dir));
+
+        svc.create("t", test_schema()).unwrap();
+        svc.write("t", &test_batch(&["a"], &[1.0])).unwrap();
+
+        svc.drop_table("t").unwrap();
+        assert!(svc.list_tables().is_empty());
+        assert!(matches!(
+            svc.read("t", &["a"], &["score"]),
+            Err(MurrError::TableNotFound(_))
+        ));
+        assert!(matches!(
+            svc.drop_table("t"),
+            Err(MurrError::TableNotFound(_))
+        ));
+
+        let mut new_schema = test_schema();
+        new_schema.columns.insert(
+            "extra".to_string(),
+            ColumnSchema {
+                dtype: DTypeName::Utf8,
+                nullable: true,
+            },
+        );
+        svc.create("t", new_schema.clone()).unwrap();
+        assert_eq!(svc.get_schema("t").unwrap(), new_schema);
+
+        let result = svc.read("t", &["a"], &["score"]).unwrap();
+        let vals = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert!(vals.is_null(0));
+    }
+
+    #[test]
+    fn test_dropped_table_does_not_return_on_startup() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let svc = build_service(test_config(&dir));
+            svc.create("users", test_schema()).unwrap();
+            svc.create("gone", test_schema()).unwrap();
+            svc.drop_table("gone").unwrap();
+        }
+
+        let svc = build_service(test_config(&dir));
+        let tables = svc.list_tables();
+        assert!(tables.contains_key("users"));
+        assert!(!tables.contains_key("gone"));
     }
 
     #[test]

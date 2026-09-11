@@ -171,6 +171,38 @@ async fn test_list_and_get_table() {
 }
 
 #[tokio::test]
+async fn test_drop_table() {
+    let (_dir, router) = setup().await;
+    let schema = serde_json::to_vec(&table_schema_json()).unwrap();
+
+    let req = Request::put("/api/v1/table/features")
+        .header("content-type", "application/json")
+        .body(Body::from(schema))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let req = Request::delete("/api/v1/table/features")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let req = Request::get("/api/v1/table/features/schema")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let req = Request::delete("/api/v1/table/features")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(json["error"].is_string());
+}
+
+#[tokio::test]
 async fn test_full_round_trip() {
     let (_dir, router) = setup().await;
 

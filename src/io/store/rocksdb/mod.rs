@@ -213,6 +213,13 @@ impl Store for RocksDBStore {
         Ok(())
     }
 
+    fn drop_table(&mut self, table: &str) -> Result<(), MurrError> {
+        self.manifest.del_table(table)?;
+        self.db.drop_cf(table)?;
+        self.manifest.to_file(&self.manifest_path())?;
+        Ok(())
+    }
+
     fn manifest(&self) -> &Manifest {
         &self.manifest
     }
@@ -499,6 +506,44 @@ mod tests {
         let store = open(dir.path());
         assert_eq!(store.manifest().schema("users"), Some(&users));
         assert_eq!(store.manifest().schema("products"), Some(&products));
+    }
+
+    #[rstest]
+    #[case::plain(open_plain)]
+    #[case::block(open_block)]
+    fn drop_table_persists_across_reopen(#[case] open: Opener) {
+        let dir = TempDir::new().unwrap();
+        {
+            let mut store = open(dir.path());
+            store.create_table("users", &schema("id")).unwrap();
+            put(&mut store, "users", &[("alice", b"a")]);
+
+            store.drop_table("users").unwrap();
+
+            assert!(!store.manifest().contains("users"));
+            let err = store
+                .write("users", [KeyValue::new(*b"x", *b"y")])
+                .unwrap_err();
+            assert!(matches!(err, MurrError::TableNotFound(_)));
+        }
+
+        let mut store = open(dir.path());
+        assert!(!store.manifest().contains("users"));
+        // Recreating after drop must start empty, not resurrect old rows.
+        store.create_table("users", &schema("id")).unwrap();
+        let lookup: [&[u8]; 1] = [b"alice"];
+        let got = fetch(&store, "users", &lookup);
+        assert_eq!(got[0], None);
+    }
+
+    #[rstest]
+    #[case::plain(open_plain)]
+    #[case::block(open_block)]
+    fn drop_unknown_table_fails(#[case] open: Opener) {
+        let dir = TempDir::new().unwrap();
+        let mut store = open(dir.path());
+        let err = store.drop_table("nope").unwrap_err();
+        assert!(matches!(err, MurrError::TableNotFound(_)));
     }
 
     #[rstest]

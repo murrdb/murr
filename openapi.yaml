@@ -65,6 +65,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Drop a table
+      operationId: dropTable
+      description: Removes the table, its data, and its manifest entry. The name can be reused afterwards.
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      responses:
+        "204":
+          description: Table dropped
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/table/{name}/schema:
     get:
