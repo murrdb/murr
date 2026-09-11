@@ -67,6 +67,17 @@ pub async fn create_table<S: Store>(
     Ok(StatusCode::CREATED)
 }
 
+pub async fn drop_table<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || svc.drop_table(&name))
+        .await
+        .map_err(join_to_api_error)??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 pub struct FetchRequest {
     pub keys: Vec<String>,

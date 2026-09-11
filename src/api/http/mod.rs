@@ -27,10 +27,19 @@ impl<S: Store> MurrHttpService<S> {
             .route("/openapi.json", get(handlers::openapi))
             .route("/health", get(handlers::health))
             .route("/api/v1/table", get(handlers::list_tables::<S>))
-            .route("/api/v1/table/{name}/schema", get(handlers::get_schema::<S>))
-            .route("/api/v1/table/{name}", put(handlers::create_table::<S>))
+            .route(
+                "/api/v1/table/{name}/schema",
+                get(handlers::get_schema::<S>),
+            )
+            .route(
+                "/api/v1/table/{name}",
+                put(handlers::create_table::<S>).delete(handlers::drop_table::<S>),
+            )
             .route("/api/v1/table/{name}/fetch", post(handlers::fetch::<S>))
-            .route("/api/v1/table/{name}/write", put(handlers::write_table::<S>))
+            .route(
+                "/api/v1/table/{name}/write",
+                put(handlers::write_table::<S>),
+            )
             .layer(DefaultBodyLimit::max(
                 self.service.config().server.http.max_payload_size,
             ))
