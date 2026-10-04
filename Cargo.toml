@@ -41,7 +41,7 @@ rustc-hash = "2"
 bincode = { version = "2", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 rocksdb = "0.24"
-itertools = "0.14"
+itertools = "0.15"
 rayon = "1"
 
 # jemalloc is Linux-only: tikv-jemalloc-sys fails to build on Windows MSVC,
