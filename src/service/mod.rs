@@ -89,6 +89,22 @@ impl<S: Store> MurrService<S> {
         table.write(batch)
     }
 
+    pub fn compact(&self, table_name: &str) -> Result<(), MurrError> {
+        if !self
+            .tables
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(table_name)
+        {
+            return Err(MurrError::TableNotFound(table_name.to_string()));
+        }
+        // Blocks until done under the store read lock: reads go on, writes wait for the whole compaction.
+        self.store
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .compact(table_name)
+    }
+
     pub fn list_tables(&self) -> HashMap<String, TableSchema> {
         let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
         tables

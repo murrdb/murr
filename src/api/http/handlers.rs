@@ -79,6 +79,17 @@ pub async fn drop_table<S: Store>(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn compact_table<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || svc.compact(&name))
+        .await
+        .map_err(join_to_api_error)??;
+    Ok(StatusCode::OK)
+}
+
 pub async fn fetch<S: Store>(
     State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
