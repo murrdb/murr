@@ -202,6 +202,50 @@ async fn test_drop_table() {
 }
 
 #[tokio::test]
+async fn test_compact_table() {
+    let (_dir, router) = setup().await;
+    let schema = serde_json::to_vec(&table_schema_json()).unwrap();
+
+    let req = Request::put("/api/v1/table/features")
+        .header("content-type", "application/json")
+        .body(Body::from(schema))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    for (keys, scores) in [(["a", "b"], [1.0, 2.0]), (["b", "c"], [20.0, 3.0])] {
+        let req = Request::put("/api/v1/table/features/write")
+            .header("content-type", "application/vnd.apache.arrow.stream")
+            .body(Body::from(arrow_ipc_batch(&keys, &scores)))
+            .unwrap();
+        let (status, _) = body_bytes(router.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let req = Request::post("/api/v1/table/features/compact")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fetch_body = json!({"keys": {"id": ["a", "b", "c"]}, "columns": ["score"]});
+    let req = Request::post("/api/v1/table/features/fetch")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&fetch_body).unwrap()))
+        .unwrap();
+    let (status, json) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"], json!([1.0, 20.0, 3.0]));
+
+    let req = Request::post("/api/v1/table/nope/compact")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(json["error"].is_string());
+}
+
+#[tokio::test]
 async fn test_full_round_trip() {
     let (_dir, router) = setup().await;
 

@@ -165,6 +165,22 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/table/{name}/compact:
+    post:
+      summary: Compact a table
+      operationId: compactTable
+      description: |
+        Runs a full compaction of the table and responds only once it has
+        finished. Reads keep being served meanwhile, writes wait for the
+        compaction to end. Meant to be called after a bulk load.
+      parameters:
+        - $ref: "#/components/parameters/TableName"
+      responses:
+        "200":
+          description: Table compacted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     TableName:

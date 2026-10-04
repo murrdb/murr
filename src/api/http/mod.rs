@@ -40,6 +40,10 @@ impl<S: Store> MurrHttpService<S> {
                 "/api/v1/table/{name}/write",
                 put(handlers::write_table::<S>),
             )
+            .route(
+                "/api/v1/table/{name}/compact",
+                post(handlers::compact_table::<S>),
+            )
             .layer(DefaultBodyLimit::max(
                 self.service.config().server.http.max_payload_size,
             ))
