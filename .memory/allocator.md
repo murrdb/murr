@@ -20,5 +20,5 @@ RocksDB is the dominant memory consumer in the process (block cache, write buffe
 
 ## Implementation notes
 
-- `librocksdb-sys`'s `jemalloc` feature pulls `tikv-jemalloc-sys` v0.6 with `unprefixed_malloc_on_supported_platforms`, which interposes libc malloc on Linux. Combined with `tikv-jemallocator` (also using `tikv-jemalloc-sys` v0.6), Cargo unifies into a single jemalloc build linked by both Rust and the C++ side.
+- `librocksdb-sys`'s `jemalloc` feature pulls `tikv-jemalloc-sys` v0.7 with `unprefixed_malloc_on_supported_platforms`, which interposes libc malloc on Linux. Combined with `tikv-jemallocator` (also using `tikv-jemalloc-sys` v0.7; the two crates have to be bumped together), Cargo unifies into a single jemalloc build linked by both Rust and the C++ side.
 - The Linux-only gating is enforced at the Cargo dependency level rather than via a Cargo feature flag because (a) `tikv-jemalloc-sys`'s own build.rs fails outright on `x86_64-pc-windows-msvc`, so the dep can't even be pulled in on Windows, and (b) librocksdb-sys's build.rs already no-ops the jemalloc C++ build on `android`, `dragonfly`, `musl`, `darwin` — making the feature ineffective on those targets anyway.
