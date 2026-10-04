@@ -24,6 +24,9 @@ impl DType for UInt32 {
     fn size(&self) -> usize {
         4
     }
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(from, DataType::UInt8 | DataType::UInt16)
+    }
 }
 
 impl ArrowCodec for UInt32 {

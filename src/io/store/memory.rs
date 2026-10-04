@@ -89,6 +89,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: false,
                 key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -97,6 +98,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         TableSchema { columns }

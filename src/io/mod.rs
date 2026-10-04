@@ -1,4 +1,5 @@
 pub mod codec;
+pub mod coerce;
 pub mod fs;
 pub mod key;
 pub mod row;

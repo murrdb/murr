@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 
-use arrow::array::{Float32Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, Float32Array, Float64Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
@@ -436,4 +436,53 @@ async fn test_create_with_top_level_key_rejected() {
     let req = json_request(Method::PUT, "/api/v1/table/features", &schema);
     let (status, _) = body_bytes(router, req).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+fn float64_ipc_write(table: &str) -> Request<Body> {
+    let batch = RecordBatch::try_from_iter([
+        ("id", Arc::new(StringArray::from(vec!["a"])) as ArrayRef),
+        ("score", Arc::new(Float64Array::from(vec![0.5]))),
+    ])
+    .unwrap();
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, &batch.schema()).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+
+    Request::put(format!("/api/v1/table/{table}/write"))
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(buf))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_float64_write_needs_relaxed_column() {
+    let (_dir, router) = setup().await;
+
+    let req = json_request(Method::PUT, "/api/v1/table/strict", &table_schema_json());
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = body_bytes(router.clone(), float64_ipc_write("strict")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let mut schema = table_schema_json();
+    schema["columns"]["score"]["strict"] = json!(false);
+    let req = json_request(Method::PUT, "/api/v1/table/relaxed", &schema);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = body_bytes(router.clone(), float64_ipc_write("relaxed")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let req = Request::get("/api/v1/table/relaxed/schema")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"]["strict"], json!(false));
+
+    let fetch = json!({"keys": {"id": ["a"]}, "columns": ["score"]});
+    let req = json_request(Method::POST, "/api/v1/table/relaxed/fetch", &fetch);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"], json!([0.5]));
 }

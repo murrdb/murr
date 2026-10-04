@@ -24,6 +24,17 @@ impl DType for Int64 {
     fn size(&self) -> usize {
         8
     }
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(
+            from,
+            DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+        )
+    }
 }
 
 impl ArrowCodec for Int64 {
