@@ -28,6 +28,9 @@ impl DType for Utf8 {
     fn size(&self) -> usize {
         4
     }
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(from, DataType::LargeUtf8 | DataType::Utf8View)
+    }
 }
 
 impl ArrowCodec for Utf8 {

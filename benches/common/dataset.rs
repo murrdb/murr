@@ -29,6 +29,7 @@ impl Dataset {
                 dtype: DTypeName::Utf8,
                 nullable: false,
                 key: true,
+                strict: true,
             },
         );
         for i in 0..num_cols {
@@ -38,6 +39,7 @@ impl Dataset {
                     dtype: DTypeName::Float32,
                     nullable: false,
                     key: false,
+                    strict: true,
                 },
             );
         }

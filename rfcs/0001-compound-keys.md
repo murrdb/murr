@@ -203,3 +203,9 @@ obvious place for the cast, which is the client binding.
   every key once for compound keys.
 - Should a bare Flight client be able to learn the key columns without the
   HTTP endpoint?
+
+## Updates
+
+- 2026-10-04: the "Strict key types" section no longer holds. The server now
+  widens key columns, `int32` into `int64` for example. See
+  [0002-type-coercion.md](0002-type-coercion.md).

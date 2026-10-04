@@ -52,6 +52,7 @@ async fn setup() -> TestHarness {
                     dtype: DTypeName::Utf8,
                     nullable: false,
                     key: true,
+                    strict: true,
                 },
             ),
             (
@@ -60,6 +61,7 @@ async fn setup() -> TestHarness {
                     dtype: DTypeName::Float32,
                     nullable: true,
                     key: false,
+                    strict: true,
                 },
             ),
         ]),

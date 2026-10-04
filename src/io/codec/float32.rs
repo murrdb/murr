@@ -24,6 +24,16 @@ impl DType for Float32 {
     fn size(&self) -> usize {
         4
     }
+    // f32 holds integers exactly only up to 2^24, so Int32 and wider are out
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(
+            from,
+            DataType::Int8 | DataType::Int16 | DataType::UInt8 | DataType::UInt16
+        )
+    }
+    fn rounds_from(&self, from: &DataType) -> bool {
+        matches!(from, DataType::Float64)
+    }
 }
 
 impl ArrowCodec for Float32 {

@@ -26,10 +26,17 @@ pub struct ColumnSchema {
     pub nullable: bool,
     #[serde(default)]
     pub key: bool,
+    /// A strict column accepts only casts which cannot change a value.
+    #[serde(default = "ColumnSchema::default_strict")]
+    pub strict: bool,
 }
 
 impl ColumnSchema {
     pub fn default_nullable() -> bool {
+        true
+    }
+
+    pub fn default_strict() -> bool {
         true
     }
 }

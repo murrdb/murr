@@ -207,6 +207,13 @@ components:
           description: |
             Marks the column as part of the table key. Key columns must be utf8
             or an integer dtype and must set `nullable: false`.
+        strict:
+          type: boolean
+          default: true
+          description: |
+            A strict column accepts only Arrow types that cast to its dtype with
+            no change of a value, `int32` into `int64` for example. With `false`,
+            a `float32` column also accepts `float64` and rounds the values.
 
     TableSchema:
       type: object

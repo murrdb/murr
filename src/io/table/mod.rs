@@ -7,6 +7,7 @@ use crate::{
     core::{FetchRequest, MurrError, TableSchema},
     io::{
         codec::ColumnDecoder,
+        coerce::Coercion,
         key::KeySchema,
         row::{read::ReadBatchBuilder, write::WriteRow},
         schema::{SegmentColumnSchema, SegmentSchema},
@@ -25,6 +26,7 @@ pub struct Table<S: Store> {
     key: KeySchema,
     segment: SegmentSchema,
     columns: HashMap<String, usize>,
+    coercion: Coercion,
 }
 
 impl<S: Store> Table<S> {
@@ -68,6 +70,7 @@ impl<S: Store> Table<S> {
         let ordered = batch
             .project(&indices)
             .map_err(|e| MurrError::ArrowError(e.to_string()))?;
+        let ordered = self.coercion.apply(&ordered)?;
 
         let keys = self.key.encode(&ordered)?;
 
@@ -109,7 +112,7 @@ impl<S: Store> Table<S> {
                 request.keys.num_columns()
             )));
         }
-        let keys = self.key.encode(&request.keys)?;
+        let keys = self.key.encode(&self.coercion.apply(&request.keys)?)?;
 
         let req_cols: Vec<&SegmentColumnSchema> = request
             .columns
@@ -137,6 +140,7 @@ impl<S: Store> Table<S> {
             .enumerate()
             .map(|(i, c)| (c.name.clone(), i))
             .collect();
+        let coercion = Coercion::new(&table);
         Ok(Self {
             store,
             name,
@@ -144,6 +148,7 @@ impl<S: Store> Table<S> {
             key,
             segment,
             columns,
+            coercion,
         })
     }
 }
@@ -153,8 +158,8 @@ mod tests {
     use std::sync::{Arc, RwLock};
 
     use arrow::array::{
-        ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, RecordBatch,
-        StringArray, UInt8Array, UInt64Array,
+        ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, LargeStringArray,
+        RecordBatch, StringArray, StringViewArray, UInt8Array, UInt32Array, UInt64Array,
     };
     use arrow::datatypes::{DataType, Field, Schema};
     use indexmap::IndexMap;
@@ -176,6 +181,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: false,
                 key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -184,6 +190,7 @@ mod tests {
                 dtype: DTypeName::Float32,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         TableSchema { columns }
@@ -265,6 +272,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: false,
                 key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -273,6 +281,7 @@ mod tests {
                 dtype: DTypeName::Float32,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         columns.insert(
@@ -281,6 +290,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         let schema = TableSchema { columns };
@@ -401,6 +411,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: false,
                 key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -409,6 +420,7 @@ mod tests {
                 dtype: DTypeName::Float32,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         columns.insert(
@@ -417,6 +429,7 @@ mod tests {
                 dtype: DTypeName::Float64,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         columns.insert(
@@ -425,6 +438,7 @@ mod tests {
                 dtype: DTypeName::Utf8,
                 nullable: true,
                 key: false,
+                strict: true,
             },
         );
         let schema = TableSchema { columns };
@@ -506,6 +520,7 @@ mod tests {
             dtype,
             nullable,
             key,
+            strict: true,
         }
     }
 
@@ -600,6 +615,12 @@ mod tests {
         ],
         vec![Some(1.0), Some(0.0), None],
     )]
+    // zigzag gives 5 different bytes as UInt32 and as Int64, so both sides must be cast first
+    #[case::widened_key(
+        vec![("id", DTypeName::Int64, array::<UInt32Array, _>(vec![5, 7]))],
+        vec![("id", array::<Int32Array, _>(vec![7, 5, 6]))],
+        vec![Some(1.0), Some(0.0), None],
+    )]
     fn key_roundtrip(
         #[case] keys: Vec<(&str, DTypeName, ArrayRef)>,
         #[case] lookup: Vec<(&str, ArrayRef)>,
@@ -613,7 +634,7 @@ mod tests {
     #[rstest]
     #[case::wrong_type(vec![
         ("user", array::<StringArray, _>(vec!["u1"])),
-        ("item", array::<Int32Array, _>(vec![1])),
+        ("item", array::<StringArray, _>(vec!["1"])),
     ])]
     #[case::null_key(vec![
         ("user", array::<StringArray, _>(vec![None::<&str>])),
@@ -632,5 +653,93 @@ mod tests {
         ]);
         let err = table.read(&request(lookup, &["score"])).unwrap_err();
         assert!(matches!(err, MurrError::TableError(_)));
+    }
+
+    /// Writes `values` into column `v` of a new table and reads them back.
+    fn write_and_read(
+        dtype: DTypeName,
+        strict: bool,
+        values: ArrayRef,
+    ) -> Result<ArrayRef, MurrError> {
+        let columns = IndexMap::from([
+            ("id".to_string(), column(DTypeName::Utf8, false, true)),
+            (
+                "v".to_string(),
+                ColumnSchema {
+                    strict,
+                    ..column(dtype, true, false)
+                },
+            ),
+        ]);
+        let ids: Vec<String> = (0..values.len()).map(|i| i.to_string()).collect();
+        let ids = array::<StringArray, _>(ids);
+
+        let table = Table::create(store(), "t", TableSchema { columns })?;
+        table.write(&RecordBatch::try_from_iter([("id", ids.clone()), ("v", values)]).unwrap())?;
+        let out = table.read(&request(vec![("id", ids)], &["v"]))?;
+        Ok(out.column(0).clone())
+    }
+
+    // `stored` is what reads back, None for a rejected write
+    #[rstest]
+    #[case::int32_to_int64(
+        array::<Int32Array, _>(vec![-1]), DTypeName::Int64, true,
+        Some(array::<Int64Array, _>(vec![-1])),
+    )]
+    #[case::uint8_to_int16(
+        array::<UInt8Array, _>(vec![255]), DTypeName::Int16, true,
+        Some(array::<Int16Array, _>(vec![255])),
+    )]
+    #[case::float32_to_float64(
+        array::<Float32Array, _>(vec![1.5]), DTypeName::Float64, true,
+        Some(array::<Float64Array, _>(vec![1.5])),
+    )]
+    #[case::large_utf8(
+        array::<LargeStringArray, _>(vec!["x"]), DTypeName::Utf8, true,
+        Some(array::<StringArray, _>(vec!["x"])),
+    )]
+    #[case::utf8_view(
+        array::<StringViewArray, _>(vec!["x"]), DTypeName::Utf8, true,
+        Some(array::<StringArray, _>(vec!["x"])),
+    )]
+    #[case::float64_to_strict_float32(
+        array::<Float64Array, _>(vec![0.1]), DTypeName::Float32, true,
+        None,
+    )]
+    // a relaxed column rounds, and a value out of the f32 range becomes infinity
+    #[case::float64_to_relaxed_float32(
+        array::<Float64Array, _>(vec![0.1, 1e300]), DTypeName::Float32, false,
+        Some(array::<Float32Array, _>(vec![0.1, f32::INFINITY])),
+    )]
+    #[case::int64_to_relaxed_int32(
+        array::<Int64Array, _>(vec![1]), DTypeName::Int32, false,
+        None,
+    )]
+    #[case::int16_to_float32(
+        array::<Int16Array, _>(vec![i16::MIN]), DTypeName::Float32, true,
+        Some(array::<Float32Array, _>(vec![-32768.0])),
+    )]
+    // f32 is exact only up to 2^24
+    #[case::int32_to_relaxed_float32(
+        array::<Int32Array, _>(vec![1]), DTypeName::Float32, false,
+        None,
+    )]
+    #[case::utf8_to_int64(
+        array::<StringArray, _>(vec!["1"]), DTypeName::Int64, true,
+        None,
+    )]
+    fn write_casts_to_schema_dtype(
+        #[case] values: ArrayRef,
+        #[case] dtype: DTypeName,
+        #[case] strict: bool,
+        #[case] stored: Option<ArrayRef>,
+    ) {
+        match write_and_read(dtype, strict, values) {
+            Ok(out) => assert_eq!(Some(out), stored),
+            Err(err) => {
+                assert!(matches!(err, MurrError::TableError(_)));
+                assert!(stored.is_none());
+            }
+        }
     }
 }

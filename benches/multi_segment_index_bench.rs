@@ -31,6 +31,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
             dtype: DTypeName::Utf8,
             nullable: false,
             key: true,
+            strict: true,
         },
     );
     for name in &col_names {
@@ -40,6 +41,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
                 dtype: DTypeName::Float32,
                 nullable: false,
                 key: false,
+                strict: true,
             },
         );
     }
