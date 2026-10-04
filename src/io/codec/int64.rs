@@ -1,5 +1,5 @@
 use arrow::{
-    array::{Array, ArrayRef},
+    array::{Array, ArrayRef, BinaryArray},
     datatypes::{DataType, Int64Type},
 };
 use serde_json::Value;
@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::{
     core::{DType, DTypeName, MurrError},
     io::{
-        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, KeyEncoder, primitive},
         schema::SegmentColumnSchema,
     },
 };
@@ -36,6 +36,12 @@ impl ArrowCodec for Int64 {
         arr: &dyn Array,
     ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
         Ok(Box::new(primitive::Decoder::<Int64Type>::new(col, arr)?))
+    }
+}
+
+impl KeyEncoder for Int64 {
+    fn encode_keys(&self, arr: &dyn Array) -> Result<BinaryArray, MurrError> {
+        primitive::encode_keys::<Int64Type>(arr)
     }
 }
 

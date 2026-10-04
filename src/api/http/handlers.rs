@@ -1,17 +1,18 @@
-use std::io::Cursor;
 use std::sync::{Arc, LazyLock};
 
-use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
+use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use serde::Deserialize;
+use mime::Mime;
 
-use crate::core::{MurrError, TableSchema};
+use crate::api::batch::{IpcStream, ParquetFile};
+use crate::api::fetch::{IpcFetchRequest, JsonFetchRequest};
+use crate::core::{FetchRequest, MurrError, TableSchema};
 use crate::io::store::Store;
 use crate::service::MurrService;
 
@@ -78,28 +79,35 @@ pub async fn drop_table<S: Store>(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize)]
-pub struct FetchRequest {
-    pub keys: Vec<String>,
-    pub columns: Vec<String>,
-}
-
 pub async fn fetch<S: Store>(
     State(service): State<Arc<MurrService<S>>>,
     Path(name): Path<String>,
     headers: HeaderMap,
-    Json(req): Json<FetchRequest>,
+    body: Bytes,
 ) -> Result<Response, ApiError> {
     let wants_arrow = headers
-        .get("accept")
+        .get(ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains(ARROW_IPC_MIME));
+    let content_type = ContentType::try_from(&headers)?;
 
     let svc = service.clone();
     tokio::task::spawn_blocking(move || -> Result<Response, ApiError> {
-        let keys: Vec<&str> = req.keys.iter().map(String::as_str).collect();
-        let columns: Vec<&str> = req.columns.iter().map(String::as_str).collect();
-        let batch = svc.read(&name, &keys, &columns)?;
+        let request = match content_type {
+            ContentType::ArrowIpc => FetchRequest::try_from(IpcFetchRequest(&body))?,
+            ContentType::Json => {
+                let json: JsonFetchRequest = serde_json::from_slice(&body)
+                    .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
+                let schema = svc.get_schema(&name)?;
+                FetchRequest::try_from((json, &schema))?
+            }
+            ContentType::Parquet => {
+                return Err(ApiError(MurrError::TableError(
+                    "fetch requests cannot be sent as Parquet".into(),
+                )));
+            }
+        };
+        let batch = svc.read(&name, &request)?;
 
         if wants_arrow {
             let mut buf = Vec::new();
@@ -109,7 +117,7 @@ pub async fn fetch<S: Store>(
                 writer.write(&batch).map_err(|e| ApiError(e.into()))?;
                 writer.finish().map_err(|e| ApiError(e.into()))?;
             }
-            Ok(([(axum::http::header::CONTENT_TYPE, ARROW_IPC_MIME)], buf).into_response())
+            Ok(([(CONTENT_TYPE, ARROW_IPC_MIME)], buf).into_response())
         } else {
             let FetchResponse(json) = FetchResponse::try_from(&batch).map_err(ApiError)?;
             Ok(Json(json).into_response())
@@ -125,36 +133,19 @@ pub async fn write_table<S: Store>(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let content_type = ContentType::try_from(&headers)?;
 
     let svc = service.clone();
     tokio::task::spawn_blocking(move || -> Result<StatusCode, ApiError> {
-        let batch = if content_type.contains(ARROW_IPC_MIME) {
-            let cursor = Cursor::new(&body);
-            let mut reader = StreamReader::try_new(cursor, None).map_err(|e| ApiError(e.into()))?;
-            reader
-                .next()
-                .ok_or_else(|| ApiError(MurrError::TableError("empty Arrow IPC stream".into())))?
-                .map_err(|e| ApiError(e.into()))?
-        } else if content_type.contains(PARQUET_MIME) {
-            let reader = ParquetRecordBatchReaderBuilder::try_new(body)
-                .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?
-                .build()
-                .map_err(|e| ApiError(MurrError::TableError(format!("invalid Parquet: {e}"))))?;
-            let batches: Vec<_> = reader
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| ApiError(e.into()))?;
-            arrow::compute::concat_batches(&batches[0].schema(), &batches)
-                .map_err(|e| ApiError(e.into()))?
-        } else {
-            let write: WriteRequest = serde_json::from_slice(&body)
-                .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
-            let schema = svc.get_schema(&name)?;
-            write.into_record_batch(&schema).map_err(ApiError)?
+        let batch = match content_type {
+            ContentType::ArrowIpc => RecordBatch::try_from(IpcStream(&body))?,
+            ContentType::Parquet => RecordBatch::try_from(ParquetFile(body))?,
+            ContentType::Json => {
+                let write: WriteRequest = serde_json::from_slice(&body)
+                    .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
+                let schema = svc.get_schema(&name)?;
+                write.into_record_batch(&schema)?
+            }
         };
 
         svc.write(&name, &batch)?;
@@ -162,6 +153,35 @@ pub async fn write_table<S: Store>(
     })
     .await
     .map_err(join_to_api_error)?
+}
+
+enum ContentType {
+    Json,
+    ArrowIpc,
+    Parquet,
+}
+
+impl TryFrom<&HeaderMap> for ContentType {
+    type Error = ApiError;
+
+    fn try_from(headers: &HeaderMap) -> Result<Self, ApiError> {
+        let unsupported = |value: &str| {
+            ApiError(MurrError::TableError(format!(
+                "unsupported content type '{value}'"
+            )))
+        };
+        let value = headers
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let mime: Mime = value.parse().map_err(|_| unsupported(value))?;
+        match mime.essence_str() {
+            ARROW_IPC_MIME => Ok(ContentType::ArrowIpc),
+            PARQUET_MIME => Ok(ContentType::Parquet),
+            json if json == mime::APPLICATION_JSON.essence_str() => Ok(ContentType::Json),
+            _ => Err(unsupported(value)),
+        }
+    }
 }
 
 fn join_to_api_error(e: tokio::task::JoinError) -> ApiError {

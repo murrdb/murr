@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayRef, StringArray, StringBuilder},
+    array::{Array, ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder},
     datatypes::DataType,
 };
+use integer_encoding::VarInt;
 use serde_json::Value;
 
 use crate::{
     core::{DType, DTypeName, MurrError},
     io::{
-        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, downcast},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, KeyEncoder, downcast},
         row::{read::ReadRow, write::WriteRow},
         schema::SegmentColumnSchema,
     },
@@ -47,6 +48,23 @@ impl ArrowCodec for Utf8 {
             column: col,
             array: typed.clone(),
         }))
+    }
+}
+
+impl KeyEncoder for Utf8 {
+    fn encode_keys(&self, arr: &dyn Array) -> Result<BinaryArray, MurrError> {
+        let typed = downcast::<StringArray>(arr, "Utf8")?;
+        let mut builder = BinaryBuilder::with_capacity(typed.len(), typed.value_data().len());
+        let mut len = [0u8; 10];
+        for i in 0..typed.len() {
+            let value = typed.value(i).as_bytes();
+            // length prefix keeps ("ab", "c") and ("a", "bc") apart once components are concatenated
+            let size = value.len().encode_var(&mut len);
+            builder.write_all(&len[..size])?;
+            builder.write_all(value)?;
+            builder.append_value([]);
+        }
+        Ok(builder.finish())
     }
 }
 
@@ -159,7 +177,7 @@ mod tests {
     #[test]
     fn encoder_rejects_invalid_utf8() {
         let (schema, c) = single_col();
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         w.write_dynamic(&c, &[0xFF, 0xFE, 0xFD]);
         let row = ReadRow::new(&schema, &w.bytes);
 

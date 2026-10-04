@@ -4,16 +4,17 @@ use std::{
 };
 
 use crate::{
-    core::{DTypeName, MurrError, TableSchema},
+    core::{FetchRequest, MurrError, TableSchema},
     io::{
         codec::ColumnDecoder,
+        key::KeySchema,
         row::{read::ReadBatchBuilder, write::WriteRow},
         schema::{SegmentColumnSchema, SegmentSchema},
-        store::Store,
+        store::{KeyValue, Store},
     },
 };
 use arrow::{
-    array::{Array, RecordBatch, StringArray},
+    array::{Array, RecordBatch},
     datatypes::Schema,
 };
 
@@ -21,6 +22,7 @@ pub struct Table<S: Store> {
     store: Arc<RwLock<S>>,
     name: String,
     table: TableSchema,
+    key: KeySchema,
     segment: SegmentSchema,
     columns: HashMap<String, usize>,
 }
@@ -67,19 +69,7 @@ impl<S: Store> Table<S> {
             .project(&indices)
             .map_err(|e| MurrError::ArrowError(e.to_string()))?;
 
-        let key_idx = canonical
-            .index_of(&self.table.key)
-            .map_err(|e| MurrError::ArrowError(e.to_string()))?;
-        let key_array = ordered
-            .column(key_idx)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                MurrError::SegmentError(format!("key column '{}' must be Utf8", self.table.key))
-            })?;
-        if key_array.null_count() > 0 {
-            return Err(MurrError::SegmentError("null in key column".into()));
-        }
+        let keys = self.key.encode(&ordered)?;
 
         let mut decoders: Vec<Box<dyn ColumnDecoder>> =
             Vec::with_capacity(self.segment.columns.len());
@@ -100,43 +90,46 @@ impl<S: Store> Table<S> {
         store.write(
             &self.name,
             (0..n).into_iter().map(|i| {
-                let mut row = WriteRow::new(&self.segment, key_array.value(i));
+                let mut row = WriteRow::new(&self.segment);
                 for d in &decoders {
                     d.write_to_row(i, &mut row);
                 }
-                row.into()
+                KeyValue::new(keys.value(i), row.bytes)
             }),
         )?;
 
         Ok(())
     }
 
-    pub fn read(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError> {
-        let req_cols: Vec<&SegmentColumnSchema> = columns
+    pub fn read(&self, request: &FetchRequest) -> Result<RecordBatch, MurrError> {
+        if request.keys.num_columns() != self.key.num_columns() {
+            return Err(MurrError::TableError(format!(
+                "expected {} key columns, got {}",
+                self.key.num_columns(),
+                request.keys.num_columns()
+            )));
+        }
+        let keys = self.key.encode(&request.keys)?;
+
+        let req_cols: Vec<&SegmentColumnSchema> = request
+            .columns
             .iter()
             .map(|name| {
                 self.columns
-                    .get(*name)
+                    .get(name)
                     .map(|idx| &self.segment.columns[*idx])
                     .ok_or_else(|| MurrError::SegmentError(format!("column '{name}' not found")))
             })
             .collect::<Result<_, _>>()?;
 
         let builder = ReadBatchBuilder::new(&self.segment, req_cols, keys.len());
-        let key_bytes: Vec<&[u8]> = keys.iter().map(|s| s.as_bytes()).collect();
+        let key_bytes: Vec<&[u8]> = (0..keys.len()).map(|i| keys.value(i)).collect();
         let store = self.store.read().expect("store lock poisoned");
         store.read(&self.name, &key_bytes, builder)
     }
 
     fn build(store: Arc<RwLock<S>>, name: String, table: TableSchema) -> Result<Self, MurrError> {
-        let key_col = table.columns.get(&table.key).ok_or_else(|| {
-            MurrError::TableError(format!("key column '{}' not in schema", table.key))
-        })?;
-        if key_col.dtype != DTypeName::Utf8 {
-            return Err(MurrError::TableError(
-                "io currently supports Utf8 keys only".into(),
-            ));
-        }
+        let key = KeySchema::new(&table)?;
         let segment = SegmentSchema::from(&table);
         let columns = segment
             .columns
@@ -148,6 +141,7 @@ impl<S: Store> Table<S> {
             store,
             name,
             table,
+            key,
             segment,
             columns,
         })
@@ -158,9 +152,13 @@ impl<S: Store> Table<S> {
 mod tests {
     use std::sync::{Arc, RwLock};
 
-    use arrow::array::{Float32Array, Float64Array, RecordBatch, StringArray};
+    use arrow::array::{
+        ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, RecordBatch,
+        StringArray, UInt8Array, UInt64Array,
+    };
     use arrow::datatypes::{DataType, Field, Schema};
     use indexmap::IndexMap;
+    use rstest::rstest;
 
     use super::*;
     use crate::core::{ColumnSchema, DTypeName, TableSchema};
@@ -177,6 +175,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -184,12 +183,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
             },
         );
-        TableSchema {
-            key: "id".into(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     fn batch_id_score(ids: &[Option<&str>], scores: &[Option<f32>]) -> RecordBatch {
@@ -205,6 +202,20 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    fn request(keys: Vec<(&str, ArrayRef)>, columns: &[&str]) -> FetchRequest {
+        FetchRequest {
+            keys: RecordBatch::try_from_iter(keys).unwrap(),
+            columns: columns.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    fn fetch(ids: &[&str], columns: &[&str]) -> FetchRequest {
+        request(
+            vec![("id", Arc::new(StringArray::from(ids.to_vec())))],
+            columns,
+        )
     }
 
     fn project_f32(batch: &RecordBatch, name: &str) -> Float32Array {
@@ -237,7 +248,7 @@ mod tests {
             ))
             .unwrap();
 
-        let out = table.read(&["a", "b", "c"], &["score"]).unwrap();
+        let out = table.read(&fetch(&["a", "b", "c"], &["score"])).unwrap();
         assert_eq!(out.num_rows(), 3);
         let scores = project_f32(&out, "score");
         assert_eq!(scores.value(0), 1.0);
@@ -253,6 +264,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -260,6 +272,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
             },
         );
         columns.insert(
@@ -267,12 +280,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
             },
         );
-        let schema = TableSchema {
-            key: "id".into(),
-            columns,
-        };
+        let schema = TableSchema { columns };
 
         let arrow_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -292,11 +303,15 @@ mod tests {
         let table = Table::create(store(), "t", schema).unwrap();
         table.write(&batch).unwrap();
 
-        let out = table.read(&["a", "b"], &["label", "score"]).unwrap();
+        let out = table
+            .read(&fetch(&["a", "b"], &["label", "score"]))
+            .unwrap();
         assert_eq!(out.schema().field(0).name(), "label");
         assert_eq!(out.schema().field(1).name(), "score");
 
-        let out = table.read(&["a", "b"], &["score", "label"]).unwrap();
+        let out = table
+            .read(&fetch(&["a", "b"], &["score", "label"]))
+            .unwrap();
         assert_eq!(out.schema().field(0).name(), "score");
         assert_eq!(out.schema().field(1).name(), "label");
     }
@@ -307,7 +322,7 @@ mod tests {
         table
             .write(&batch_id_score(&[Some("a")], &[Some(1.5)]))
             .unwrap();
-        let out = table.read(&["a"], &["score"]).unwrap();
+        let out = table.read(&fetch(&["a"], &["score"])).unwrap();
         assert_eq!(out.num_columns(), 1);
         assert_eq!(out.schema().field(0).name(), "score");
         assert_eq!(project_f32(&out, "score").value(0), 1.5);
@@ -331,7 +346,7 @@ mod tests {
         let table = Table::create(store(), "t", schema_id_score()).unwrap();
         table.write(&batch).unwrap();
 
-        let out = table.read(&["a"], &["score"]).unwrap();
+        let out = table.read(&fetch(&["a"], &["score"])).unwrap();
         assert_eq!(project_f32(&out, "score").value(0), 7.0);
     }
 
@@ -342,7 +357,7 @@ mod tests {
             .write(&batch_id_score(&[Some("a")], &[Some(1.0)]))
             .unwrap();
 
-        let out = table.read(&["a", "missing"], &["score"]).unwrap();
+        let out = table.read(&fetch(&["a", "missing"], &["score"])).unwrap();
         let scores = project_f32(&out, "score");
         assert_eq!(scores.value(0), 1.0);
         assert!(scores.is_null(1));
@@ -354,7 +369,7 @@ mod tests {
         table
             .write(&batch_id_score(&[Some("a")], &[Some(1.0)]))
             .unwrap();
-        let err = table.read(&["a"], &["nope"]).unwrap_err();
+        let err = table.read(&fetch(&["a"], &["nope"])).unwrap_err();
         assert!(matches!(err, MurrError::SegmentError(_)));
     }
 
@@ -364,7 +379,7 @@ mod tests {
         table
             .write(&batch_id_score(&[Some("a")], &[Some(1.0)]))
             .unwrap();
-        let err = table.read(&["a"], &["id"]).unwrap_err();
+        let err = table.read(&fetch(&["a"], &["id"])).unwrap_err();
         assert!(matches!(err, MurrError::SegmentError(_)));
     }
 
@@ -374,7 +389,7 @@ mod tests {
         let err = table
             .write(&batch_id_score(&[None], &[Some(1.0)]))
             .unwrap_err();
-        assert!(matches!(err, MurrError::SegmentError(_)));
+        assert!(matches!(err, MurrError::TableError(_)));
     }
 
     #[test]
@@ -385,6 +400,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -392,6 +408,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
             },
         );
         columns.insert(
@@ -399,6 +416,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float64,
                 nullable: true,
+                key: false,
             },
         );
         columns.insert(
@@ -406,12 +424,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
             },
         );
-        let schema = TableSchema {
-            key: "id".into(),
-            columns,
-        };
+        let schema = TableSchema { columns };
 
         let arrow_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -434,7 +450,7 @@ mod tests {
         table.write(&batch).unwrap();
 
         let out = table
-            .read(&["a", "b", "c"], &["f32", "f64", "label"])
+            .read(&fetch(&["a", "b", "c"], &["f32", "f64", "label"]))
             .unwrap();
         let f32 = out
             .column_by_name("f32")
@@ -471,7 +487,7 @@ mod tests {
                 .unwrap();
         }
         let table = Table::open(s.clone(), "t", schema_id_score()).unwrap();
-        let out = table.read(&["a"], &["score"]).unwrap();
+        let out = table.read(&fetch(&["a"], &["score"])).unwrap();
         assert_eq!(project_f32(&out, "score").value(0), 9.0);
     }
 
@@ -485,23 +501,136 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn non_utf8_key_rejected() {
-        let mut columns = IndexMap::new();
-        columns.insert(
-            "id".into(),
-            ColumnSchema {
-                dtype: DTypeName::Float32,
-                nullable: false,
-            },
-        );
+    fn column(dtype: DTypeName, nullable: bool, key: bool) -> ColumnSchema {
+        ColumnSchema {
+            dtype,
+            nullable,
+            key,
+        }
+    }
+
+    fn array<A: Array + From<Vec<T>> + 'static, T>(values: Vec<T>) -> ArrayRef {
+        Arc::new(A::from(values))
+    }
+
+    #[rstest]
+    #[case::float_key(column(DTypeName::Float32, false, true))]
+    #[case::nullable_key(column(DTypeName::Utf8, true, true))]
+    #[case::no_key(column(DTypeName::Utf8, false, false))]
+    fn invalid_key_schema_rejected(#[case] id: ColumnSchema) {
         let schema = TableSchema {
-            key: "id".into(),
-            columns,
+            columns: IndexMap::from([("id".to_string(), id)]),
         };
         assert!(matches!(
             Table::create(store(), "t", schema),
             Err(MurrError::TableError(_))
         ));
+    }
+
+    /// Creates a table keyed by `keys` (name, dtype, values) with row i scored as i.
+    fn keyed_table(keys: Vec<(&str, DTypeName, ArrayRef)>) -> Table<MemoryStore> {
+        let rows = keys[0].2.len();
+        let mut columns = IndexMap::new();
+        let mut arrays = Vec::new();
+        for (name, dtype, values) in keys {
+            columns.insert(name.to_string(), column(dtype, false, true));
+            arrays.push((name, values));
+        }
+        columns.insert("score".to_string(), column(DTypeName::Float32, true, false));
+        let scores: Vec<f32> = (0..rows).map(|i| i as f32).collect();
+        arrays.push(("score", array::<Float32Array, _>(scores)));
+
+        let table = Table::create(store(), "t", TableSchema { columns }).unwrap();
+        table
+            .write(&RecordBatch::try_from_iter(arrays).unwrap())
+            .unwrap();
+        table
+    }
+
+    #[rstest]
+    #[case::single_int(
+        vec![("id", DTypeName::Int32, array::<Int32Array, _>(vec![-1, 0, i32::MAX]))],
+        vec![("id", array::<Int32Array, _>(vec![i32::MAX, 5, -1]))],
+        vec![Some(2.0), None, Some(0.0)],
+    )]
+    #[case::utf8_int(
+        vec![
+            ("user", DTypeName::Utf8, array::<StringArray, _>(vec!["u1", "u1", "u2"])),
+            ("item", DTypeName::Int64, array::<Int64Array, _>(vec![1, -2, 1])),
+        ],
+        vec![
+            ("user", array::<StringArray, _>(vec!["u2", "u1", "u2"])),
+            ("item", array::<Int64Array, _>(vec![1, -2, -2])),
+        ],
+        vec![Some(2.0), Some(1.0), None],
+    )]
+    #[case::int_int(
+        vec![
+            ("shard", DTypeName::UInt8, array::<UInt8Array, _>(vec![1, 1, 2])),
+            ("id", DTypeName::UInt64, array::<UInt64Array, _>(vec![0, u64::MAX, 0])),
+        ],
+        vec![
+            ("shard", array::<UInt8Array, _>(vec![2, 1, 2])),
+            ("id", array::<UInt64Array, _>(vec![0, u64::MAX, u64::MAX])),
+        ],
+        vec![Some(2.0), Some(1.0), None],
+    )]
+    // ("ab", "c") and ("a", "bc") concatenate to the same bytes unless components are delimited
+    #[case::utf8_utf8_boundary(
+        vec![
+            ("a", DTypeName::Utf8, array::<StringArray, _>(vec!["ab"])),
+            ("b", DTypeName::Utf8, array::<StringArray, _>(vec!["c"])),
+        ],
+        vec![
+            ("a", array::<StringArray, _>(vec!["a", "ab"])),
+            ("b", array::<StringArray, _>(vec!["bc", "c"])),
+        ],
+        vec![None, Some(0.0)],
+    )]
+    #[case::three_components(
+        vec![
+            ("a", DTypeName::Utf8, array::<StringArray, _>(vec!["x", "x"])),
+            ("b", DTypeName::Int16, array::<Int16Array, _>(vec![7, 7])),
+            ("c", DTypeName::Utf8, array::<StringArray, _>(vec!["", "y"])),
+        ],
+        vec![
+            ("a", array::<StringArray, _>(vec!["x", "x", "x"])),
+            ("b", array::<Int16Array, _>(vec![7, 7, 8])),
+            ("c", array::<StringArray, _>(vec!["y", "", ""])),
+        ],
+        vec![Some(1.0), Some(0.0), None],
+    )]
+    fn key_roundtrip(
+        #[case] keys: Vec<(&str, DTypeName, ArrayRef)>,
+        #[case] lookup: Vec<(&str, ArrayRef)>,
+        #[case] expected: Vec<Option<f32>>,
+    ) {
+        let table = keyed_table(keys);
+        let out = table.read(&request(lookup, &["score"])).unwrap();
+        assert_eq!(project_f32(&out, "score"), Float32Array::from(expected));
+    }
+
+    #[rstest]
+    #[case::wrong_type(vec![
+        ("user", array::<StringArray, _>(vec!["u1"])),
+        ("item", array::<Int32Array, _>(vec![1])),
+    ])]
+    #[case::null_key(vec![
+        ("user", array::<StringArray, _>(vec![None::<&str>])),
+        ("item", array::<Int64Array, _>(vec![1])),
+    ])]
+    #[case::missing_column(vec![("user", array::<StringArray, _>(vec!["u1"]))])]
+    #[case::extra_column(vec![
+        ("user", array::<StringArray, _>(vec!["u1"])),
+        ("item", array::<Int64Array, _>(vec![1])),
+        ("score", array::<Float32Array, _>(vec![1.0])),
+    ])]
+    fn read_rejects_invalid_keys(#[case] lookup: Vec<(&str, ArrayRef)>) {
+        let table = keyed_table(vec![
+            ("user", DTypeName::Utf8, array::<StringArray, _>(vec!["u1"])),
+            ("item", DTypeName::Int64, array::<Int64Array, _>(vec![1])),
+        ]);
+        let err = table.read(&request(lookup, &["score"])).unwrap_err();
+        assert!(matches!(err, MurrError::TableError(_)));
     }
 }

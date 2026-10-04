@@ -1468,6 +1468,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "integer-encoding"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c00403deb17c3221a1fe4fb571b9ed0370b3dcd116553c77fa294a3d918699"
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,9 +1816,11 @@ dependencies = [
  "hashbrown 0.17.1",
  "http-body-util",
  "indexmap",
+ "integer-encoding",
  "itertools 0.15.0",
  "log",
  "memmap2",
+ "mime",
  "murr",
  "parquet",
  "pprof",

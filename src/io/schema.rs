@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use arrow::datatypes::{DataType, Field, Schema};
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +34,7 @@ impl From<&TableSchema> for SegmentSchema {
         let columns: Vec<SegmentColumnSchema> = schema
             .columns
             .iter()
-            .filter(|(name, _)| *name != &schema.key)
+            .filter(|(_, col)| !col.key)
             .enumerate()
             .map(|(i, (name, col))| {
                 let column = SegmentColumnSchema {
@@ -62,8 +60,7 @@ impl From<&TableSchema> for Schema {
                 Field::new(name, config.dtype.codec().arrow_dtype(), config.nullable)
             })
             .collect();
-        let metadata = HashMap::from([("key".to_string(), schema.key.clone())]);
-        Schema::new_with_metadata(fields, metadata)
+        Schema::new(fields)
     }
 }
 

@@ -24,6 +24,8 @@ pub struct ColumnSchema {
     pub dtype: DTypeName,
     #[serde(default = "ColumnSchema::default_nullable")]
     pub nullable: bool,
+    #[serde(default)]
+    pub key: bool,
 }
 
 impl ColumnSchema {
@@ -33,7 +35,14 @@ impl ColumnSchema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct TableSchema {
-    pub key: String,
     pub columns: IndexMap<String, ColumnSchema>,
+}
+
+impl TableSchema {
+    /// Key columns in schema order, which is also the order of components in the encoded key.
+    pub fn key_columns(&self) -> impl Iterator<Item = (&String, &ColumnSchema)> {
+        self.columns.iter().filter(|(_, col)| col.key)
+    }
 }

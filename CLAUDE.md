@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Note to agents like Claude Code
 
-The project uses .memory directory as an append-only log of architectural decisions made while developing:
-* before doing planning, read the .memory directory for relevant topics discussed/implemented in the past
-* when a plan has an architectural decision which can be important context in the future, always include a point to append the summary and reasoning (why are we making it and why not something else) for the change.
-* update .memory only for important bits of information. 
-* change-remove obsolete sections if the impl drifts too far from the original design.
+Architectural decisions are recorded as RFCs in the `rfcs/` directory (`NNNN-short-name.md`), see `rfcs/0001-compound-keys.md` for the format. The older `.memory` directory holds notes from before the switch and may be stale:
+* before doing planning, read `rfcs/` (and `.memory` for older topics) for relevant decisions made in the past
+* when a plan has an architectural decision which can be important context in the future, always include a point to write a short RFC with the summary and reasoning (why are we making it and why not something else).
+* write RFCs only for important changes, and keep them short.
+* update an RFC if the impl drifts too far from the original design.
 
 ### Tests
 
@@ -74,32 +74,37 @@ Python bindings live in a separate repo: [shuttie/murr-python](https://github.co
 - `store/rocksdb/` — `RocksDBStore` with two SST profiles: `open_plain` (PlainTable + mmap, in-memory hash point lookups) and `open_block` (BlockBasedTable, on-disk index + optional bloom). One DB, one CF per table.
 - `store/memory.rs` — `MemoryStore` for tests
 - `schema.rs` — `SegmentSchema` (non-key columns + offsets/bitset indices), derived from `TableSchema`
-- `row/{read,write}.rs` — `ReadRow` / `WriteRow` byte-level row codec: `[null_bitset][static columns][dynamic payloads]`
-- `column/` — `ColumnEncoder` / `ColumnDecoder` traits with `encoder_for(col, n)` / `decoder_for(col, arr)` factories; `PrimitiveEncoder<T>` (Float32/Float64) and `Utf8Encoder`
-- `table/mod.rs` — `Table<S: Store>` glue between Arrow `RecordBatch` and the byte-level row format; `read(keys, columns)` and `write(batch)` both take `&self`
+- `key.rs` — `KeySchema` (key columns of a table, encodes a batch into key bytes) and `KeyBatch` (encoded key columns, concatenated row-wise into final keys)
+- `row/{read,write}.rs` — `ReadRow` / `WriteRow` byte-level row codec: `[null_bitset][static columns][dynamic payloads]`; knows nothing about keys
+- `codec/` — one unit struct per dtype implementing `ArrowCodec` (`make_encoder` / `make_decoder` for row values), `JsonCodec`, and for utf8/int dtypes `KeyEncoder` (whole key column → `BinaryArray`); generic impls in `primitive.rs`
+- `table/mod.rs` — `Table<S: Store>` glue between Arrow `RecordBatch` and the byte-level row format; `read(&FetchRequest)` and `write(batch)` both take `&self`
 - `fs/` — experimental S3/local Filesystem trait stub (unused today)
 
 **`service/`** — High-level service wrapping the storage layer
 - `MurrService` — Owns `Config`, holds `tokio::sync::RwLock<HashMap<String, Table<RocksDBStore>>>` and a shared `Arc<std::sync::RwLock<RocksDBStore>>`; constructor takes `Config` (not a path)
-- `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, keys, columns)` → `drop_table(table_name)` flow
+- `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, &FetchRequest)` → `drop_table(table_name)` flow
 - `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
 - Startup rehydration: walks `store.manifest().tables` and opens a `Table` per entry; missing manifest entries → CF is invisible to the service
 
+**`api/`** — shared wire adaptors, all as `TryFrom` impls
+- `batch.rs` — payload → `RecordBatch`: `IpcStream`, `ParquetFile`, `JsonColumns`
+- `fetch.rs` — wire formats → `FetchRequest`: `IpcFetchRequest` (keys as batches, columns as a JSON array in the `columns` schema metadata entry) and `(JsonFetchRequest, &TableSchema)`
+
 **`api/http/`** — Axum HTTP API layer
 - `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
-- `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors
+- `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors; request bodies are dispatched by a `match` on the `ContentType` enum (JSON, Arrow IPC, Parquet), unknown or missing content type is a 400
 - `convert.rs` — `FetchResponse` (batch→JSON) and `WriteRequest` (JSON→batch) conversions
 - `error.rs` — `ApiError` newtype mapping `MurrError` → HTTP status codes
-- Content negotiation: fetch supports JSON or Arrow IPC response (`Accept` header); write supports JSON or Arrow IPC request (`Content-Type` header)
+- Content negotiation: fetch takes JSON or Arrow IPC requests (`Content-Type`) and returns JSON or Arrow IPC (`Accept`); write takes JSON, Arrow IPC or Parquet (`Content-Type`)
 
 **`api/flight/`** — Arrow Flight gRPC layer (read-only)
 - `mod.rs` — `MurrFlightService` implementing `FlightService` trait via tonic
-- `ticket.rs` — `FetchTicket { table, keys, columns }` JSON-encoded ticket format
+- `ticket.rs` — `FetchTicket`: JSON-encoded `{ table, keys: {col: [...]}, columns }`, i.e. `JsonFetchRequest` plus the table name
 - `error.rs` — `MurrError` → `tonic::Status` conversion
 - Implemented RPCs: `do_get` (fetch by keys+columns), `get_flight_info`, `get_schema`, `list_flights`
 - All write RPCs (`do_put`, `do_exchange`, `do_action`) return `Unimplemented`
 
-**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableNotFound`, `TableAlreadyExists`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`)
+**`core/`** — Error types (`MurrError` with `thiserror`, variants: `ConfigParsingError`, `IoError`, `ArrowError`, `TableNotFound`, `TableAlreadyExists`, `TableError`, `SegmentError`), CLI args (`clap`), logging (`env_logger`), schema types (`DType`, `ColumnSchema`, `TableSchema`), `FetchRequest { keys: RecordBatch, columns }` (the one fetch shape below the API layer)
 
 **`conf/`** — Hierarchical configuration loaded via `Config::from_args(&CliArgs)`:
 - `config.rs` — `Config` struct with `server` + `storage` fields; loads from optional YAML file (`--config`) then env vars (`MURR_` prefix, `_` separator)
@@ -113,7 +118,8 @@ Python bindings live in a separate repo: [shuttie/murr-python](https://github.co
 
 ### Key Design Patterns
 
-- **Keys are lookup-only**: `Table::read(keys, columns)` rejects requests for the key column — the row blob excludes the key, callers already have it in `keys`
+- **Keys are lookup-only**: `Table::read` rejects requests for key columns — the row blob excludes them, callers already have them in the request
+- **Compound keys**: columns flagged `key: true` (utf8 or int, never nullable) form the key in schema order; each component is self-delimiting (varint ints, length-prefixed strings) and the key is their concatenation. Key column types in a request are strict, no casting. See `rfcs/0001-compound-keys.md`
 - **`Arc<RwLock<RocksDBStore>>` shared by all tables**: outer `tokio::RwLock` over the table registry, inner `std::RwLock` over the store. Concurrent reads/writes on different tables run in parallel; same-table serialisation happens at the store lock
 - **`bytemuck`** for zero-copy casting of fixed-width column values inside row blobs
 - **Manifest sidecar (`manifest.json`)** is the source of truth for which CFs are known to the service — CFs without a manifest entry stay invisible
@@ -136,7 +142,7 @@ storage:
   mmap: {}              # or `block: {}` — pick exactly one; inner keys are RocksDB tunables
 ```
 
-Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `key`, and `columns` (each with `dtype` and optional `nullable`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards.
+Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `columns` (each with `dtype`, optional `nullable` and optional `key`; at least one column must have `key: true` together with `nullable: false`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards.
 
 Supported dtypes: `utf8`, `bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `float32`, `float64`
 

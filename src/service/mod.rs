@@ -6,7 +6,7 @@ use arrow::record_batch::RecordBatch;
 use log::{info, warn};
 
 use crate::conf::Config;
-use crate::core::{MurrError, TableSchema};
+use crate::core::{FetchRequest, MurrError, TableSchema};
 use crate::io::store::Store;
 use crate::io::table::Table;
 
@@ -105,17 +105,12 @@ impl<S: Store> MurrService<S> {
         Ok(table.schema().clone())
     }
 
-    pub fn read(
-        &self,
-        table_name: &str,
-        keys: &[&str],
-        columns: &[&str],
-    ) -> Result<RecordBatch, MurrError> {
+    pub fn read(&self, table_name: &str, request: &FetchRequest) -> Result<RecordBatch, MurrError> {
         let tables = self.tables.read().unwrap_or_else(PoisonError::into_inner);
         let table = tables
             .get(table_name)
             .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
-        table.read(keys, columns)
+        table.read(request)
     }
 }
 
@@ -155,6 +150,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -162,12 +158,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
             },
         );
-        TableSchema {
-            key: "key".to_string(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     fn test_batch(keys: &[&str], scores: &[f32]) -> RecordBatch {
@@ -184,6 +178,15 @@ mod tests {
         .unwrap()
     }
 
+    fn fetch(keys: &[&str], columns: &[&str]) -> FetchRequest {
+        let key_array: StringArray = keys.iter().map(|k| Some(*k)).collect();
+        let schema = Arc::new(Schema::new(vec![Field::new("key", DataType::Utf8, false)]));
+        FetchRequest {
+            keys: RecordBatch::try_new(schema, vec![Arc::new(key_array)]).unwrap(),
+            columns: columns.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
     #[test]
     fn test_create_write_read_round_trip() {
         let dir = TempDir::new().unwrap();
@@ -194,7 +197,7 @@ mod tests {
         let batch = test_batch(&["a", "b", "c"], &[1.0, 2.0, 3.0]);
         svc.write("users", &batch).unwrap();
 
-        let result = svc.read("users", &["c", "a"], &["score"]).unwrap();
+        let result = svc.read("users", &fetch(&["c", "a"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 2);
 
         let vals = result
@@ -221,7 +224,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let svc = build_service(test_config(&dir));
 
-        let err = svc.read("nope", &["a"], &["score"]);
+        let err = svc.read("nope", &fetch(&["a"], &["score"]));
         assert!(err.is_err());
     }
 
@@ -231,7 +234,7 @@ mod tests {
         let svc = build_service(test_config(&dir));
 
         svc.create("empty", test_schema()).unwrap();
-        let result = svc.read("empty", &["a"], &["score"]).unwrap();
+        let result = svc.read("empty", &fetch(&["a"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 1);
         let vals = result
             .column(0)
@@ -254,7 +257,7 @@ mod tests {
         let batch2 = test_batch(&["c"], &[3.0]);
         svc.write("t", &batch2).unwrap();
 
-        let result = svc.read("t", &["a", "b", "c"], &["score"]).unwrap();
+        let result = svc.read("t", &fetch(&["a", "b", "c"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 3);
 
         let vals = result
@@ -278,7 +281,7 @@ mod tests {
         svc.drop_table("t").unwrap();
         assert!(svc.list_tables().is_empty());
         assert!(matches!(
-            svc.read("t", &["a"], &["score"]),
+            svc.read("t", &fetch(&["a"], &["score"])),
             Err(MurrError::TableNotFound(_))
         ));
         assert!(matches!(
@@ -292,12 +295,13 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
             },
         );
         svc.create("t", new_schema.clone()).unwrap();
         assert_eq!(svc.get_schema("t").unwrap(), new_schema);
 
-        let result = svc.read("t", &["a"], &["score"]).unwrap();
+        let result = svc.read("t", &fetch(&["a"], &["score"])).unwrap();
         let vals = result
             .column(0)
             .as_any()
@@ -338,7 +342,7 @@ mod tests {
         let tables = svc.list_tables();
         assert!(tables.contains_key("users"));
 
-        let result = svc.read("users", &["c", "a"], &["score"]).unwrap();
+        let result = svc.read("users", &fetch(&["c", "a"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 2);
 
         let vals = result
@@ -363,7 +367,7 @@ mod tests {
         let tables = svc.list_tables();
         assert!(tables.contains_key("empty"));
 
-        let result = svc.read("empty", &["a"], &["score"]).unwrap();
+        let result = svc.read("empty", &fetch(&["a"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 1);
         let vals = result
             .column(0)

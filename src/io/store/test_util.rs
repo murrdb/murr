@@ -21,9 +21,9 @@ pub fn put<S: Store>(store: &mut S, table: &str, rows: &[(&str, &[u8])]) {
     let kvs: Vec<KeyValue> = rows
         .iter()
         .map(|(k, v)| {
-            let mut row = WriteRow::new(&segment, k);
+            let mut row = WriteRow::new(&segment);
             row.write_dynamic(col, v);
-            row.into()
+            KeyValue::new(*k, row.bytes)
         })
         .collect();
     store.write(table, kvs).unwrap();
