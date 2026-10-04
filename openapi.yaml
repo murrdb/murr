@@ -98,8 +98,11 @@ paths:
       summary: Fetch data from a table
       operationId: fetch
       description: |
-        Retrieves specific columns for a batch of keys.
-        Request is always JSON. Response format depends on the Accept header.
+        Retrieves specific columns for a batch of keys. Keys are columnar: one
+        array per key column of the table, all of the same length. Row i of the
+        response answers row i of the keys; missing keys come back as nulls.
+        Request format depends on the Content-Type header, response format on
+        the Accept header.
       parameters:
         - $ref: "#/components/parameters/TableName"
       requestBody:
@@ -108,6 +111,15 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/FetchRequest"
+          application/vnd.apache.arrow.stream:
+            schema:
+              type: string
+              format: binary
+              description: |
+                Arrow IPC stream whose columns are exactly the key columns of the
+                table, typed as declared in the table schema. The columns to return
+                are a JSON array of names in the `columns` entry of the stream
+                schema metadata.
       responses:
         "200":
           description: Fetched data
@@ -189,13 +201,21 @@ components:
         nullable:
           type: boolean
           default: true
+        key:
+          type: boolean
+          default: false
+          description: |
+            Marks the column as part of the table key. Key columns must be utf8
+            or an integer dtype and must set `nullable: false`.
 
     TableSchema:
       type: object
-      required: [key, columns]
+      required: [columns]
+      additionalProperties: false
+      description: |
+        At least one column must be a key. Several key columns form a compound
+        key, in the order they are listed.
       properties:
-        key:
-          type: string
         columns:
           type: object
           additionalProperties:
@@ -204,11 +224,14 @@ components:
     FetchRequest:
       type: object
       required: [keys, columns]
+      additionalProperties: false
       properties:
         keys:
-          type: array
-          items:
-            type: string
+          type: object
+          description: One array of values per key column of the table.
+          additionalProperties:
+            type: array
+            items: {}
         columns:
           type: array
           items:

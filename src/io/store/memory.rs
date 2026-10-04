@@ -88,6 +88,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -95,12 +96,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
             },
         );
-        TableSchema {
-            key: "id".into(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     #[test]

@@ -68,9 +68,8 @@ fn load_csv() -> HashMap<String, AnimeRow> {
 
 fn table_schema_json() -> Value {
     json!({
-        "key": "anime_id",
         "columns": {
-            "anime_id": {"dtype": "utf8", "nullable": false},
+            "anime_id": {"dtype": "utf8", "nullable": false, "key": true},
             "Genres": {"dtype": "utf8", "nullable": true},
             "is_tv": {"dtype": "float32", "nullable": true},
             "year_aired": {"dtype": "float32", "nullable": true},
@@ -190,7 +189,7 @@ async fn test_all_rows_all_columns() {
         .chain(FLOAT_COLUMNS.iter().copied())
         .collect();
 
-    let body = json!({"keys": all_keys, "columns": all_columns});
+    let body = json!({"keys": {"anime_id": all_keys}, "columns": all_columns});
     let json = fetch_json(router, body).await;
 
     let columns = json["columns"].as_object().unwrap();
@@ -228,9 +227,8 @@ async fn test_get_schema() {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&bytes).unwrap();
 
-    assert_eq!(json["key"], "anime_id");
-
     let columns = json["columns"].as_object().unwrap();
+    assert_eq!(columns["anime_id"]["key"], true);
     assert_eq!(columns["anime_id"]["dtype"], "utf8");
     assert_eq!(columns["Genres"]["dtype"], "utf8");
     for col in FLOAT_COLUMNS {
@@ -250,7 +248,7 @@ async fn test_single_column() {
     let (_dir, router, csv_data) = setup().await;
 
     let all_keys: Vec<&str> = csv_data.keys().map(|k| k.as_str()).collect();
-    let body = json!({"keys": all_keys, "columns": ["above_five_star_ratio"]});
+    let body = json!({"keys": {"anime_id": all_keys}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
     let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();
@@ -268,7 +266,7 @@ async fn test_single_row_single_column() {
 
     // Pick the first key from the dataset
     let key = csv_data.keys().next().unwrap().clone();
-    let body = json!({"keys": [key], "columns": ["above_five_star_ratio"]});
+    let body = json!({"keys": {"anime_id": [key]}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
     let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();
@@ -290,7 +288,7 @@ async fn test_mixed_existing_and_missing_keys() {
     all_keys.extend(real_keys.clone());
     all_keys.extend(fake_keys.clone());
 
-    let body = json!({"keys": all_keys, "columns": ["above_five_star_ratio"]});
+    let body = json!({"keys": {"anime_id": all_keys}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
     let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();

@@ -1,12 +1,10 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use arrow::array::Array;
-use arrow::datatypes::{Field, Schema};
 use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::api::batch::JsonColumns;
 use crate::core::{DTypeName, MurrError, TableSchema};
 
 /// Newtype to implement From<&RecordBatch> (orphan rule prevents impl for serde_json::Value).
@@ -39,24 +37,11 @@ pub struct WriteRequest {
 
 impl WriteRequest {
     pub fn into_record_batch(self, schema: &TableSchema) -> Result<RecordBatch, MurrError> {
-        let mut fields = Vec::new();
-        let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-
-        for (name, config) in &schema.columns {
-            let values = self.columns.get(name).ok_or_else(|| {
-                MurrError::TableError(format!("missing column '{}' in write payload", name))
-            })?;
-
-            let codec = config.dtype.codec();
-            fields.push(Field::new(name, codec.arrow_dtype(), config.nullable));
-            let array = codec
-                .from_json(values)
-                .map_err(|e| MurrError::TableError(format!("column '{name}': {e}")))?;
-            arrays.push(array);
-        }
-
-        let arrow_schema = Arc::new(Schema::new(fields));
-        RecordBatch::try_new(arrow_schema, arrays).map_err(|e| e.into())
+        RecordBatch::try_from(JsonColumns {
+            values: &self.columns,
+            schema,
+            columns: schema.columns.keys().map(String::as_str).collect(),
+        })
     }
 }
 
@@ -64,8 +49,9 @@ impl WriteRequest {
 mod tests {
     use super::*;
     use crate::core::{ColumnSchema, DTypeName};
-    use arrow::array::{Float32Array, Float64Array, StringArray};
-    use arrow::datatypes::DataType;
+    use arrow::array::{Array, Float32Array, Float64Array, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use std::sync::Arc;
 
     fn test_table_schema() -> TableSchema {
         let mut columns = indexmap::IndexMap::new();
@@ -74,6 +60,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -81,6 +68,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
             },
         );
         columns.insert(
@@ -88,12 +76,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float64,
                 nullable: true,
+                key: false,
             },
         );
-        TableSchema {
-            key: "name".to_string(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     fn test_batch() -> RecordBatch {

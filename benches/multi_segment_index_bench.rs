@@ -30,6 +30,7 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
         ColumnSchema {
             dtype: DTypeName::Utf8,
             nullable: false,
+            key: true,
         },
     );
     for name in &col_names {
@@ -38,13 +39,11 @@ fn make_schema() -> (TableSchema, Arc<Schema>) {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: false,
+                key: false,
             },
         );
     }
-    let table_schema = TableSchema {
-        key: "key".to_string(),
-        columns,
-    };
+    let table_schema = TableSchema { columns };
     let arrow_schema = Arc::new(Schema::from(&table_schema));
     (table_schema, arrow_schema)
 }

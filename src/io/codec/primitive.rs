@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, ArrowPrimitiveType, PrimitiveArray, PrimitiveBuilder};
+use arrow::array::{
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BinaryBuilder, PrimitiveArray,
+    PrimitiveBuilder,
+};
 use bytemuck::{NoUninit, Pod};
+use integer_encoding::VarInt;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -13,6 +17,9 @@ use crate::{
         schema::SegmentColumnSchema,
     },
 };
+
+// A 64-bit value takes at most 10 LEB128 bytes.
+const MAX_VARINT_SIZE: usize = 10;
 
 pub struct Encoder<T: ArrowPrimitiveType>
 where
@@ -92,6 +99,21 @@ where
             row.write_static(&self.column, self.array.value(index));
         }
     }
+}
+
+pub fn encode_keys<T>(arr: &dyn Array) -> Result<BinaryArray, MurrError>
+where
+    T: ArrowPrimitiveType + 'static,
+    T::Native: VarInt,
+{
+    let typed = downcast::<PrimitiveArray<T>>(arr, &format!("{:?}", T::DATA_TYPE))?;
+    let mut builder = BinaryBuilder::with_capacity(typed.len(), typed.len() * MAX_VARINT_SIZE);
+    let mut buf = [0u8; MAX_VARINT_SIZE];
+    for value in typed.values() {
+        let size = value.encode_var(&mut buf);
+        builder.append_value(&buf[..size]);
+    }
+    Ok(builder.finish())
 }
 
 pub fn to_json<T>(arr: &dyn Array) -> Result<Vec<Value>, MurrError>

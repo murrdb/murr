@@ -310,6 +310,7 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         columns.insert(
@@ -317,12 +318,10 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
             },
         );
-        TableSchema {
-            key: key.to_string(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     fn open_block_get(path: &Path) -> RocksDBStore {

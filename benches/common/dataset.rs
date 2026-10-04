@@ -28,6 +28,7 @@ impl Dataset {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
             },
         );
         for i in 0..num_cols {
@@ -36,13 +37,11 @@ impl Dataset {
                 ColumnSchema {
                     dtype: DTypeName::Float32,
                     nullable: false,
+                    key: false,
                 },
             );
         }
-        let table_schema = TableSchema {
-            key: "key".to_string(),
-            columns,
-        };
+        let table_schema = TableSchema { columns };
         let arrow_schema = Arc::new(Schema::from(&table_schema));
         let batch = generate_batch(&arrow_schema, num_rows);
         Self {

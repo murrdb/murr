@@ -95,7 +95,7 @@ mod tests {
         let schema = SegmentSchema::new(std::slice::from_ref(&c));
         let input = Float32Array::from(vec![Some(f32::NAN)]);
         let dec = c.dtype.codec().make_decoder(c.clone(), &input).unwrap();
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         dec.write_to_row(0, &mut w);
         let mut enc = c.dtype.codec().make_encoder(c, 1);
         enc.add_row(&ReadRow::new(&schema, &w.bytes)).unwrap();

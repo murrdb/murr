@@ -45,13 +45,13 @@ async fn setup() -> TestHarness {
 
     // Create and populate a table
     let schema = TableSchema {
-        key: "id".to_string(),
         columns: IndexMap::from([
             (
                 "id".to_string(),
                 ColumnSchema {
                     dtype: DTypeName::Utf8,
                     nullable: false,
+                    key: true,
                 },
             ),
             (
@@ -59,6 +59,7 @@ async fn setup() -> TestHarness {
                 ColumnSchema {
                     dtype: DTypeName::Float32,
                     nullable: true,
+                    key: false,
                 },
             ),
         ]),
@@ -116,7 +117,7 @@ async fn test_do_get_round_trip() {
 
     let ticket = serde_json::to_vec(&serde_json::json!({
         "table": "features",
-        "keys": ["a", "b", "c"],
+        "keys": {"id": ["a", "b", "c"]},
         "columns": ["score"]
     }))
     .unwrap();
@@ -149,7 +150,7 @@ async fn test_do_get_not_found() {
 
     let ticket = serde_json::to_vec(&serde_json::json!({
         "table": "nonexistent",
-        "keys": ["a"],
+        "keys": {"id": ["a"]},
         "columns": ["score"]
     }))
     .unwrap();
@@ -211,22 +212,6 @@ async fn test_get_flight_info() {
     let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
     assert!(field_names.contains(&"id"));
     assert!(field_names.contains(&"score"));
-}
-
-#[tokio::test]
-async fn test_get_flight_info_has_key_metadata() {
-    let mut harness = setup().await;
-
-    let descriptor = FlightDescriptor::new_path(vec!["features".to_string()]);
-    let info = harness
-        .client
-        .get_flight_info(descriptor)
-        .await
-        .unwrap()
-        .into_inner();
-
-    let schema = Schema::try_from(info).unwrap();
-    assert_eq!(schema.metadata().get("key").map(|s| s.as_str()), Some("id"));
 }
 
 #[tokio::test]
