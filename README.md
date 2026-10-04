@@ -32,7 +32,7 @@ curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
 ```
 - **Zero-copy wire protocol**: no conversion needed when building `np.ndarray`, `pd.DataFrame` or `pt.Tensor` from API responses. Sure, Redis is fast, but parsing its replies is not (especially in Python!).
 ```python
-result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
+result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])
 print(result.to_pandas())  # look mom, zero copy!
 ```
 - **Stateless**: Murr is not a database - all state is persisted on S3. When a Redis node gets evicted, you're cooked. Murr just self-bootstraps from block storage.
@@ -44,17 +44,21 @@ Murr shines when:
 
 Short quickstart (see [full example](#quickstart)):
 ```shell
-uv pip install murrdb
+docker run -p 8080:8080 ghcr.io/murrdb/murr:0.3.0
+uv pip install murr
 ```
 and then
 ```python
-from murr.sync import Murr
+import asyncio
+from murr.client import Client
 
-db = Murr.start_local(cache_dir="/tmp/murr")  # embedded local instance
+async def main():
+    async with Client("http://localhost:8080") as db:
+        # fetch columns for a batch of document keys
+        result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])
+        print(result.to_pandas())
 
-# fetch columns for a batch of document keys
-result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
-print(result.to_pandas())
+asyncio.run(main())
 
 # Output:
 #    score category
@@ -75,7 +79,7 @@ For the typical use case of `read N datapoints across M documents` (an agent rea
 - vs **[DynamoDB](https://aws.amazon.com/dynamodb/)**: roughly 10x cheaper, since you only pay for CPU/RAM, not per query.
 
 Not being a general-purpose database, it tries to be friendly to the everyday pain points of ML/AI engineers:
-* **First-class Python support**: `pip install murrdb`, then map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
+* **First-class Python support**: `pip install murr`, then map to/from Numpy/Pandas/Polars/Pytorch arrays with zero copy.
 * **Sparse columns**: when a column has no data, it takes up zero bytes. Unlike the packed feature blob approach, where null columns aren't actually null.
 
 ## Why NOT Murr?
@@ -91,36 +95,44 @@ Murr is not a general-purpose database:
 
 ## Quickstart
 
+Start a server and install the Python client:
+
+```shell
+docker run -p 8080:8080 ghcr.io/murrdb/murr:0.3.0
+uv pip install murr pandas
+```
+
 ```python
+import asyncio
 import pandas as pd
 import pyarrow as pa
-from murr import TableSchema, ColumnSchema, DType
-from murr.sync import Murr
+from murr.client import Client, TableSchema, ColumnSchema, DType
 
-db = Murr.start_local(cache_dir="/tmp/murr")
+async def main():
+    async with Client("http://localhost:8080") as db:
+        # define table schema
+        schema = TableSchema(
+            columns={
+                "doc_id": ColumnSchema(dtype=DType.UTF8, nullable=False, key=True), # the key
+                "score": ColumnSchema(dtype=DType.FLOAT32, strict=False), # pandas floats are float64
+                "category": ColumnSchema(dtype=DType.UTF8),
+            },
+        )
+        await db.create_table("docs", schema)
 
-# define table schema
-schema = TableSchema(
-    key="doc_id", # the key
-    columns={
-        "doc_id": ColumnSchema(dtype=DType.UTF8, nullable=False),
-        "score": ColumnSchema(dtype=DType.FLOAT32),
-        "category": ColumnSchema(dtype=DType.UTF8),
-    },
-)
-db.create_table("docs", schema)
+        # write a batch of documents
+        df = pd.DataFrame.from_dict({
+            "doc_id":   ["doc_1", "doc_2", "doc_3", "doc_4", "doc_5"],
+            "score":    [0.95, 0.87, 0.72, 0.91, 0.68],
+            "category": ["ml", "search", "infra", "ml", "ops"],
+        })
+        await db.write("docs", pa.Table.from_pandas(df))
 
-# write a batch of documents
-df = pd.DataFrame.from_dict({
-    "doc_id":   ["doc_1", "doc_2", "doc_3", "doc_4", "doc_5"],
-    "score":    [0.95, 0.87, 0.72, 0.91, 0.68],
-    "category": ["ml", "search", "infra", "ml", "ops"],
-})
-db.write("docs", pa.Table.from_pandas(df))
+        # fetch specific columns for a few keys
+        result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])
+        print(result.to_pandas())
 
-# fetch specific columns for a few keys
-result = db.read("docs", keys=["doc_1", "doc_3", "doc_5"], columns=["score", "category"])
-print(result.to_pandas())
+asyncio.run(main())
 
 # Output:
 #   score category
@@ -220,11 +232,11 @@ No ETAs, but at least you can see where things stand:
 - [x] API for data ingestion
 - [x] Storage Directory interface (which is heavily inspired by [Apache Lucene](https://lucene.apache.org/))
 - [x] Segment read/writes (again, inspired by [Apache Lucene](https://lucene.apache.org/))
-- [x] Python embedded murrdb, so we can make a cool demo
+- [ ] Python embedded murrdb as a separate package, so we can make a cool demo
 - [x] Benchmarking harness: Redis support, Feast and feature-blob styles
 - [x] Win at your own benchmark (this was surprisingly hard btw)
 - [x] Support for `utf8`, `bool`, signed/unsigned `int8/16/32/64`, `float32` and `float64` datatypes
-- [x] Python remote API client (sync + async)
+- [x] Python remote API client (async)
 - [x] Docker image
 - [ ] Support most popular Arrow numerical types (signed/unsigned int 8/16/32/64, float 16, date-time)
 - [ ] Array datatypes (e.g. Arrow `list`), so you can store embeddings
