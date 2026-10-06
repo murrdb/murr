@@ -35,12 +35,14 @@ impl<S: Store> Table<S> {
         name: impl Into<String>,
         table: TableSchema,
     ) -> Result<Self, MurrError> {
-        let name = name.into();
-        store
+        // Validate through `build` first so a rejected schema never reaches the manifest.
+        let table = Self::build(store, name.into(), table)?;
+        table
+            .store
             .write()
             .expect("store lock poisoned")
-            .create_table(&name, &table)?;
-        Self::build(store, name, table)
+            .create_table(&table.name, &table.table)?;
+        Ok(table)
     }
 
     pub fn open(
@@ -125,6 +127,7 @@ impl<S: Store> Table<S> {
             })
             .collect::<Result<_, _>>()?;
 
+        // keys.len() is an upper bound: only found keys become rows
         let builder = ReadBatchBuilder::new(&self.segment, req_cols, keys.len());
         let key_bytes: Vec<&[u8]> = (0..keys.len()).map(|i| keys.value(i)).collect();
         let store = self.store.read().expect("store lock poisoned");
@@ -132,6 +135,7 @@ impl<S: Store> Table<S> {
     }
 
     fn build(store: Arc<RwLock<S>>, name: String, table: TableSchema) -> Result<Self, MurrError> {
+        table.validate()?;
         let key = KeySchema::new(&table)?;
         let segment = SegmentSchema::from(&table);
         let columns = segment
@@ -166,7 +170,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::core::{ColumnSchema, DTypeName, TableSchema};
+    use crate::core::{ColumnSchema, DTypeName, IDX_COLUMN, TableSchema};
     use crate::io::store::memory::MemoryStore;
 
     fn store() -> Arc<RwLock<MemoryStore>> {
@@ -233,6 +237,27 @@ mod tests {
             .downcast_ref::<Float32Array>()
             .unwrap()
             .clone()
+    }
+
+    fn project_idx(batch: &RecordBatch) -> Vec<u32> {
+        batch
+            .column_by_name(IDX_COLUMN)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values()
+            .to_vec()
+    }
+
+    /// Scatters a sparse response back to one slot per requested key, None for a miss.
+    fn scatter_f32(batch: &RecordBatch, name: &str, num_keys: usize) -> Vec<Option<f32>> {
+        let values = project_f32(batch, name);
+        let mut out = vec![None; num_keys];
+        for (row, position) in project_idx(batch).into_iter().enumerate() {
+            out[position as usize] = Some(values.value(row));
+        }
+        out
     }
 
     fn project_string(batch: &RecordBatch, name: &str) -> StringArray {
@@ -313,17 +338,22 @@ mod tests {
         let table = Table::create(store(), "t", schema).unwrap();
         table.write(&batch).unwrap();
 
+        let names = |out: &RecordBatch| -> Vec<String> {
+            out.schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect()
+        };
         let out = table
             .read(&fetch(&["a", "b"], &["label", "score"]))
             .unwrap();
-        assert_eq!(out.schema().field(0).name(), "label");
-        assert_eq!(out.schema().field(1).name(), "score");
+        assert_eq!(names(&out), [IDX_COLUMN, "label", "score"]);
 
         let out = table
             .read(&fetch(&["a", "b"], &["score", "label"]))
             .unwrap();
-        assert_eq!(out.schema().field(0).name(), "score");
-        assert_eq!(out.schema().field(1).name(), "label");
+        assert_eq!(names(&out), [IDX_COLUMN, "score", "label"]);
     }
 
     #[test]
@@ -333,8 +363,9 @@ mod tests {
             .write(&batch_id_score(&[Some("a")], &[Some(1.5)]))
             .unwrap();
         let out = table.read(&fetch(&["a"], &["score"])).unwrap();
-        assert_eq!(out.num_columns(), 1);
-        assert_eq!(out.schema().field(0).name(), "score");
+        assert_eq!(out.num_columns(), 2);
+        assert_eq!(out.schema().field(0).name(), IDX_COLUMN);
+        assert_eq!(out.schema().field(1).name(), "score");
         assert_eq!(project_f32(&out, "score").value(0), 1.5);
     }
 
@@ -361,16 +392,54 @@ mod tests {
     }
 
     #[test]
-    fn read_missing_keys_returns_nulls() {
+    fn read_missing_keys_drops_rows() {
         let table = Table::create(store(), "t", schema_id_score()).unwrap();
         table
             .write(&batch_id_score(&[Some("a")], &[Some(1.0)]))
             .unwrap();
 
-        let out = table.read(&fetch(&["a", "missing"], &["score"])).unwrap();
-        let scores = project_f32(&out, "score");
-        assert_eq!(scores.value(0), 1.0);
-        assert!(scores.is_null(1));
+        let out = table
+            .read(&fetch(&["missing", "a", "nope"], &["score"]))
+            .unwrap();
+        assert_eq!(out.num_rows(), 1);
+        assert_eq!(project_idx(&out), [1]);
+        assert_eq!(project_f32(&out, "score").value(0), 1.0);
+    }
+
+    #[test]
+    fn read_nothing_found_returns_empty_batch_with_schema() {
+        let table = Table::create(store(), "t", schema_id_score()).unwrap();
+        let out = table.read(&fetch(&["x", "y"], &["score"])).unwrap();
+        assert_eq!(out.num_rows(), 0);
+        assert_eq!(out.schema().field(0).name(), IDX_COLUMN);
+        assert_eq!(out.schema().field(0).data_type(), &DataType::UInt32);
+        assert_eq!(out.schema().field(1).name(), "score");
+    }
+
+    #[test]
+    fn read_duplicate_keys_yield_one_row_per_position() {
+        let table = Table::create(store(), "t", schema_id_score()).unwrap();
+        table
+            .write(&batch_id_score(&[Some("a")], &[Some(1.0)]))
+            .unwrap();
+
+        let out = table.read(&fetch(&["a", "b", "a"], &["score"])).unwrap();
+        assert_eq!(out.num_rows(), 2);
+        assert_eq!(scatter_f32(&out, "score", 3), [Some(1.0), None, Some(1.0)]);
+    }
+
+    #[test]
+    fn create_rejects_reserved_column_name() {
+        let mut schema = schema_id_score();
+        schema
+            .columns
+            .insert(IDX_COLUMN.into(), column(DTypeName::Int32, true, false));
+        let s = store();
+        assert!(matches!(
+            Table::create(s.clone(), "t", schema),
+            Err(MurrError::TableError(_))
+        ));
+        assert!(!s.read().unwrap().manifest().contains("t"));
     }
 
     #[test]
@@ -627,8 +696,9 @@ mod tests {
         #[case] expected: Vec<Option<f32>>,
     ) {
         let table = keyed_table(keys);
+        let num_keys = lookup[0].1.len();
         let out = table.read(&request(lookup, &["score"])).unwrap();
-        assert_eq!(project_f32(&out, "score"), Float32Array::from(expected));
+        assert_eq!(scatter_f32(&out, "score", num_keys), expected);
     }
 
     #[rstest]
@@ -677,7 +747,7 @@ mod tests {
         let table = Table::create(store(), "t", TableSchema { columns })?;
         table.write(&RecordBatch::try_from_iter([("id", ids.clone()), ("v", values)]).unwrap())?;
         let out = table.read(&request(vec![("id", ids)], &["v"]))?;
-        Ok(out.column(0).clone())
+        Ok(out.column_by_name("v").unwrap().clone())
     }
 
     // `stored` is what reads back, None for a rejected write

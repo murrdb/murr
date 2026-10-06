@@ -48,8 +48,8 @@ impl WriteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{ColumnSchema, DTypeName};
-    use arrow::array::{Array, Float32Array, Float64Array, StringArray};
+    use crate::core::{ColumnSchema, DTypeName, IDX_COLUMN};
+    use arrow::array::{Array, Float32Array, Float64Array, StringArray, UInt32Array};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
 
@@ -118,6 +118,24 @@ mod tests {
         let weight_vals = cols.get("weight").unwrap().as_array().unwrap();
         assert_eq!(weight_vals[0], Value::from(3.15f64));
         assert_eq!(weight_vals[1], Value::from(2.72f64));
+    }
+
+    #[test]
+    fn test_idx_column_serializes_as_numbers() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(IDX_COLUMN, DataType::UInt32, false),
+            Field::new("score", DataType::Float32, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(UInt32Array::from(vec![0, 2])),
+                Arc::new(Float32Array::from(vec![Some(1.5), None])),
+            ],
+        )
+        .unwrap();
+        let FetchResponse(json) = FetchResponse::try_from(&batch).unwrap();
+        assert_eq!(json["columns"][IDX_COLUMN], serde_json::json!([0, 2]));
     }
 
     #[test]

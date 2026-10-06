@@ -80,10 +80,19 @@ impl Dataset {
         })
     }
 
-    pub fn generate_keys(&self, count: usize, seed: u64) -> Vec<String> {
+    /// Random lookup keys, of which a `hit_rate` fraction exist in the table. A miss is a
+    /// stored id with a prefix, so it has the same length as a hit and can never match.
+    pub fn generate_keys(&self, count: usize, seed: u64, hit_rate: f64) -> Vec<String> {
         let mut rng = StdRng::seed_from_u64(seed);
         (0..count)
-            .map(|_| rng.random_range(0..self.num_rows).to_string())
+            .map(|_| {
+                let id = rng.random_range(0..self.num_rows);
+                if rng.random_bool(hit_rate) {
+                    id.to_string()
+                } else {
+                    format!("x{id}")
+                }
+            })
             .collect()
     }
 }

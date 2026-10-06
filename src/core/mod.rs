@@ -11,4 +11,4 @@ pub use error::MurrError;
 pub use fetch::FetchRequest;
 pub use logger::setup_logging;
 #[allow(unused_imports)]
-pub use schema::{ColumnSchema, DTypeName, TableSchema};
+pub use schema::{ColumnSchema, DTypeName, IDX_COLUMN, TableSchema};

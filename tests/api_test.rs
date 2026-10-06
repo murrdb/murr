@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 
-use arrow::array::{ArrayRef, Float32Array, Float64Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, Float32Array, Float64Array, Int64Array, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
@@ -18,6 +18,7 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{BackendConfig, Config, StorageConfig};
+use murr::core::IDX_COLUMN;
 use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
@@ -310,15 +311,25 @@ async fn test_full_round_trip() {
     let mut reader = StreamReader::try_new(cursor, None).unwrap();
     let batch = reader.next().unwrap().unwrap();
     assert_eq!(batch.num_rows(), 3);
+    assert_eq!(batch.schema().field(0).name(), IDX_COLUMN);
+    assert_eq!(batch.schema().field(0).data_type(), &DataType::UInt32);
 
-    let scores = batch
+    let idx = batch
         .column(0)
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    let scores = batch
+        .column_by_name("score")
+        .unwrap()
         .as_any()
         .downcast_ref::<Float32Array>()
         .unwrap();
-    assert_eq!(scores.value(0), 1.0);
-    assert_eq!(scores.value(1), 2.0);
-    assert_eq!(scores.value(2), 3.0);
+    let mut by_position = [0.0f32; 3];
+    for row in 0..3 {
+        by_position[idx.value(row) as usize] = scores.value(row);
+    }
+    assert_eq!(by_position, [1.0, 2.0, 3.0]);
 }
 
 fn parquet_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
@@ -419,7 +430,23 @@ async fn test_compound_key_json_fetch() {
     let req = json_request(Method::POST, "/api/v1/table/ratings/fetch", &fetch);
     let (status, json) = body_json(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["columns"]["score"], json!([2.0, 1.0, null]));
+    // ("u1", -5) is a miss, so it has no row
+    assert_eq!(
+        scatter_json(&json, "score", 3),
+        [json!(2.0), json!(1.0), Value::Null]
+    );
+}
+
+/// Scatters a sparse JSON fetch response back to one slot per requested key, null for a miss.
+fn scatter_json(json: &Value, column: &str, num_keys: usize) -> Vec<Value> {
+    let idx = json["columns"][IDX_COLUMN].as_array().unwrap();
+    let values = json["columns"][column].as_array().unwrap();
+    assert_eq!(idx.len(), values.len());
+    let mut out = vec![Value::Null; num_keys];
+    for (i, v) in idx.iter().zip(values) {
+        out[i.as_u64().unwrap() as usize] = v.clone();
+    }
+    out
 }
 
 fn ipc_key_request(metadata: HashMap<String, String>) -> Request<Body> {
@@ -457,7 +484,8 @@ async fn test_compound_key_arrow_fetch() {
     let columns = HashMap::from([("columns".to_string(), r#"["score"]"#.to_string())]);
     let (status, json) = body_json(router, ipc_key_request(columns)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["columns"]["score"], json!([2.0, null]));
+    assert_eq!(json["columns"][IDX_COLUMN], json!([0]));
+    assert_eq!(json["columns"]["score"], json!([2.0]));
 }
 
 #[tokio::test]

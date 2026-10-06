@@ -99,8 +99,16 @@ paths:
       operationId: fetch
       description: |
         Retrieves specific columns for a batch of keys. Keys are columnar: one
-        array per key column of the table, all of the same length. Row i of the
-        response answers row i of the keys; missing keys come back as nulls.
+        array per key column of the table, all of the same length.
+
+        The response is sparse: it holds one row per key that was found, and
+        no row for a missing key. Its first column, `_idx` (uint32), is the
+        0-based position of the row's key in the request. Rows come back in
+        no particular order, so join them on `_idx`. A key listed twice gets
+        two rows. When nothing is found the response has zero rows and still
+        carries the full schema. Nulls inside a found row are real stored
+        nulls.
+
         Request format depends on the Content-Type header, response format on
         the Accept header.
       parameters:
@@ -131,7 +139,10 @@ paths:
               schema:
                 type: string
                 format: binary
-                description: Arrow IPC stream containing a RecordBatch
+                description: |
+                  Arrow IPC stream containing one RecordBatch: the `_idx`
+                  uint32 column followed by the requested columns, one row
+                  per found key.
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -237,7 +248,8 @@ components:
       additionalProperties: false
       description: |
         At least one column must be a key. Several key columns form a compound
-        key, in the order they are listed.
+        key, in the order they are listed. The name `_idx` is reserved for the
+        fetch response and cannot be used as a column name.
       properties:
         columns:
           type: object
@@ -266,6 +278,17 @@ components:
       properties:
         columns:
           type: object
+          description: |
+            `_idx` plus one array per requested column, all of the same
+            length: the number of keys that were found. `_idx[i]` is the
+            position in the request keys that row i answers.
+          required: [_idx]
+          properties:
+            _idx:
+              type: array
+              items:
+                type: integer
+                minimum: 0
           additionalProperties:
             type: array
             items: {}

@@ -93,11 +93,6 @@ impl ColumnEncoder for BoolEncoder {
         Ok(())
     }
 
-    fn add_empty(&mut self) -> Result<(), MurrError> {
-        self.builder.append_null();
-        Ok(())
-    }
-
     fn build(&mut self) -> ArrayRef {
         Arc::new(self.builder.finish())
     }

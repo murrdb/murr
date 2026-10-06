@@ -49,7 +49,6 @@ pub trait KeyEncoder: Send + Sync {
 
 pub trait ColumnEncoder: Send {
     fn add_row(&mut self, row: &ReadRow) -> Result<(), MurrError>;
-    fn add_empty(&mut self) -> Result<(), MurrError>;
     fn build(&mut self) -> ArrayRef;
 }
 

@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
 
-use arrow::array::{Array, Float32Array, StringArray};
+use arrow::array::{Array, Float32Array, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use arrow_flight::decode::FlightRecordBatchStream;
@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tonic::transport::{Channel, Server};
 
 use murr::conf::{BackendConfig, Config, StorageConfig};
-use murr::core::{ColumnSchema, DTypeName, TableSchema};
+use murr::core::{ColumnSchema, DTypeName, IDX_COLUMN, TableSchema};
 use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
@@ -135,15 +135,63 @@ async fn test_do_get_round_trip() {
     assert_eq!(batches.len(), 1);
     let batch = &batches[0];
     assert_eq!(batch.num_rows(), 3);
+    assert_eq!(batch.schema().field(0).name(), IDX_COLUMN);
 
-    let scores = batch
+    let idx = batch
         .column(0)
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    let scores = batch
+        .column_by_name("score")
+        .unwrap()
         .as_any()
         .downcast_ref::<Float32Array>()
         .unwrap();
-    assert_eq!(scores.value(0), 1.0);
-    assert_eq!(scores.value(1), 2.0);
-    assert!(scores.is_null(2));
+    // c is stored with a null score: a found row with a null value, not a miss
+    let mut by_position: Vec<Option<Option<f32>>> = vec![None; 3];
+    for row in 0..batch.num_rows() {
+        let value = (!scores.is_null(row)).then(|| scores.value(row));
+        by_position[idx.value(row) as usize] = Some(value);
+    }
+    assert_eq!(by_position, [Some(Some(1.0)), Some(Some(2.0)), Some(None)]);
+}
+
+#[tokio::test]
+async fn test_do_get_drops_missing_keys() {
+    let mut harness = setup().await;
+
+    let ticket = serde_json::to_vec(&serde_json::json!({
+        "table": "features",
+        "keys": {"id": ["missing", "b"]},
+        "columns": ["score"]
+    }))
+    .unwrap();
+
+    let response = harness.client.do_get(Ticket::new(ticket)).await.unwrap();
+    let stream = FlightRecordBatchStream::new_from_flight_data(
+        response
+            .into_inner()
+            .map_err(|e| arrow_flight::error::FlightError::Tonic(Box::new(e))),
+    );
+    let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    let idx = batch
+        .column_by_name(IDX_COLUMN)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    let scores = batch
+        .column_by_name("score")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    assert_eq!(idx.value(0), 1);
+    assert_eq!(scores.value(0), 2.0);
 }
 
 #[tokio::test]

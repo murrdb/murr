@@ -59,6 +59,8 @@ impl<S: Store> ReadBench for Table<S> {
 
 pub struct BenchOpts<'a> {
     pub key_counts: &'a [usize],
+    /// Fraction of keys per request that exist in the table, one bench case per value.
+    pub hit_rates: &'a [f64],
     pub sample_size: usize,
     pub write_batch_size: usize,
     pub group_name: &'a str,
@@ -88,28 +90,36 @@ pub fn run_read_bench<B: ReadBench>(
     group.sample_size(opts.sample_size);
 
     for &num_keys in opts.key_counts {
-        let mut seed: u64 = num_keys as u64 * 2_000_000;
-        group.bench_with_input(
-            BenchmarkId::new(opts.group_name, num_keys),
-            &num_keys,
-            |b, &n| {
-                b.iter_batched(
-                    || {
-                        seed += 1;
-                        let keys = StringArray::from(dataset.generate_keys(n, seed));
-                        FetchRequest {
-                            keys: RecordBatch::try_new(key_schema.clone(), vec![Arc::new(keys)])
+        for &hit_rate in opts.hit_rates {
+            let mut seed: u64 = num_keys as u64 * 2_000_000;
+            let case = format!("{num_keys}_keys/hit_{hit_rate}");
+            group.bench_with_input(
+                BenchmarkId::new(opts.group_name, case),
+                &num_keys,
+                |b, &n| {
+                    b.iter_batched(
+                        || {
+                            seed += 1;
+                            let keys = StringArray::from(dataset.generate_keys(n, seed, hit_rate));
+                            FetchRequest {
+                                keys: RecordBatch::try_new(
+                                    key_schema.clone(),
+                                    vec![Arc::new(keys)],
+                                )
                                 .unwrap(),
-                            columns: col_names.clone(),
-                        }
-                    },
-                    |request| {
-                        std::hint::black_box(bench.read(std::hint::black_box(&request)).unwrap())
-                    },
-                    BatchSize::PerIteration,
-                );
-            },
-        );
+                                columns: col_names.clone(),
+                            }
+                        },
+                        |request| {
+                            std::hint::black_box(
+                                bench.read(std::hint::black_box(&request)).unwrap(),
+                            )
+                        },
+                        BatchSize::PerIteration,
+                    );
+                },
+            );
+        }
     }
     group.finish();
 }

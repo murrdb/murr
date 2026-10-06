@@ -134,13 +134,34 @@ impl<S: Store> MurrService<S> {
 mod tests {
     use super::*;
     use crate::conf::{BackendConfig, StorageConfig};
-    use crate::core::{ColumnSchema, DTypeName};
+    use crate::core::{ColumnSchema, DTypeName, IDX_COLUMN};
     use crate::io::store::rocksdb::RocksDBStore;
     use crate::io::store::rocksdb::plain::PlainConfig;
-    use arrow::array::{Array, Float32Array, StringArray};
+    use arrow::array::{Float32Array, StringArray, UInt32Array};
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    /// Scatters the sparse `score` column back to one slot per requested key.
+    fn scores_by_position(batch: &RecordBatch, num_keys: usize) -> Vec<Option<f32>> {
+        let idx = batch
+            .column_by_name(IDX_COLUMN)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let scores = batch
+            .column_by_name("score")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let mut out = vec![None; num_keys];
+        for row in 0..batch.num_rows() {
+            out[idx.value(row) as usize] = Some(scores.value(row));
+        }
+        out
+    }
 
     fn test_config(dir: &TempDir) -> Config {
         Config {
@@ -216,15 +237,7 @@ mod tests {
         svc.write("users", &batch).unwrap();
 
         let result = svc.read("users", &fetch(&["c", "a"], &["score"])).unwrap();
-        assert_eq!(result.num_rows(), 2);
-
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert_eq!(vals.value(0), 3.0);
-        assert_eq!(vals.value(1), 1.0);
+        assert_eq!(scores_by_position(&result, 2), [Some(3.0), Some(1.0)]);
     }
 
     #[test]
@@ -247,19 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn test_read_empty_table_returns_nulls() {
+    fn test_read_empty_table_returns_no_rows() {
         let dir = TempDir::new().unwrap();
         let svc = build_service(test_config(&dir));
 
         svc.create("empty", test_schema()).unwrap();
         let result = svc.read("empty", &fetch(&["a"], &["score"])).unwrap();
-        assert_eq!(result.num_rows(), 1);
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert!(vals.is_null(0));
+        assert_eq!(result.num_rows(), 0);
+        assert_eq!(result.schema().field(0).name(), IDX_COLUMN);
     }
 
     #[test]
@@ -276,16 +284,10 @@ mod tests {
         svc.write("t", &batch2).unwrap();
 
         let result = svc.read("t", &fetch(&["a", "b", "c"], &["score"])).unwrap();
-        assert_eq!(result.num_rows(), 3);
-
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert_eq!(vals.value(0), 1.0);
-        assert_eq!(vals.value(1), 2.0);
-        assert_eq!(vals.value(2), 3.0);
+        assert_eq!(
+            scores_by_position(&result, 3),
+            [Some(1.0), Some(2.0), Some(3.0)]
+        );
     }
 
     #[test]
@@ -321,12 +323,7 @@ mod tests {
         assert_eq!(svc.get_schema("t").unwrap(), new_schema);
 
         let result = svc.read("t", &fetch(&["a"], &["score"])).unwrap();
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert!(vals.is_null(0));
+        assert_eq!(result.num_rows(), 0);
     }
 
     #[test]
@@ -362,15 +359,7 @@ mod tests {
         assert!(tables.contains_key("users"));
 
         let result = svc.read("users", &fetch(&["c", "a"], &["score"])).unwrap();
-        assert_eq!(result.num_rows(), 2);
-
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert_eq!(vals.value(0), 3.0);
-        assert_eq!(vals.value(1), 1.0);
+        assert_eq!(scores_by_position(&result, 2), [Some(3.0), Some(1.0)]);
     }
 
     #[test]
@@ -387,12 +376,6 @@ mod tests {
         assert!(tables.contains_key("empty"));
 
         let result = svc.read("empty", &fetch(&["a"], &["score"])).unwrap();
-        assert_eq!(result.num_rows(), 1);
-        let vals = result
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
-        assert!(vals.is_null(0));
+        assert_eq!(result.num_rows(), 0);
     }
 }

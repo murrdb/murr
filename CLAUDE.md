@@ -119,6 +119,7 @@ Python bindings live in a separate repo: [shuttie/murr-python](https://github.co
 ### Key Design Patterns
 
 - **Keys are lookup-only**: `Table::read` rejects requests for key columns — the row blob excludes them, callers already have them in the request
+- **Sparse fetch responses**: a read returns one row per key that was found, led by a `_idx` (`uint32`) column holding the key's position in the request; misses have no row and row order is unspecified. `_idx` is a reserved column name. See `rfcs/0003-sparse-reads.md`
 - **Compound keys**: columns flagged `key: true` (utf8 or int, never nullable) form the key in schema order; each component is self-delimiting (varint ints, length-prefixed strings) and the key is their concatenation. Key column types in a request are strict, no casting. See `rfcs/0001-compound-keys.md`
 - **`Arc<RwLock<RocksDBStore>>` shared by all tables**: outer `tokio::RwLock` over the table registry, inner `std::RwLock` over the store. Concurrent reads/writes on different tables run in parallel; same-table serialisation happens at the store lock
 - **`bytemuck`** for zero-copy casting of fixed-width column values inside row blobs
