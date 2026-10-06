@@ -16,6 +16,7 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{Config, StorageConfig};
+use murr::core::IDX_COLUMN;
 use murr::service::MurrService;
 
 const CSV_PATH: &str = "tests/fixtures/anime_info.csv";
@@ -167,6 +168,22 @@ async fn fetch_json(router: Router, body: Value) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// Scatters a sparse fetch response column back to one slot per requested key, null for a miss.
+fn scatter(json: &Value, column: &str, num_keys: usize) -> Vec<Value> {
+    let idx = json["columns"][IDX_COLUMN].as_array().unwrap();
+    let values = json["columns"][column].as_array().unwrap();
+    assert_eq!(
+        idx.len(),
+        values.len(),
+        "column {column} row count mismatch"
+    );
+    let mut out = vec![Value::Null; num_keys];
+    for (i, v) in idx.iter().zip(values) {
+        out[i.as_u64().unwrap() as usize] = v.clone();
+    }
+    out
+}
+
 fn assert_float_eq(actual: &Value, expected: Option<f32>) {
     match expected {
         None => assert!(actual.is_null(), "expected null, got {actual}"),
@@ -192,14 +209,12 @@ async fn test_all_rows_all_columns() {
     let body = json!({"keys": {"anime_id": all_keys}, "columns": all_columns});
     let json = fetch_json(router, body).await;
 
-    let columns = json["columns"].as_object().unwrap();
+    assert_eq!(
+        json["columns"][IDX_COLUMN].as_array().unwrap().len(),
+        all_keys.len()
+    );
     for col_name in &all_columns {
-        let col_values = columns[*col_name].as_array().unwrap();
-        assert_eq!(
-            col_values.len(),
-            all_keys.len(),
-            "column {col_name} row count mismatch"
-        );
+        let col_values = scatter(&json, col_name, all_keys.len());
 
         for (i, key) in all_keys.iter().enumerate() {
             let row = &csv_data[*key];
@@ -251,8 +266,7 @@ async fn test_single_column() {
     let body = json!({"keys": {"anime_id": all_keys}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
-    let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();
-    assert_eq!(values.len(), all_keys.len());
+    let values = scatter(&json, "above_five_star_ratio", all_keys.len());
 
     for (i, key) in all_keys.iter().enumerate() {
         let expected = csv_data[*key].floats["above_five_star_ratio"];
@@ -269,6 +283,7 @@ async fn test_single_row_single_column() {
     let body = json!({"keys": {"anime_id": [key]}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
+    assert_eq!(json["columns"][IDX_COLUMN], json!([0]));
     let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();
     assert_eq!(values.len(), 1);
 
@@ -291,21 +306,17 @@ async fn test_mixed_existing_and_missing_keys() {
     let body = json!({"keys": {"anime_id": all_keys}, "columns": ["above_five_star_ratio"]});
     let json = fetch_json(router, body).await;
 
-    let values = json["columns"]["above_five_star_ratio"].as_array().unwrap();
-    assert_eq!(values.len(), all_keys.len());
+    // Only the 5 real keys come back, tagged with their positions 0..5
+    let idx = json["columns"][IDX_COLUMN].as_array().unwrap();
+    assert_eq!(idx.len(), real_keys.len());
+    let values = scatter(&json, "above_five_star_ratio", all_keys.len());
 
-    // Real keys should match CSV data
     for (i, key) in real_keys.iter().enumerate() {
         let expected = csv_data[key].floats["above_five_star_ratio"];
         assert_float_eq(&values[i], expected);
     }
 
-    // Fake keys should be null
-    for item in values.iter().take(10).skip(5) {
-        assert!(
-            item.is_null(),
-            "expected null for missing key, got {}",
-            item
-        );
+    for item in values.iter().skip(real_keys.len()) {
+        assert!(item.is_null(), "missing key must have no row, got {item}");
     }
 }

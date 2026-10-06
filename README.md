@@ -55,16 +55,15 @@ from murr.client import Client
 async def main():
     async with Client("http://localhost:8080") as db:
         # fetch columns for a batch of document keys
-        result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])
+        result = await db.read("docs", {"doc_id": ["doc_1", "nope", "doc_5"]}, columns=["score", "category"])
         print(result.to_pandas())
 
 asyncio.run(main())
 
-# Output:
-#    score category
-# 0   0.95       ml
-# 1   0.72    infra
-# 2   0.68      ops
+# Output: only found keys come back, _idx is the key's position in the request
+#    _idx  score category
+# 0     0   0.95       ml
+# 1     2   0.68      ops
 ```
 
 ## Why Murr?
@@ -128,18 +127,26 @@ async def main():
         })
         await db.write("docs", pa.Table.from_pandas(df))
 
-        # fetch specific columns for a few keys
-        result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])
+        # fetch specific columns for a few keys, one of them missing
+        result = await db.read("docs", {"doc_id": ["doc_1", "nope", "doc_5"]}, columns=["score", "category"])
         print(result.to_pandas())
 
 asyncio.run(main())
 
-# Output:
-#   score category
-# 0   0.95       ml
-# 1   0.72    infra
-# 2   0.68      ops
+# Output: a missing key has no row. _idx is the position of the key in the
+# request, so rows can be joined back to it in any order.
+#    _idx  score category
+# 0     0   0.95       ml
+# 1     2   0.68      ops
 
+```
+
+The same `_idx` column leads every fetch response over HTTP JSON, Arrow IPC and Arrow Flight:
+
+```shell
+curl -XPOST http://localhost:8080/api/v1/table/docs/fetch -H "Content-Type: application/json" \
+  -d '{"keys": {"doc_id": ["doc_1", "nope", "doc_5"]}, "columns": ["score"]}'
+# {"columns": {"_idx": [0, 2], "score": [0.95, 0.68]}}
 ```
 
 ## Benchmarks

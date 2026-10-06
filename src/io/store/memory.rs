@@ -41,10 +41,9 @@ impl Store for MemoryStore {
             .tables
             .get(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
-        for k in keys {
-            match rows.get(*k) {
-                Some(v) => builder.add_row(v.as_slice())?,
-                None => builder.add_empty()?,
+        for (i, k) in keys.iter().enumerate() {
+            if let Some(v) = rows.get(*k) {
+                builder.add_row(i, v.as_slice())?;
             }
         }
         builder.build()

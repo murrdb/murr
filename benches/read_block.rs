@@ -25,6 +25,7 @@ fn bench(c: &mut Criterion) {
     let table = Table::create(store, "bench", dataset.table_schema().clone()).unwrap();
     let opts = BenchOpts {
         key_counts: &[1000],
+        hit_rates: &[1.0, 0.02],
         sample_size: 100,
         write_batch_size: 1_000_000,
         group_name: "read_block",
