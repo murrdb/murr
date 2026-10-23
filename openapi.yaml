@@ -155,6 +155,12 @@ paths:
       description: |
         Writes columnar data as a new segment. Request format depends on
         the Content-Type header. Supports JSON columnar format or Arrow IPC.
+
+        Key columns are required. Value columns may be omitted: for each
+        omitted column the write copies the stored value for that key, or
+        writes a null when the key is new and the column is nullable. A new
+        key that omits a non-nullable column is rejected. A listed column
+        overwrites the stored value, including with null.
       parameters:
         - $ref: "#/components/parameters/TableName"
       requestBody:

@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    core::{FetchRequest, MurrError, TableSchema},
+    core::{FetchRequest, IDX_COLUMN, MurrError, TableSchema},
     io::{
         codec::ColumnDecoder,
         coerce::Coercion,
@@ -15,8 +15,9 @@ use crate::{
     },
 };
 use arrow::{
-    array::{Array, RecordBatch},
-    datatypes::Schema,
+    array::{Array, RecordBatch, UInt32Array},
+    compute::take,
+    datatypes::{Field, Schema},
 };
 
 pub struct Table<S: Store> {
@@ -58,6 +59,97 @@ impl<S: Store> Table<S> {
     }
 
     pub fn write(&self, batch: &RecordBatch) -> Result<(), MurrError> {
+        for (name, _) in self.table.key_columns() {
+            if batch.schema().index_of(name).is_err() {
+                return Err(MurrError::TableError(format!(
+                    "missing key column '{name}'"
+                )));
+            }
+        }
+        let omitted: Vec<String> = self
+            .table
+            .columns
+            .iter()
+            .filter(|(name, col)| !col.key && batch.schema().index_of(name).is_err())
+            .map(|(name, _)| name.clone())
+            .collect();
+        if omitted.is_empty() {
+            self.write_full(batch)
+        } else {
+            let merged = self.merge_omitted(batch, &omitted)?;
+            self.write_full(&merged)
+        }
+    }
+
+    fn merge_omitted(
+        &self,
+        batch: &RecordBatch,
+        omitted: &[String],
+    ) -> Result<RecordBatch, MurrError> {
+        let incoming = self.coercion.apply(batch)?;
+        let key_indices: Vec<usize> = self
+            .table
+            .key_columns()
+            .map(|(name, _)| incoming.schema().index_of(name).expect("key checked"))
+            .collect();
+        let keys = incoming
+            .project(&key_indices)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))?;
+        let existing = self.read(&FetchRequest {
+            keys,
+            columns: omitted.to_vec(),
+        })?;
+
+        let idx = existing
+            .column_by_name(IDX_COLUMN)
+            .and_then(|c| c.as_any().downcast_ref::<UInt32Array>())
+            .ok_or_else(|| MurrError::TableError("backfill read missing _idx".into()))?;
+        let mut found_at: Vec<Option<u32>> = vec![None; incoming.num_rows()];
+        for row in 0..existing.num_rows() {
+            found_at[idx.value(row) as usize] = Some(row as u32);
+        }
+
+        for name in omitted {
+            let nullable = self
+                .table
+                .columns
+                .get(name)
+                .map(|c| c.nullable)
+                .unwrap_or(true);
+            if nullable {
+                continue;
+            }
+            if found_at.iter().any(Option::is_none) {
+                return Err(MurrError::TableError(format!(
+                    "column '{name}' is required for new keys"
+                )));
+            }
+        }
+
+        let take_idx = UInt32Array::from(found_at);
+        let canonical: Schema = (&self.table).into();
+        let mut fields = Vec::with_capacity(canonical.fields().len());
+        let mut arrays = Vec::with_capacity(canonical.fields().len());
+        for field in canonical.fields() {
+            let name = field.name();
+            if let Ok(i) = incoming.schema().index_of(name) {
+                fields.push(incoming.schema().field(i).clone());
+                arrays.push(incoming.column(i).clone());
+            } else {
+                let src = existing.column_by_name(name).ok_or_else(|| {
+                    MurrError::TableError(format!("backfill read missing column '{name}'"))
+                })?;
+                let taken =
+                    take(src, &take_idx, None).map_err(|e| MurrError::ArrowError(e.to_string()))?;
+                fields.push(Field::new(name, taken.data_type().clone(), true));
+                arrays.push(taken);
+            }
+        }
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
+            .map_err(|e| MurrError::ArrowError(e.to_string()))
+    }
+
+    fn write_full(&self, batch: &RecordBatch) -> Result<(), MurrError> {
         let canonical: Schema = (&self.table).into();
         let indices: Vec<usize> = canonical
             .fields()
@@ -367,6 +459,162 @@ mod tests {
         assert_eq!(out.schema().field(0).name(), IDX_COLUMN);
         assert_eq!(out.schema().field(1).name(), "score");
         assert_eq!(project_f32(&out, "score").value(0), 1.5);
+    }
+
+    fn schema_id_score_label() -> TableSchema {
+        let mut columns = IndexMap::new();
+        columns.insert("id".into(), column(DTypeName::Utf8, false, true));
+        columns.insert("score".into(), column(DTypeName::Float32, true, false));
+        columns.insert("label".into(), column(DTypeName::Utf8, true, false));
+        TableSchema { columns }
+    }
+
+    fn batch_id_score_label(
+        ids: &[&str],
+        scores: &[Option<f32>],
+        labels: &[Option<&str>],
+    ) -> RecordBatch {
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("score", DataType::Float32, true),
+                Field::new("label", DataType::Utf8, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(ids.to_vec())),
+                Arc::new(Float32Array::from(scores.to_vec())),
+                Arc::new(StringArray::from(labels.to_vec())),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn write_backfill_one_column_keeps_the_rest() {
+        let table = Table::create(store(), "t", schema_id_score_label()).unwrap();
+        table
+            .write(&batch_id_score_label(
+                &["a", "b"],
+                &[Some(1.0), Some(2.0)],
+                &[Some("x"), Some("y")],
+            ))
+            .unwrap();
+
+        let patch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("score", DataType::Float32, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(vec!["a"])),
+                Arc::new(Float32Array::from(vec![Some(9.0)])),
+            ],
+        )
+        .unwrap();
+        table.write(&patch).unwrap();
+
+        let out = table
+            .read(&fetch(&["a", "b"], &["score", "label"]))
+            .unwrap();
+        assert_eq!(scatter_f32(&out, "score", 2), [Some(9.0), Some(2.0)]);
+        let labels = project_string(&out, "label");
+        let mut by_id = vec![None; 2];
+        for (row, position) in project_idx(&out).into_iter().enumerate() {
+            by_id[position as usize] = Some(labels.value(row).to_string());
+        }
+        assert_eq!(by_id, [Some("x".into()), Some("y".into())]);
+    }
+
+    #[test]
+    fn write_new_key_omitted_nullable_is_null() {
+        let table = Table::create(store(), "t", schema_id_score_label()).unwrap();
+        table
+            .write(&batch_id_score_label(&["a"], &[Some(1.0)], &[Some("x")]))
+            .unwrap();
+
+        let patch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("score", DataType::Float32, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(vec!["b"])),
+                Arc::new(Float32Array::from(vec![Some(2.0)])),
+            ],
+        )
+        .unwrap();
+        table.write(&patch).unwrap();
+
+        let out = table.read(&fetch(&["b"], &["score", "label"])).unwrap();
+        assert_eq!(out.num_rows(), 1);
+        assert_eq!(project_f32(&out, "score").value(0), 2.0);
+        assert!(project_string(&out, "label").is_null(0));
+    }
+
+    #[test]
+    fn write_new_key_omitted_non_nullable_errors() {
+        let mut columns = IndexMap::new();
+        columns.insert("id".into(), column(DTypeName::Utf8, false, true));
+        columns.insert(
+            "score".into(),
+            ColumnSchema {
+                dtype: DTypeName::Float32,
+                nullable: false,
+                key: false,
+                strict: true,
+            },
+        );
+        columns.insert("label".into(), column(DTypeName::Utf8, true, false));
+        let table = Table::create(store(), "t", TableSchema { columns }).unwrap();
+        table
+            .write(
+                &RecordBatch::try_new(
+                    Arc::new(Schema::new(vec![
+                        Field::new("id", DataType::Utf8, false),
+                        Field::new("score", DataType::Float32, false),
+                        Field::new("label", DataType::Utf8, true),
+                    ])),
+                    vec![
+                        Arc::new(StringArray::from(vec!["a"])),
+                        Arc::new(Float32Array::from(vec![1.0])),
+                        Arc::new(StringArray::from(vec![Some("x")])),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let patch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("label", DataType::Utf8, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(vec!["b"])),
+                Arc::new(StringArray::from(vec![Some("z")])),
+            ],
+        )
+        .unwrap();
+        let err = table.write(&patch).unwrap_err();
+        assert!(matches!(err, MurrError::TableError(_)));
+        assert!(err.to_string().contains("score"));
+    }
+
+    #[test]
+    fn write_missing_key_column_errors() {
+        let table = Table::create(store(), "t", schema_id_score()).unwrap();
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                "score",
+                DataType::Float32,
+                true,
+            )])),
+            vec![Arc::new(Float32Array::from(vec![Some(1.0)]))],
+        )
+        .unwrap();
+        let err = table.write(&batch).unwrap_err();
+        assert!(matches!(err, MurrError::TableError(_)));
+        assert!(err.to_string().contains("id"));
     }
 
     #[test]

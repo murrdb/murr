@@ -30,6 +30,13 @@ Murr is a caching layer for ML/AI data serving that sits between your batch data
 curl -d @0000.parquet -H "Content-Type: application/vnd.apache.parquet" \
   -XPUT http://localhost:8080/api/v1/table/yolo/write
 ```
+A later write can send only the columns that changed. Keys are required;
+omitted columns keep the values already stored for those keys:
+```shell
+curl -XPUT http://localhost:8080/api/v1/table/docs/write \
+  -H "Content-Type: application/json" \
+  -d '{"columns":{"doc_id":["doc_1","doc_3"],"score":[0.99,0.80]}}'
+```
 - **Zero-copy wire protocol**: no conversion needed when building `np.ndarray`, `pd.DataFrame` or `pt.Tensor` from API responses. Sure, Redis is fast, but parsing its replies is not (especially in Python!).
 ```python
 result = await db.read("docs", {"doc_id": ["doc_1", "doc_3", "doc_5"]}, columns=["score", "category"])

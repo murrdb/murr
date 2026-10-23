@@ -77,7 +77,7 @@ Python bindings live in a separate repo: [shuttie/murr-python](https://github.co
 - `key.rs` — `KeySchema` (key columns of a table, encodes a batch into key bytes) and `KeyBatch` (encoded key columns, concatenated row-wise into final keys)
 - `row/{read,write}.rs` — `ReadRow` / `WriteRow` byte-level row codec: `[null_bitset][static columns][dynamic payloads]`; knows nothing about keys
 - `codec/` — one unit struct per dtype implementing `ArrowCodec` (`make_encoder` / `make_decoder` for row values), `JsonCodec`, and for utf8/int dtypes `KeyEncoder` (whole key column → `BinaryArray`); generic impls in `primitive.rs`
-- `table/mod.rs` — `Table<S: Store>` glue between Arrow `RecordBatch` and the byte-level row format; `read(&FetchRequest)` and `write(batch)` both take `&self`
+- `table/mod.rs` — `Table<S: Store>` glue between Arrow `RecordBatch` and the byte-level row format; `read(&FetchRequest)` and `write(batch)` both take `&self`. `write` accepts a subset of value columns and fills omitted ones from the stored row (see `rfcs/0005-column-backfill.md`)
 - `fs/` — experimental S3/local Filesystem trait stub (unused today)
 
 **`service/`** — High-level service wrapping the storage layer
@@ -143,7 +143,7 @@ storage:
   mmap: {}              # or `block: {}` — pick exactly one; inner keys are RocksDB tunables
 ```
 
-Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `columns` (each with `dtype`, optional `nullable` and optional `key`; at least one column must have `key: true` together with `nullable: false`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards. `POST /api/v1/table/{name}/compact` runs a full compaction of the table and returns only once it has finished.
+Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `columns` (each with `dtype`, optional `nullable` and optional `key`; at least one column must have `key: true` together with `nullable: false`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards. `POST /api/v1/table/{name}/compact` runs a full compaction of the table and returns only once it has finished. `PUT /api/v1/table/{name}/write` may omit value columns; omitted fields are copied from the existing row.
 
 Supported dtypes: `utf8`, `bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `float32`, `float64`
 
