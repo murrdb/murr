@@ -30,6 +30,33 @@ paths:
               schema:
                 type: object
 
+  /api/v1/fetch:
+    post:
+      summary: Fetch from several tables in one request
+      operationId: fetchBatch
+      description: |
+        Runs several table fetches together and returns one sparse result per
+        request, in request order. Lookups run concurrently. The whole call
+        fails if any lookup fails. The body is JSON; Arrow IPC is not accepted
+        here because the tables can have different schemas.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchFetchRequest"
+      responses:
+        "200":
+          description: One result per request, in request order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchFetchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/table:
     get:
       summary: List all tables
@@ -255,6 +282,65 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/ColumnSchema"
+
+    BatchFetchRequest:
+      type: object
+      required: [requests]
+      additionalProperties: false
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/TableFetchRequest"
+
+    TableFetchRequest:
+      type: object
+      required: [table, keys, columns]
+      additionalProperties: false
+      properties:
+        table:
+          type: string
+        keys:
+          type: object
+          description: One array of values per key column of the table.
+          additionalProperties:
+            type: array
+            items: {}
+        columns:
+          type: array
+          items:
+            type: string
+
+    BatchFetchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/TableFetchResult"
+
+    TableFetchResult:
+      type: object
+      required: [table, columns]
+      properties:
+        table:
+          type: string
+        columns:
+          type: object
+          description: |
+            `_idx` plus one array per requested column. Same sparse shape as a
+            single-table fetch response.
+          required: [_idx]
+          properties:
+            _idx:
+              type: array
+              items:
+                type: integer
+                minimum: 0
+          additionalProperties:
+            type: array
+            items: {}
 
     FetchRequest:
       type: object

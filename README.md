@@ -149,6 +149,20 @@ curl -XPOST http://localhost:8080/api/v1/table/docs/fetch -H "Content-Type: appl
 # {"columns": {"_idx": [0, 2], "score": [0.95, 0.68]}}
 ```
 
+Several tables in one round trip, same sparse shape per result:
+
+```shell
+curl -XPOST http://localhost:8080/api/v1/fetch -H "Content-Type: application/json" \
+  -d '{"requests":[
+    {"table":"user","keys":{"id":["u1","u2"]},"columns":["f1"]},
+    {"table":"item","keys":{"id":["i1"]},"columns":["price"]}
+  ]}'
+# {"results":[
+#   {"table":"user","columns":{"_idx":[0,1],"f1":[0.1,0.2]}},
+#   {"table":"item","columns":{"_idx":[0],"price":[3.5]}}
+# ]}
+```
+
 ## Benchmarks
 
 Full benchmark suite with reproduction steps: [murrdb/murr-benchmark](https://github.com/murrdb/murr-benchmark).

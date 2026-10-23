@@ -82,20 +82,20 @@ Python bindings live in a separate repo: [shuttie/murr-python](https://github.co
 
 **`service/`** — High-level service wrapping the storage layer
 - `MurrService` — Owns `Config`, holds `tokio::sync::RwLock<HashMap<String, Table<RocksDBStore>>>` and a shared `Arc<std::sync::RwLock<RocksDBStore>>`; constructor takes `Config` (not a path)
-- `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, &FetchRequest)` → `drop_table(table_name)` flow; `compact(table_name)` runs a blocking full compaction under the store read lock
+- `create(table_name, schema)` → `write(table_name, batch)` → `read(table_name, &FetchRequest)` / `read_many(&[(table, FetchRequest)])` → `drop_table(table_name)` flow; `compact(table_name)` runs a blocking full compaction under the store read lock; `read_many` fans out with Rayon onto `read`
 - `config()` accessor exposes config to API layers (serve methods read listen addresses from it)
 - Startup rehydration: walks `store.manifest().tables` and opens a `Table` per entry; missing manifest entries → CF is invisible to the service
 
 **`api/`** — shared wire adaptors, all as `TryFrom` impls
 - `batch.rs` — payload → `RecordBatch`: `IpcStream`, `ParquetFile`, `JsonColumns`
-- `fetch.rs` — wire formats → `FetchRequest`: `IpcFetchRequest` (keys as batches, columns as a JSON array in the `columns` schema metadata entry) and `(JsonFetchRequest, &TableSchema)`
+- `fetch.rs` — wire formats → `FetchRequest`: `IpcFetchRequest` (keys as batches, columns as a JSON array in the `columns` schema metadata entry), `(JsonFetchRequest, &TableSchema)`, and `JsonBatchFetchRequest` for `POST /api/v1/fetch`
 
 **`api/http/`** — Axum HTTP API layer
 - `mod.rs` — `MurrHttpService` struct: `new()`, `router()`, `serve()` (reads listen addr from config)
 - `handlers.rs` — Route handlers with `State<Arc<MurrService>>` extractors; request bodies are dispatched by a `match` on the `ContentType` enum (JSON, Arrow IPC, Parquet), unknown or missing content type is a 400
 - `convert.rs` — `FetchResponse` (batch→JSON) and `WriteRequest` (JSON→batch) conversions
 - `error.rs` — `ApiError` newtype mapping `MurrError` → HTTP status codes
-- Content negotiation: fetch takes JSON or Arrow IPC requests (`Content-Type`) and returns JSON or Arrow IPC (`Accept`); write takes JSON, Arrow IPC or Parquet (`Content-Type`)
+- Content negotiation: fetch takes JSON or Arrow IPC requests (`Content-Type`) and returns JSON or Arrow IPC (`Accept`); `POST /api/v1/fetch` is JSON-only (mixed table schemas); write takes JSON, Arrow IPC or Parquet (`Content-Type`)
 
 **`api/flight/`** — Arrow Flight gRPC layer (read-only)
 - `mod.rs` — `MurrFlightService` implementing `FlightService` trait via tonic
@@ -143,7 +143,7 @@ storage:
   mmap: {}              # or `block: {}` — pick exactly one; inner keys are RocksDB tunables
 ```
 
-Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `columns` (each with `dtype`, optional `nullable` and optional `key`; at least one column must have `key: true` together with `nullable: false`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards. `POST /api/v1/table/{name}/compact` runs a full compaction of the table and returns only once it has finished.
+Tables are created at runtime via the API (`PUT /api/v1/table/{name}`) with a `TableSchema` JSON body specifying `columns` (each with `dtype`, optional `nullable` and optional `key`; at least one column must have `key: true` together with `nullable: false`). `DELETE /api/v1/table/{name}` drops a table (data, column family, and manifest entry); the name can be reused afterwards. `POST /api/v1/table/{name}/compact` runs a full compaction of the table and returns only once it has finished. `POST /api/v1/fetch` runs several table fetches in one JSON request (see `rfcs/0004-batch-fetch.md`).
 
 Supported dtypes: `utf8`, `bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `float32`, `float64`
 

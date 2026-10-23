@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use mime::Mime;
 
 use crate::api::batch::{IpcStream, ParquetFile};
-use crate::api::fetch::{IpcFetchRequest, JsonFetchRequest};
+use crate::api::fetch::{IpcFetchRequest, JsonBatchFetchRequest, JsonFetchRequest};
 use crate::core::{FetchRequest, MurrError, TableSchema};
 use crate::io::store::Store;
 use crate::service::MurrService;
@@ -133,6 +133,49 @@ pub async fn fetch<S: Store>(
             let FetchResponse(json) = FetchResponse::try_from(&batch).map_err(ApiError)?;
             Ok(Json(json).into_response())
         }
+    })
+    .await
+    .map_err(join_to_api_error)?
+}
+
+pub async fn fetch_batch<S: Store>(
+    State(service): State<Arc<MurrService<S>>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let content_type = ContentType::try_from(&headers)?;
+    if !matches!(content_type, ContentType::Json) {
+        return Err(ApiError(MurrError::TableError(
+            "batch fetch requests must be JSON".into(),
+        )));
+    }
+
+    let svc = service.clone();
+    tokio::task::spawn_blocking(move || -> Result<Json<serde_json::Value>, ApiError> {
+        let body: JsonBatchFetchRequest = serde_json::from_slice(&body)
+            .map_err(|e| ApiError(MurrError::TableError(format!("invalid JSON: {e}"))))?;
+
+        let mut prepared = Vec::with_capacity(body.requests.len());
+        for item in body.requests {
+            let (table, json_req) = item.into_fetch();
+            let schema = svc.get_schema(&table)?;
+            let request = FetchRequest::try_from((json_req, &schema))?;
+            prepared.push((table, request));
+        }
+
+        let batches = svc.read_many(&prepared)?;
+        let mut results = Vec::with_capacity(batches.len());
+        for ((table, _), batch) in prepared.iter().zip(batches.iter()) {
+            let FetchResponse(json) = FetchResponse::try_from(batch).map_err(ApiError)?;
+            let columns = json.get("columns").cloned().ok_or_else(|| {
+                ApiError(MurrError::TableError("missing columns in response".into()))
+            })?;
+            results.push(serde_json::json!({
+                "table": table,
+                "columns": columns,
+            }));
+        }
+        Ok(Json(serde_json::json!({ "results": results })))
     })
     .await
     .map_err(join_to_api_error)?

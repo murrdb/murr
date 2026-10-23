@@ -558,3 +558,91 @@ async fn test_float64_write_needs_relaxed_column() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["columns"]["score"], json!([0.5]));
 }
+
+async fn create_scored_table(router: &Router, name: &str, keys: &[&str], scores: &[f32]) {
+    let req = json_request(
+        Method::PUT,
+        &format!("/api/v1/table/{name}"),
+        &table_schema_json(),
+    );
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let req = Request::put(format!("/api/v1/table/{name}/write"))
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(arrow_ipc_batch(keys, scores)))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_batch_fetch_two_tables() {
+    let (_dir, router) = setup().await;
+    create_scored_table(&router, "users", &["u1", "u2"], &[1.0, 2.0]).await;
+    create_scored_table(&router, "items", &["i1", "i2"], &[10.0, 20.0]).await;
+
+    let body = json!({
+        "requests": [
+            {"table": "users", "keys": {"id": ["u2", "missing"]}, "columns": ["score"]},
+            {"table": "items", "keys": {"id": ["i1"]}, "columns": ["score"]},
+            {"table": "users", "keys": {"id": ["u1"]}, "columns": ["score"]}
+        ]
+    });
+    let req = json_request(Method::POST, "/api/v1/fetch", &body);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["results"][0]["table"], "users");
+    assert_eq!(json["results"][0]["columns"]["_idx"], json!([0]));
+    assert_eq!(json["results"][0]["columns"]["score"], json!([2.0]));
+    assert_eq!(json["results"][1]["table"], "items");
+    assert_eq!(json["results"][1]["columns"]["score"], json!([10.0]));
+    assert_eq!(json["results"][2]["table"], "users");
+    assert_eq!(json["results"][2]["columns"]["score"], json!([1.0]));
+}
+
+#[tokio::test]
+async fn test_batch_fetch_empty() {
+    let (_dir, router) = setup().await;
+    let req = json_request(Method::POST, "/api/v1/fetch", &json!({"requests": []}));
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["results"], json!([]));
+}
+
+#[tokio::test]
+async fn test_batch_fetch_missing_table() {
+    let (_dir, router) = setup().await;
+    create_scored_table(&router, "users", &["u1"], &[1.0]).await;
+    let body = json!({
+        "requests": [
+            {"table": "users", "keys": {"id": ["u1"]}, "columns": ["score"]},
+            {"table": "nope", "keys": {"id": ["u1"]}, "columns": ["score"]}
+        ]
+    });
+    let req = json_request(Method::POST, "/api/v1/fetch", &body);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(json["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_batch_fetch_rejects_arrow_body() {
+    let (_dir, router) = setup().await;
+    let req = Request::post("/api/v1/fetch")
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(vec![1, 2, 3]))
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(json["error"].as_str().unwrap().contains("JSON"));
+}
+
+#[tokio::test]
+async fn test_openapi_includes_batch_fetch() {
+    let (_dir, router) = setup().await;
+    let req = Request::get("/openapi.json").body(Body::empty()).unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["paths"]["/api/v1/fetch"].is_object());
+}
