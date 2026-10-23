@@ -558,3 +558,99 @@ async fn test_float64_write_needs_relaxed_column() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["columns"]["score"], json!([0.5]));
 }
+
+fn two_col_schema() -> Value {
+    json!({
+        "columns": {
+            "id": {"dtype": "utf8", "nullable": false, "key": true},
+            "score": {"dtype": "float32", "nullable": true},
+            "label": {"dtype": "utf8", "nullable": true}
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_column_backfill_keeps_other_columns() {
+    let (_dir, router) = setup().await;
+    let req = json_request(Method::PUT, "/api/v1/table/docs", &two_col_schema());
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let write = json!({
+        "columns": {
+            "id": ["a", "b"],
+            "score": [1.0, 2.0],
+            "label": ["x", "y"]
+        }
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/docs/write", &write);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let patch = json!({
+        "columns": {
+            "id": ["a"],
+            "score": [9.0]
+        }
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/docs/write", &patch);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fetch = json!({"keys": {"id": ["a", "b"]}, "columns": ["score", "label"]});
+    let req = json_request(Method::POST, "/api/v1/table/docs/fetch", &fetch);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(scatter_json(&json, "score", 2), [json!(9.0), json!(2.0)]);
+    assert_eq!(scatter_json(&json, "label", 2), [json!("x"), json!("y")]);
+}
+
+#[tokio::test]
+async fn test_column_backfill_new_key_nullable_omitted() {
+    let (_dir, router) = setup().await;
+    let req = json_request(Method::PUT, "/api/v1/table/docs", &two_col_schema());
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let write = json!({
+        "columns": {
+            "id": ["a"],
+            "score": [1.0],
+            "label": ["x"]
+        }
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/docs/write", &write);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let patch = json!({
+        "columns": {
+            "id": ["b"],
+            "score": [2.0]
+        }
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/docs/write", &patch);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fetch = json!({"keys": {"id": ["b"]}, "columns": ["score", "label"]});
+    let req = json_request(Method::POST, "/api/v1/table/docs/fetch", &fetch);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"], json!([2.0]));
+    assert_eq!(json["columns"]["label"], json!([null]));
+}
+
+#[tokio::test]
+async fn test_write_without_key_column_is_bad_request() {
+    let (_dir, router) = setup().await;
+    let req = json_request(Method::PUT, "/api/v1/table/docs", &two_col_schema());
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let write = json!({"columns": {"score": [1.0]}});
+    let req = json_request(Method::PUT, "/api/v1/table/docs/write", &write);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(json["error"].as_str().unwrap().contains("id"));
+}

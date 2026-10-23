@@ -37,10 +37,23 @@ pub struct WriteRequest {
 
 impl WriteRequest {
     pub fn into_record_batch(self, schema: &TableSchema) -> Result<RecordBatch, MurrError> {
+        for (name, _) in schema.key_columns() {
+            if !self.columns.contains_key(name) {
+                return Err(MurrError::TableError(format!(
+                    "missing key column '{name}'"
+                )));
+            }
+        }
+        let columns: Vec<&str> = schema
+            .columns
+            .keys()
+            .map(String::as_str)
+            .filter(|name| self.columns.contains_key(*name))
+            .collect();
         RecordBatch::try_from(JsonColumns {
             values: &self.columns,
             schema,
-            columns: schema.columns.keys().map(String::as_str).collect(),
+            columns,
         })
     }
 }
@@ -262,5 +275,29 @@ mod tests {
         let weight_vals = cols.get("weight").unwrap().as_array().unwrap();
         assert_eq!(weight_vals[0], Value::from(9.81));
         assert!(weight_vals[1].is_null());
+    }
+
+    #[test]
+    fn test_partial_write_omits_value_columns() {
+        let mut columns = HashMap::new();
+        columns.insert("name".to_string(), vec![Value::String("alice".into())]);
+        columns.insert("score".to_string(), vec![Value::from(1.5)]);
+        let write = WriteRequest { columns };
+        let batch = write.into_record_batch(&test_table_schema()).unwrap();
+        assert_eq!(batch.num_columns(), 2);
+        assert!(batch.column_by_name("name").is_some());
+        assert!(batch.column_by_name("score").is_some());
+        assert!(batch.column_by_name("weight").is_none());
+    }
+
+    #[test]
+    fn test_partial_write_missing_key_errors() {
+        let mut columns = HashMap::new();
+        columns.insert("score".to_string(), vec![Value::from(1.5)]);
+        let err = WriteRequest { columns }
+            .into_record_batch(&test_table_schema())
+            .unwrap_err();
+        assert!(matches!(err, MurrError::TableError(_)));
+        assert!(err.to_string().contains("name"));
     }
 }
