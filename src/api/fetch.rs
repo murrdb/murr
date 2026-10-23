@@ -42,6 +42,34 @@ pub struct JsonFetchRequest {
     pub columns: Vec<String>,
 }
 
+/// One table lookup inside a batch fetch: the table name plus a JSON fetch body.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonTableFetchRequest {
+    pub table: String,
+    pub keys: HashMap<String, Vec<Value>>,
+    pub columns: Vec<String>,
+}
+
+impl JsonTableFetchRequest {
+    pub fn into_fetch(self) -> (String, JsonFetchRequest) {
+        (
+            self.table,
+            JsonFetchRequest {
+                keys: self.keys,
+                columns: self.columns,
+            },
+        )
+    }
+}
+
+/// Body of `POST /api/v1/fetch`: several table lookups, executed together.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonBatchFetchRequest {
+    pub requests: Vec<JsonTableFetchRequest>,
+}
+
 /// JSON carries no types, so the key arrays are built by the dtypes of the table schema.
 impl TryFrom<(JsonFetchRequest, &TableSchema)> for FetchRequest {
     type Error = MurrError;
@@ -64,5 +92,34 @@ impl TryFrom<(JsonFetchRequest, &TableSchema)> for FetchRequest {
             keys,
             columns: request.columns,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_body_parses_two_tables() {
+        let body: JsonBatchFetchRequest = serde_json::from_str(
+            r#"{
+                "requests": [
+                    {"table": "user", "keys": {"id": ["u1"]}, "columns": ["f1"]},
+                    {"table": "item", "keys": {"id": ["i1", "i2"]}, "columns": ["price"]}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(body.requests.len(), 2);
+        assert_eq!(body.requests[0].table, "user");
+        assert_eq!(body.requests[1].columns, ["price"]);
+    }
+
+    #[test]
+    fn batch_body_rejects_unknown_fields() {
+        let err =
+            serde_json::from_str::<JsonBatchFetchRequest>(r#"{"requests": [], "extra": true}"#)
+                .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
     }
 }

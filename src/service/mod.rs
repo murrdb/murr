@@ -128,6 +128,20 @@ impl<S: Store> MurrService<S> {
             .ok_or_else(|| MurrError::TableNotFound(table_name.to_string()))?;
         table.read(request)
     }
+
+    /// Run several fetches at once. Results line up with `requests`. Each lookup
+    /// takes a store read lock, so different tables (and the same table) can
+    /// proceed in parallel.
+    pub fn read_many(
+        &self,
+        requests: &[(String, FetchRequest)],
+    ) -> Result<Vec<RecordBatch>, MurrError> {
+        use rayon::prelude::*;
+        requests
+            .par_iter()
+            .map(|(table, request)| self.read(table, request))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -377,5 +391,51 @@ mod tests {
 
         let result = svc.read("empty", &fetch(&["a"], &["score"])).unwrap();
         assert_eq!(result.num_rows(), 0);
+    }
+
+    #[test]
+    fn test_read_many_two_tables() {
+        let dir = TempDir::new().unwrap();
+        let svc = build_service(test_config(&dir));
+
+        svc.create("users", test_schema()).unwrap();
+        svc.create("items", test_schema()).unwrap();
+        svc.write("users", &test_batch(&["u1", "u2"], &[1.0, 2.0]))
+            .unwrap();
+        svc.write("items", &test_batch(&["i1"], &[9.0])).unwrap();
+
+        let batches = svc
+            .read_many(&[
+                ("users".into(), fetch(&["u2", "u1"], &["score"])),
+                ("items".into(), fetch(&["missing", "i1"], &["score"])),
+                ("users".into(), fetch(&["u1"], &["score"])),
+            ])
+            .unwrap();
+
+        assert_eq!(batches.len(), 3);
+        assert_eq!(scores_by_position(&batches[0], 2), [Some(2.0), Some(1.0)]);
+        assert_eq!(scores_by_position(&batches[1], 2), [None, Some(9.0)]);
+        assert_eq!(scores_by_position(&batches[2], 1), [Some(1.0)]);
+    }
+
+    #[test]
+    fn test_read_many_missing_table_errors() {
+        let dir = TempDir::new().unwrap();
+        let svc = build_service(test_config(&dir));
+        svc.create("users", test_schema()).unwrap();
+        svc.write("users", &test_batch(&["u1"], &[1.0])).unwrap();
+
+        let err = svc.read_many(&[
+            ("users".into(), fetch(&["u1"], &["score"])),
+            ("nope".into(), fetch(&["u1"], &["score"])),
+        ]);
+        assert!(matches!(err, Err(MurrError::TableNotFound(_))));
+    }
+
+    #[test]
+    fn test_read_many_empty() {
+        let dir = TempDir::new().unwrap();
+        let svc = build_service(test_config(&dir));
+        assert!(svc.read_many(&[]).unwrap().is_empty());
     }
 }

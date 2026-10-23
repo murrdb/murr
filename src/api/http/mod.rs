@@ -35,6 +35,7 @@ impl<S: Store> MurrHttpService<S> {
                 "/api/v1/table/{name}",
                 put(handlers::create_table::<S>).delete(handlers::drop_table::<S>),
             )
+            .route("/api/v1/fetch", post(handlers::fetch_batch::<S>))
             .route("/api/v1/table/{name}/fetch", post(handlers::fetch::<S>))
             .route(
                 "/api/v1/table/{name}/write",
