@@ -57,7 +57,7 @@ rand = "0.10"
 http-body-util = "0.1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
-rstest = "0.27"
+rstest = "0.28"
 csv = "1"
 
 # pprof is Unix-only (depends on nix/libc) and fails to build on Windows MSVC;
