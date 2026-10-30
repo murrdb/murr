@@ -1,3 +1,5 @@
+mod batch;
+pub mod fetch;
 pub mod flight;
 pub mod http;
 

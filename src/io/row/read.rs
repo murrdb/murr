@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{ArrayRef, RecordBatch},
-    datatypes::{Field, Schema},
+    array::{ArrayRef, RecordBatch, UInt32Builder},
+    datatypes::{DataType, Field, Schema},
 };
 
 use crate::{
-    core::MurrError,
+    core::{IDX_COLUMN, MurrError},
     io::{
         codec::ColumnEncoder,
         schema::{SegmentColumnSchema, SegmentSchema},
@@ -55,17 +55,20 @@ impl<'a> ReadRow<'a> {
     }
 }
 
-/// Accumulates rows into Arrow column builders inside `Store::read`. Stores
-/// fan raw bytes through `add_row` / `add_empty`; the builder yields the final
-/// `RecordBatch` via `build`. Keeps slice lifetimes bounded by the store fn
-/// frame so backends like LMDB can hold a read txn across the iteration.
+/// Accumulates found rows into Arrow column builders inside `Store::read`. Stores
+/// call `add_row` with the request position of each hit and skip misses; `build`
+/// yields the final `RecordBatch`, led by the `IDX_COLUMN` of positions. Keeps
+/// slice lifetimes bounded by the store fn frame so backends like LMDB can hold
+/// a read txn across the iteration.
 pub struct ReadBatchBuilder<'a> {
     segment: &'a SegmentSchema,
     columns: Vec<&'a SegmentColumnSchema>,
+    idx: UInt32Builder,
     encoders: Vec<Box<dyn ColumnEncoder>>,
 }
 
 impl<'a> ReadBatchBuilder<'a> {
+    /// `capacity` is the number of requested keys, an upper bound on the rows built.
     pub fn new(
         segment: &'a SegmentSchema,
         columns: Vec<&'a SegmentColumnSchema>,
@@ -78,32 +81,32 @@ impl<'a> ReadBatchBuilder<'a> {
         Self {
             segment,
             columns,
+            idx: UInt32Builder::with_capacity(capacity),
             encoders,
         }
     }
 
-    pub fn add_row(&mut self, bytes: &[u8]) -> Result<(), MurrError> {
+    pub fn add_row(&mut self, position: usize, bytes: &[u8]) -> Result<(), MurrError> {
         let row = ReadRow::new(self.segment, bytes);
         for e in &mut self.encoders {
             e.add_row(&row)?;
         }
-        Ok(())
-    }
-
-    pub fn add_empty(&mut self) -> Result<(), MurrError> {
-        for e in &mut self.encoders {
-            e.add_empty()?;
-        }
+        self.idx.append_value(position as u32);
         Ok(())
     }
 
     pub fn build(mut self) -> Result<RecordBatch, MurrError> {
-        let arrays: Vec<ArrayRef> = self.encoders.iter_mut().map(|e| e.build()).collect();
-        let fields: Vec<Field> = self
-            .columns
-            .iter()
-            .map(|c| Field::new(&c.name, c.dtype.codec().arrow_dtype(), true))
-            .collect();
+        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(self.columns.len() + 1);
+        arrays.push(Arc::new(self.idx.finish()));
+        arrays.extend(self.encoders.iter_mut().map(|e| e.build()));
+
+        let mut fields: Vec<Field> = Vec::with_capacity(self.columns.len() + 1);
+        fields.push(Field::new(IDX_COLUMN, DataType::UInt32, false));
+        fields.extend(
+            self.columns
+                .iter()
+                .map(|c| Field::new(&c.name, c.dtype.codec().arrow_dtype(), true)),
+        );
         RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
             .map_err(|e| MurrError::ArrowError(e.to_string()))
     }

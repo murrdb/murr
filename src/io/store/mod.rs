@@ -29,6 +29,7 @@ impl KeyValue {
 
 pub trait Store: Send + Sync + 'static {
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError>;
+    fn drop_table(&mut self, table: &str) -> Result<(), MurrError>;
     fn write(
         &mut self,
         table: &str,

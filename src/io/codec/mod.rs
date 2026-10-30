@@ -15,7 +15,7 @@ pub mod utf8;
 #[cfg(test)]
 pub(crate) mod test_util;
 
-use arrow::array::{Array, ArrayRef};
+use arrow::array::{Array, ArrayRef, BinaryArray};
 use serde_json::Value;
 
 use crate::{
@@ -40,9 +40,15 @@ pub trait JsonCodec: Send + Sync {
     fn from_json(&self, vals: &[Value]) -> Result<ArrayRef, MurrError>;
 }
 
+/// Encodes a whole key column at once: one self-delimiting byte string per row,
+/// so that components of a compound key can be concatenated without ambiguity.
+/// Implemented only for dtypes which can be a key.
+pub trait KeyEncoder: Send + Sync {
+    fn encode_keys(&self, arr: &dyn Array) -> Result<BinaryArray, MurrError>;
+}
+
 pub trait ColumnEncoder: Send {
     fn add_row(&mut self, row: &ReadRow) -> Result<(), MurrError>;
-    fn add_empty(&mut self) -> Result<(), MurrError>;
     fn build(&mut self) -> ArrayRef;
 }
 
@@ -71,6 +77,23 @@ impl DTypeName {
             DTypeName::UInt64 => Box::new(uint64::UInt64),
             DTypeName::Float32 => Box::new(float32::Float32),
             DTypeName::Float64 => Box::new(float64::Float64),
+        }
+    }
+
+    pub fn key_encoder(self) -> Result<Box<dyn KeyEncoder>, MurrError> {
+        match self {
+            DTypeName::Utf8 => Ok(Box::new(utf8::Utf8)),
+            DTypeName::Int8 => Ok(Box::new(int8::Int8)),
+            DTypeName::Int16 => Ok(Box::new(int16::Int16)),
+            DTypeName::Int32 => Ok(Box::new(int32::Int32)),
+            DTypeName::Int64 => Ok(Box::new(int64::Int64)),
+            DTypeName::UInt8 => Ok(Box::new(uint8::UInt8)),
+            DTypeName::UInt16 => Ok(Box::new(uint16::UInt16)),
+            DTypeName::UInt32 => Ok(Box::new(uint32::UInt32)),
+            DTypeName::UInt64 => Ok(Box::new(uint64::UInt64)),
+            DTypeName::Bool | DTypeName::Float32 | DTypeName::Float64 => Err(
+                MurrError::TableError(format!("dtype {self:?} cannot be used as a key")),
+            ),
         }
     }
 }

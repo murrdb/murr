@@ -19,6 +19,7 @@
 | GET | `/api/v1/table` | `list_tables` | JSON map of table name → schema |
 | GET | `/api/v1/table/{name}/schema` | `get_schema` | JSON schema for one table |
 | PUT | `/api/v1/table/{name}` | `create_table` | Accepts `TableSchema` JSON, returns 201 |
+| DELETE | `/api/v1/table/{name}` | `drop_table` | Drops table + CF + manifest entry, returns 204 (404 if unknown) |
 | POST | `/api/v1/table/{name}/fetch` | `fetch` | Read data (content negotiation on response) |
 | PUT | `/api/v1/table/{name}/write` | `write_table` | Write data (content negotiation on request) |
 

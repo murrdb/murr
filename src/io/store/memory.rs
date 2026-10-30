@@ -25,6 +25,12 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    fn drop_table(&mut self, table: &str) -> Result<(), MurrError> {
+        self.manifest.del_table(table)?;
+        self.tables.remove(table);
+        Ok(())
+    }
+
     fn read(
         &self,
         table: &str,
@@ -35,10 +41,9 @@ impl Store for MemoryStore {
             .tables
             .get(table)
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
-        for k in keys {
-            match rows.get(*k) {
-                Some(v) => builder.add_row(v.as_slice())?,
-                None => builder.add_empty()?,
+        for (i, k) in keys.iter().enumerate() {
+            if let Some(v) = rows.get(*k) {
+                builder.add_row(i, v.as_slice())?;
             }
         }
         builder.build()
@@ -82,6 +87,8 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -89,12 +96,11 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
+                strict: true,
             },
         );
-        TableSchema {
-            key: "id".into(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     #[test]
@@ -154,6 +160,28 @@ mod tests {
         store.create_table("users", &schema()).unwrap();
         let err = store.create_table("users", &schema()).unwrap_err();
         assert!(matches!(err, MurrError::TableAlreadyExists(_)));
+    }
+
+    #[test]
+    fn drop_table_removes_data_and_manifest_entry() {
+        let mut store = MemoryStore::new();
+        store.create_table("users", &schema()).unwrap();
+        put(&mut store, "users", &[("alice", b"a")]);
+
+        store.drop_table("users").unwrap();
+
+        assert!(!store.manifest().contains("users"));
+        let err = store
+            .write("users", [KeyValue::new(*b"x", *b"y")])
+            .unwrap_err();
+        assert!(matches!(err, MurrError::TableNotFound(_)));
+    }
+
+    #[test]
+    fn drop_unknown_table_fails() {
+        let mut store = MemoryStore::new();
+        let err = store.drop_table("nope").unwrap_err();
+        assert!(matches!(err, MurrError::TableNotFound(_)));
     }
 
     #[test]

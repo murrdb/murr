@@ -134,55 +134,35 @@ impl RocksDBStore {
         self.path.join(MANIFEST_FILE)
     }
 
-    fn read_multiget<'a>(
-        &'a self,
-        cf: &ColumnFamily,
-        keys: &[&[u8]],
-    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+    /// Lookup results in request order, i.e. `raw[i]` answers `keys[i]`.
+    fn read_multiget<'a>(&'a self, cf: &ColumnFamily, keys: &[&[u8]]) -> Vec<RawResult<'a>> {
         self.db
             .batched_multi_get_cf_opt(cf, keys, false, &self.read_opts)
     }
 
+    /// Lookup results in key order, each paired with its position in `keys`. The
+    /// response carries positions anyway, so there is no need to restore request order.
     fn read_multiget_sorted<'a>(
         &'a self,
         cf: &ColumnFamily,
         keys: &[&[u8]],
-    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
-        let n = keys.len();
-        let mut order: Vec<usize> = (0..n).collect();
+    ) -> Vec<(usize, RawResult<'a>)> {
+        let mut order: Vec<usize> = (0..keys.len()).collect();
         order.sort_unstable_by_key(|&i| keys[i]);
         let sorted: Vec<&[u8]> = order.iter().map(|&i| keys[i]).collect();
-        let mut raw = self
+        let raw = self
             .db
             .batched_multi_get_cf_opt(cf, &sorted, true, &self.read_opts);
-        // raw[i] is the result for keys[order[i]]; move each raw[i] to position order[i]
-        // via cycle-following. Each inner iteration fixes one slot permanently, so total
-        // work is O(n) swaps even though the loop is nested.
-        for i in 0..n {
-            while order[i] != i {
-                let t = order[i];
-                raw.swap(i, t);
-                order.swap(i, t);
-            }
-        }
-        raw
+        order.into_iter().zip(raw).collect()
     }
 
-    fn read_get<'a>(
-        &'a self,
-        cf: &ColumnFamily,
-        keys: &[&[u8]],
-    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+    fn read_get<'a>(&'a self, cf: &ColumnFamily, keys: &[&[u8]]) -> Vec<RawResult<'a>> {
         keys.iter()
             .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
             .collect()
     }
 
-    fn read_get_parallel<'a>(
-        &'a self,
-        cf: &ColumnFamily,
-        keys: &[&[u8]],
-    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+    fn read_get_parallel<'a>(&'a self, cf: &ColumnFamily, keys: &[&[u8]]) -> Vec<RawResult<'a>> {
         use rayon::prelude::*;
         keys.par_iter()
             .map(|k| self.db.get_pinned_cf_opt(cf, k, &self.read_opts))
@@ -193,7 +173,7 @@ impl RocksDBStore {
         &'a self,
         cf: &ColumnFamily,
         keys: &[&[u8]],
-    ) -> Vec<Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>> {
+    ) -> Vec<RawResult<'a>> {
         use rayon::prelude::*;
         let chunk_size = keys.len().div_ceil(rayon::current_num_threads()).max(1);
         keys.par_chunks(chunk_size)
@@ -205,10 +185,23 @@ impl RocksDBStore {
     }
 }
 
+type RawResult<'a> = Result<Option<DBPinnableSlice<'a>>, rocksdb::Error>;
+
+fn in_request_order(raw: Vec<RawResult<'_>>) -> Vec<(usize, RawResult<'_>)> {
+    raw.into_iter().enumerate().collect()
+}
+
 impl Store for RocksDBStore {
     fn create_table(&mut self, table: &str, schema: &TableSchema) -> Result<(), MurrError> {
         self.manifest.add_table(table, schema)?;
         self.db.create_cf(table, &self.cf_opts)?;
+        self.manifest.to_file(&self.manifest_path())?;
+        Ok(())
+    }
+
+    fn drop_table(&mut self, table: &str) -> Result<(), MurrError> {
+        self.manifest.del_table(table)?;
+        self.db.drop_cf(table)?;
         self.manifest.to_file(&self.manifest_path())?;
         Ok(())
     }
@@ -250,16 +243,16 @@ impl Store for RocksDBStore {
             .ok_or_else(|| MurrError::TableNotFound(table.to_string()))?;
 
         let raw = match self.read_method {
-            ReadMethod::MultiGet => self.read_multiget(cf, keys),
+            ReadMethod::MultiGet => in_request_order(self.read_multiget(cf, keys)),
             ReadMethod::MultiGetSorted => self.read_multiget_sorted(cf, keys),
-            ReadMethod::Get => self.read_get(cf, keys),
-            ReadMethod::ParGet => self.read_get_parallel(cf, keys),
-            ReadMethod::ParMultiGet => self.read_multiget_parallel(cf, keys),
+            ReadMethod::Get => in_request_order(self.read_get(cf, keys)),
+            ReadMethod::ParGet => in_request_order(self.read_get_parallel(cf, keys)),
+            ReadMethod::ParMultiGet => in_request_order(self.read_multiget_parallel(cf, keys)),
         };
-        for r in &raw {
+        for (position, r) in &raw {
             match r {
-                Ok(Some(v)) => builder.add_row(v.as_ref())?,
-                Ok(None) => builder.add_empty()?,
+                Ok(Some(v)) => builder.add_row(*position, v.as_ref())?,
+                Ok(None) => {}
                 Err(e) => return Err(MurrError::IoError(e.to_string())),
             }
         }
@@ -303,6 +296,8 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -310,12 +305,11 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: true,
+                key: false,
+                strict: true,
             },
         );
-        TableSchema {
-            key: key.to_string(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     fn open_block_get(path: &Path) -> RocksDBStore {
@@ -336,12 +330,19 @@ mod tests {
         store
     }
 
+    fn open_block_multi_get_sorted(path: &Path) -> RocksDBStore {
+        let mut store = open_block(path);
+        store.read_method = ReadMethod::MultiGetSorted;
+        store
+    }
+
     #[rstest]
     #[case::plain(open_plain)]
     #[case::block(open_block)]
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
     #[case::block_par_multi_get(open_block_par_multi_get)]
+    #[case::block_multi_get_sorted(open_block_multi_get_sorted)]
     fn round_trip(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -371,7 +372,8 @@ mod tests {
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
     #[case::block_par_multi_get(open_block_par_multi_get)]
-    fn read_preserves_caller_key_order(#[case] open: Opener) {
+    #[case::block_multi_get_sorted(open_block_multi_get_sorted)]
+    fn read_maps_rows_to_caller_positions(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
         store.create_table("users", &schema("id")).unwrap();
@@ -404,6 +406,7 @@ mod tests {
     #[case::block_get(open_block_get)]
     #[case::block_par_get(open_block_par_get)]
     #[case::block_par_multi_get(open_block_par_multi_get)]
+    #[case::block_multi_get_sorted(open_block_multi_get_sorted)]
     fn missing_key_yields_none(#[case] open: Opener) {
         let dir = TempDir::new().unwrap();
         let mut store = open(dir.path());
@@ -499,6 +502,44 @@ mod tests {
         let store = open(dir.path());
         assert_eq!(store.manifest().schema("users"), Some(&users));
         assert_eq!(store.manifest().schema("products"), Some(&products));
+    }
+
+    #[rstest]
+    #[case::plain(open_plain)]
+    #[case::block(open_block)]
+    fn drop_table_persists_across_reopen(#[case] open: Opener) {
+        let dir = TempDir::new().unwrap();
+        {
+            let mut store = open(dir.path());
+            store.create_table("users", &schema("id")).unwrap();
+            put(&mut store, "users", &[("alice", b"a")]);
+
+            store.drop_table("users").unwrap();
+
+            assert!(!store.manifest().contains("users"));
+            let err = store
+                .write("users", [KeyValue::new(*b"x", *b"y")])
+                .unwrap_err();
+            assert!(matches!(err, MurrError::TableNotFound(_)));
+        }
+
+        let mut store = open(dir.path());
+        assert!(!store.manifest().contains("users"));
+        // Recreating after drop must start empty, not resurrect old rows.
+        store.create_table("users", &schema("id")).unwrap();
+        let lookup: [&[u8]; 1] = [b"alice"];
+        let got = fetch(&store, "users", &lookup);
+        assert_eq!(got[0], None);
+    }
+
+    #[rstest]
+    #[case::plain(open_plain)]
+    #[case::block(open_block)]
+    fn drop_unknown_table_fails(#[case] open: Opener) {
+        let dir = TempDir::new().unwrap();
+        let mut store = open(dir.path());
+        let err = store.drop_table("nope").unwrap_err();
+        assert!(matches!(err, MurrError::TableNotFound(_)));
     }
 
     #[rstest]

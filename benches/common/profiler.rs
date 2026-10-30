@@ -19,7 +19,10 @@ impl PProfProfiler {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(500);
-        Self { frequency, guard: None }
+        Self {
+            frequency,
+            guard: None,
+        }
     }
 }
 

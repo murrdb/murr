@@ -3,12 +3,15 @@
 //! Each backend implements `ReadBench` (or relies on the blanket impl for
 //! `Table<S: Store>`); `run_read_bench` drives the Criterion loop.
 
+use std::sync::Arc;
 use std::time::Instant;
 
+use arrow::array::StringArray;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use criterion::{BatchSize, BenchmarkId, Criterion};
 
-use murr::core::MurrError;
+use murr::core::{FetchRequest, MurrError};
 use murr::io::store::Store;
 use murr::io::table::Table;
 
@@ -16,7 +19,7 @@ use super::dataset::Dataset;
 
 pub trait ReadBench {
     fn write(&self, dataset: &Dataset, batch_size: usize) -> Result<(), MurrError>;
-    fn read(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError>;
+    fn read(&self, request: &FetchRequest) -> Result<RecordBatch, MurrError>;
 }
 
 impl<S: Store> ReadBench for Table<S> {
@@ -49,13 +52,15 @@ impl<S: Store> ReadBench for Table<S> {
         Ok(())
     }
 
-    fn read(&self, keys: &[&str], columns: &[&str]) -> Result<RecordBatch, MurrError> {
-        Table::read(self, keys, columns)
+    fn read(&self, request: &FetchRequest) -> Result<RecordBatch, MurrError> {
+        Table::read(self, request)
     }
 }
 
 pub struct BenchOpts<'a> {
     pub key_counts: &'a [usize],
+    /// Fraction of keys per request that exist in the table, one bench case per value.
+    pub hit_rates: &'a [f64],
     pub sample_size: usize,
     pub write_batch_size: usize,
     pub group_name: &'a str,
@@ -79,35 +84,42 @@ pub fn run_read_bench<B: ReadBench>(
     eprintln!("[{}] setup complete, starting benchmark", opts.group_name);
 
     let col_names = dataset.column_names();
-    let col_refs: Vec<&str> = col_names.iter().map(String::as_str).collect();
-    let col_refs_ref = &col_refs;
+    let key_schema = Arc::new(Schema::new(vec![Field::new("key", DataType::Utf8, false)]));
 
     let mut group = c.benchmark_group(opts.group_name);
     group.sample_size(opts.sample_size);
 
     for &num_keys in opts.key_counts {
-        let mut seed: u64 = num_keys as u64 * 2_000_000;
-        group.bench_with_input(
-            BenchmarkId::new(opts.group_name, num_keys),
-            &num_keys,
-            |b, &n| {
-                b.iter_batched(
-                    || {
-                        seed += 1;
-                        dataset.generate_keys(n, seed)
-                    },
-                    |keys| {
-                        let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
-                        std::hint::black_box(
-                            bench
-                                .read(std::hint::black_box(&key_refs), col_refs_ref)
+        for &hit_rate in opts.hit_rates {
+            let mut seed: u64 = num_keys as u64 * 2_000_000;
+            let case = format!("{num_keys}_keys/hit_{hit_rate}");
+            group.bench_with_input(
+                BenchmarkId::new(opts.group_name, case),
+                &num_keys,
+                |b, &n| {
+                    b.iter_batched(
+                        || {
+                            seed += 1;
+                            let keys = StringArray::from(dataset.generate_keys(n, seed, hit_rate));
+                            FetchRequest {
+                                keys: RecordBatch::try_new(
+                                    key_schema.clone(),
+                                    vec![Arc::new(keys)],
+                                )
                                 .unwrap(),
-                        )
-                    },
-                    BatchSize::PerIteration,
-                );
-            },
-        );
+                                columns: col_names.clone(),
+                            }
+                        },
+                        |request| {
+                            std::hint::black_box(
+                                bench.read(std::hint::black_box(&request)).unwrap(),
+                            )
+                        },
+                        BatchSize::PerIteration,
+                    );
+                },
+            );
+        }
     }
     group.finish();
 }

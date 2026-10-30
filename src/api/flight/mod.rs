@@ -16,7 +16,7 @@ use futures::stream::{self, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::core::MurrError;
+use crate::core::{FetchRequest, MurrError};
 use crate::io::store::Store;
 use crate::service::MurrService;
 use log::info;
@@ -74,9 +74,9 @@ impl<S: Store> FlightService for MurrFlightService<S> {
 
         let service = self.service.clone();
         let batch = tokio::task::spawn_blocking(move || {
-            let keys: Vec<&str> = fetch.keys.iter().map(String::as_str).collect();
-            let columns: Vec<&str> = fetch.columns.iter().map(String::as_str).collect();
-            service.read(&fetch.table, &keys, &columns)
+            let schema = service.get_schema(&fetch.table)?;
+            let request = FetchRequest::try_from((fetch.request, &schema))?;
+            service.read(&fetch.table, &request)
         })
         .await
         .map_err(join_to_status)?

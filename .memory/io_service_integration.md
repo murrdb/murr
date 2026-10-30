@@ -36,7 +36,9 @@ impl<S: Store> MurrService<S> {
 }
 ```
 
-One `Arc<StdRwLock<S>>` shared across all tables (one DB, many CFs when backed by RocksDB). Each table holds its own clone of the `Arc` and locks it internally per call. The service's public methods (`new`, `create`, `write`, `read`, `list_tables`, `get_schema`) are all **sync**.
+One `Arc<StdRwLock<S>>` shared across all tables (one DB, many CFs when backed by RocksDB). Each table holds its own clone of the `Arc` and locks it internally per call. The service's public methods (`new`, `create`, `drop_table`, `write`, `read`, `list_tables`, `get_schema`) are all **sync**.
+
+**Table drop (added 2026-09-11)** — `Store::drop_table` mirrors `create_table` in reverse: manifest entry removed in memory, RocksDB `drop_cf`, then manifest persisted. `MurrService::drop_table` removes the registry entry under the tables write lock *before* calling the store, so no concurrent reader can obtain a `Table` whose CF is mid-teardown (`Table<S>` carries no CF handle, only the `Arc<RwLock<S>>` and schema, so dropping it is free). Named `drop_table` rather than `drop` to avoid clashing with `std::mem::drop` and clippy's `should_implement_trait`. Exposed over HTTP only (`DELETE /api/v1/table/{name}`); Flight stays read-only, consistent with it having no create either.
 
 **Why generic over `S: Store` rather than concrete `RocksDBStore`** — leaves room for future backends (the trait-level abstraction was the only reason to do it; no second impl exists today). Constructor is **pure-generic**: the caller builds `Arc<RwLock<S>>` and hands it in. RocksDB-specific `Config → Store` wiring lives in `RocksDBStore::open_from_config(&config.storage)`; the service layer no longer matches on `BackendConfig`. `main.rs` monomorphises to `MurrService<RocksDBStore>`; tests/benches do the same explicitly via `RocksDBStore::open_from_config`.
 

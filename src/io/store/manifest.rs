@@ -101,6 +101,8 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Utf8,
                 nullable: false,
+                key: true,
+                strict: true,
             },
         );
         columns.insert(
@@ -108,12 +110,11 @@ mod tests {
             ColumnSchema {
                 dtype: DTypeName::Float32,
                 nullable: true,
+                key: false,
+                strict: true,
             },
         );
-        TableSchema {
-            key: "id".into(),
-            columns,
-        }
+        TableSchema { columns }
     }
 
     #[test]

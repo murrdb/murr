@@ -1,30 +1,15 @@
 use crate::io::schema::{SegmentColumnSchema, SegmentSchema};
-use crate::io::store::KeyValue;
 
 pub struct WriteRow<'a> {
     pub schema: &'a SegmentSchema,
-    pub key: Vec<u8>,
     pub bytes: Vec<u8>,
 }
 
-impl<'a> From<WriteRow<'a>> for KeyValue {
-    fn from(wr: WriteRow<'a>) -> Self {
-        KeyValue {
-            key: wr.key,
-            value: wr.bytes,
-        }
-    }
-}
-
 impl<'a> WriteRow<'a> {
-    pub fn new(schema: &'a SegmentSchema, key: &str) -> Self {
+    pub fn new(schema: &'a SegmentSchema) -> Self {
         let mut bytes = vec![0u8; schema.bitset_size + schema.capacity];
         bytes[..schema.bitset_size].fill(0xFF);
-        Self {
-            schema,
-            key: key.as_bytes().to_vec(),
-            bytes,
-        }
+        Self { schema, bytes }
     }
 
     pub fn set_non_null(&mut self, column: &SegmentColumnSchema) {
@@ -74,7 +59,7 @@ mod tests {
             col(1, DTypeName::Float64, "y", 4),
         ];
         let schema = SegmentSchema::new(&cols);
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         w.write_static(&cols[0], 1.5f32);
         w.write_static(&cols[1], -3.25f64);
 
@@ -90,7 +75,7 @@ mod tests {
             col(1, DTypeName::Utf8, "b", 4),
         ];
         let schema = SegmentSchema::new(&cols);
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         w.write_dynamic(&cols[0], b"");
         w.write_dynamic(&cols[1], "δ-unicode".as_bytes());
 
@@ -106,7 +91,7 @@ mod tests {
             col(1, DTypeName::Utf8, "s", 4),
         ];
         let schema = SegmentSchema::new(&cols);
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         w.write_static(&cols[0], 42.5f32);
         w.write_dynamic(&cols[1], b"hello");
 
@@ -125,21 +110,21 @@ mod tests {
         ];
         let schema = SegmentSchema::new(&cols);
 
-        let mut both = WriteRow::new(&schema, "");
+        let mut both = WriteRow::new(&schema);
         both.write_static(&cols[0], 1.0f32);
         both.write_dynamic(&cols[1], b"hi");
         let r = ReadRow::new(&schema, &both.bytes);
         assert!(!r.is_null(&cols[0]));
         assert!(!r.is_null(&cols[1]));
 
-        let mut only_float = WriteRow::new(&schema, "");
+        let mut only_float = WriteRow::new(&schema);
         only_float.write_static(&cols[0], 7.5f32);
         let r = ReadRow::new(&schema, &only_float.bytes);
         assert!(!r.is_null(&cols[0]));
         assert!(r.is_null(&cols[1]));
         assert_eq!(r.read_static::<f32>(&cols[0]), 7.5);
 
-        let none = WriteRow::new(&schema, "");
+        let none = WriteRow::new(&schema);
         let r = ReadRow::new(&schema, &none.bytes);
         assert!(r.is_null(&cols[0]));
         assert!(r.is_null(&cols[1]));

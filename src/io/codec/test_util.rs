@@ -27,7 +27,7 @@ pub fn assert_row_roundtrip(dtype: DTypeName, input: &dyn Array) {
     let dec = codec.make_decoder(c.clone(), input).unwrap();
     let bufs: Vec<Vec<u8>> = (0..input.len())
         .map(|i| {
-            let mut w = WriteRow::new(&schema, "");
+            let mut w = WriteRow::new(&schema);
             dec.write_to_row(i, &mut w);
             w.bytes
         })

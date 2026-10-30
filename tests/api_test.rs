@@ -1,14 +1,15 @@
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 
-use arrow::array::{Float32Array, StringArray};
+use arrow::array::{ArrayRef, Float32Array, Float64Array, Int64Array, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use serde_json::{Value, json};
@@ -17,6 +18,7 @@ use tower::ServiceExt;
 
 use murr::api::MurrHttpService;
 use murr::conf::{BackendConfig, Config, StorageConfig};
+use murr::core::IDX_COLUMN;
 use murr::io::store::rocksdb::RocksDBStore;
 use murr::io::store::rocksdb::plain::PlainConfig;
 use murr::service::MurrService;
@@ -60,9 +62,8 @@ async fn body_json(router: Router, req: Request<Body>) -> (StatusCode, Value) {
 
 fn table_schema_json() -> Value {
     json!({
-        "key": "id",
         "columns": {
-            "id": {"dtype": "utf8", "nullable": false},
+            "id": {"dtype": "utf8", "nullable": false, "key": true},
             "score": {"dtype": "float32", "nullable": true}
         }
     })
@@ -157,7 +158,7 @@ async fn test_list_and_get_table() {
     let (status, json) = body_json(router.clone(), req).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json.get("features").is_some());
-    assert_eq!(json["features"]["key"], "id");
+    assert_eq!(json["features"]["columns"]["id"]["key"], true);
 
     // Get single table
     let req = Request::get("/api/v1/table/features/schema")
@@ -165,9 +166,84 @@ async fn test_list_and_get_table() {
         .unwrap();
     let (status, json) = body_json(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["key"], "id");
-    assert!(json["columns"]["id"].is_object());
+    assert_eq!(json["columns"]["id"]["key"], true);
     assert!(json["columns"]["score"].is_object());
+}
+
+#[tokio::test]
+async fn test_drop_table() {
+    let (_dir, router) = setup().await;
+    let schema = serde_json::to_vec(&table_schema_json()).unwrap();
+
+    let req = Request::put("/api/v1/table/features")
+        .header("content-type", "application/json")
+        .body(Body::from(schema))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let req = Request::delete("/api/v1/table/features")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let req = Request::get("/api/v1/table/features/schema")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let req = Request::delete("/api/v1/table/features")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(json["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_compact_table() {
+    let (_dir, router) = setup().await;
+    let schema = serde_json::to_vec(&table_schema_json()).unwrap();
+
+    let req = Request::put("/api/v1/table/features")
+        .header("content-type", "application/json")
+        .body(Body::from(schema))
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    for (keys, scores) in [(["a", "b"], [1.0, 2.0]), (["b", "c"], [20.0, 3.0])] {
+        let req = Request::put("/api/v1/table/features/write")
+            .header("content-type", "application/vnd.apache.arrow.stream")
+            .body(Body::from(arrow_ipc_batch(&keys, &scores)))
+            .unwrap();
+        let (status, _) = body_bytes(router.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let req = Request::post("/api/v1/table/features/compact")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fetch_body = json!({"keys": {"id": ["a", "b", "c"]}, "columns": ["score"]});
+    let req = Request::post("/api/v1/table/features/fetch")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&fetch_body).unwrap()))
+        .unwrap();
+    let (status, json) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"], json!([1.0, 20.0, 3.0]));
+
+    let req = Request::post("/api/v1/table/nope/compact")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(json["error"].is_string());
 }
 
 #[tokio::test]
@@ -207,7 +283,7 @@ async fn test_full_round_trip() {
     assert_eq!(status, StatusCode::OK);
 
     // 4. Fetch as JSON
-    let fetch_body = json!({"keys": ["a", "b", "c"], "columns": ["score"]});
+    let fetch_body = json!({"keys": {"id": ["a", "b", "c"]}, "columns": ["score"]});
     let req = Request::post("/api/v1/table/features/fetch")
         .header("content-type", "application/json")
         .header("accept", "application/json")
@@ -235,15 +311,25 @@ async fn test_full_round_trip() {
     let mut reader = StreamReader::try_new(cursor, None).unwrap();
     let batch = reader.next().unwrap().unwrap();
     assert_eq!(batch.num_rows(), 3);
+    assert_eq!(batch.schema().field(0).name(), IDX_COLUMN);
+    assert_eq!(batch.schema().field(0).data_type(), &DataType::UInt32);
 
-    let scores = batch
+    let idx = batch
         .column(0)
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    let scores = batch
+        .column_by_name("score")
+        .unwrap()
         .as_any()
         .downcast_ref::<Float32Array>()
         .unwrap();
-    assert_eq!(scores.value(0), 1.0);
-    assert_eq!(scores.value(1), 2.0);
-    assert_eq!(scores.value(2), 3.0);
+    let mut by_position = [0.0f32; 3];
+    for row in 0..3 {
+        by_position[idx.value(row) as usize] = scores.value(row);
+    }
+    assert_eq!(by_position, [1.0, 2.0, 3.0]);
 }
 
 fn parquet_batch(keys: &[&str], scores: &[f32]) -> Vec<u8> {
@@ -289,7 +375,7 @@ async fn test_write_parquet() {
     assert_eq!(status, StatusCode::OK);
 
     // 3. Fetch and verify
-    let fetch_body = json!({"keys": ["x", "y", "z"], "columns": ["score"]});
+    let fetch_body = json!({"keys": {"id": ["x", "y", "z"]}, "columns": ["score"]});
     let req = Request::post("/api/v1/table/features/fetch")
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(&fetch_body).unwrap()))
@@ -302,4 +388,173 @@ async fn test_write_parquet() {
     assert_eq!(scores[0].as_f64().unwrap() as f32, 10.0);
     assert_eq!(scores[1].as_f64().unwrap() as f32, 20.0);
     assert_eq!(scores[2].as_f64().unwrap() as f32, 30.0);
+}
+
+fn json_request(method: Method, uri: &str, body: &Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(body).unwrap()))
+        .unwrap()
+}
+
+/// Creates `ratings` keyed by (user: utf8, item: int64) with ("u1", 1) -> 1.0 and ("u2", -5) -> 2.0.
+async fn setup_compound_table(router: &Router) {
+    let schema = json!({
+        "columns": {
+            "user": {"dtype": "utf8", "nullable": false, "key": true},
+            "item": {"dtype": "int64", "nullable": false, "key": true},
+            "score": {"dtype": "float32"}
+        }
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/ratings", &schema);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let rows = json!({"columns": {"user": ["u1", "u2"], "item": [1, -5], "score": [1.0, 2.0]}});
+    let req = json_request(Method::PUT, "/api/v1/table/ratings/write", &rows);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_compound_key_json_fetch() {
+    let (_dir, router) = setup().await;
+    setup_compound_table(&router).await;
+
+    let fetch = json!({
+        "keys": {"user": ["u2", "u1", "u1"], "item": [-5, 1, -5]},
+        "columns": ["score"]
+    });
+    let req = json_request(Method::POST, "/api/v1/table/ratings/fetch", &fetch);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    // ("u1", -5) is a miss, so it has no row
+    assert_eq!(
+        scatter_json(&json, "score", 3),
+        [json!(2.0), json!(1.0), Value::Null]
+    );
+}
+
+/// Scatters a sparse JSON fetch response back to one slot per requested key, null for a miss.
+fn scatter_json(json: &Value, column: &str, num_keys: usize) -> Vec<Value> {
+    let idx = json["columns"][IDX_COLUMN].as_array().unwrap();
+    let values = json["columns"][column].as_array().unwrap();
+    assert_eq!(idx.len(), values.len());
+    let mut out = vec![Value::Null; num_keys];
+    for (i, v) in idx.iter().zip(values) {
+        out[i.as_u64().unwrap() as usize] = v.clone();
+    }
+    out
+}
+
+fn ipc_key_request(metadata: HashMap<String, String>) -> Request<Body> {
+    let schema = Arc::new(Schema::new_with_metadata(
+        vec![
+            Field::new("user", DataType::Utf8, false),
+            Field::new("item", DataType::Int64, false),
+        ],
+        metadata,
+    ));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(vec!["u2", "u1"])),
+            Arc::new(Int64Array::from(vec![-5, 2])),
+        ],
+    )
+    .unwrap();
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, &schema).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+
+    Request::post("/api/v1/table/ratings/fetch")
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(buf))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_compound_key_arrow_fetch() {
+    let (_dir, router) = setup().await;
+    setup_compound_table(&router).await;
+
+    let columns = HashMap::from([("columns".to_string(), r#"["score"]"#.to_string())]);
+    let (status, json) = body_json(router, ipc_key_request(columns)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"][IDX_COLUMN], json!([0]));
+    assert_eq!(json["columns"]["score"], json!([2.0]));
+}
+
+#[tokio::test]
+async fn test_arrow_fetch_without_columns_metadata() {
+    let (_dir, router) = setup().await;
+    setup_compound_table(&router).await;
+
+    let (status, json) = body_json(router, ipc_key_request(HashMap::new())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(json["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_create_with_top_level_key_rejected() {
+    let (_dir, router) = setup().await;
+    let schema = json!({
+        "key": "id",
+        "columns": {"id": {"dtype": "utf8", "nullable": false}}
+    });
+    let req = json_request(Method::PUT, "/api/v1/table/features", &schema);
+    let (status, _) = body_bytes(router, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+fn float64_ipc_write(table: &str) -> Request<Body> {
+    let batch = RecordBatch::try_from_iter([
+        ("id", Arc::new(StringArray::from(vec!["a"])) as ArrayRef),
+        ("score", Arc::new(Float64Array::from(vec![0.5]))),
+    ])
+    .unwrap();
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, &batch.schema()).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+
+    Request::put(format!("/api/v1/table/{table}/write"))
+        .header("content-type", "application/vnd.apache.arrow.stream")
+        .body(Body::from(buf))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_float64_write_needs_relaxed_column() {
+    let (_dir, router) = setup().await;
+
+    let req = json_request(Method::PUT, "/api/v1/table/strict", &table_schema_json());
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = body_bytes(router.clone(), float64_ipc_write("strict")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let mut schema = table_schema_json();
+    schema["columns"]["score"]["strict"] = json!(false);
+    let req = json_request(Method::PUT, "/api/v1/table/relaxed", &schema);
+    let (status, _) = body_bytes(router.clone(), req).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = body_bytes(router.clone(), float64_ipc_write("relaxed")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let req = Request::get("/api/v1/table/relaxed/schema")
+        .body(Body::empty())
+        .unwrap();
+    let (status, json) = body_json(router.clone(), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"]["strict"], json!(false));
+
+    let fetch = json!({"keys": {"id": ["a"]}, "columns": ["score"]});
+    let req = json_request(Method::POST, "/api/v1/table/relaxed/fetch", &fetch);
+    let (status, json) = body_json(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["columns"]["score"], json!([0.5]));
 }

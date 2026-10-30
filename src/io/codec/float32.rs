@@ -24,6 +24,16 @@ impl DType for Float32 {
     fn size(&self) -> usize {
         4
     }
+    // f32 holds integers exactly only up to 2^24, so Int32 and wider are out
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(
+            from,
+            DataType::Int8 | DataType::Int16 | DataType::UInt8 | DataType::UInt16
+        )
+    }
+    fn rounds_from(&self, from: &DataType) -> bool {
+        matches!(from, DataType::Float64)
+    }
 }
 
 impl ArrowCodec for Float32 {
@@ -95,7 +105,7 @@ mod tests {
         let schema = SegmentSchema::new(std::slice::from_ref(&c));
         let input = Float32Array::from(vec![Some(f32::NAN)]);
         let dec = c.dtype.codec().make_decoder(c.clone(), &input).unwrap();
-        let mut w = WriteRow::new(&schema, "");
+        let mut w = WriteRow::new(&schema);
         dec.write_to_row(0, &mut w);
         let mut enc = c.dtype.codec().make_encoder(c, 1);
         enc.add_row(&ReadRow::new(&schema, &w.bytes)).unwrap();

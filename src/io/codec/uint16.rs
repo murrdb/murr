@@ -1,5 +1,5 @@
 use arrow::{
-    array::{Array, ArrayRef},
+    array::{Array, ArrayRef, BinaryArray},
     datatypes::{DataType, UInt16Type},
 };
 use serde_json::Value;
@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::{
     core::{DType, DTypeName, MurrError},
     io::{
-        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, primitive},
+        codec::{ArrowCodec, ColumnDecoder, ColumnEncoder, JsonCodec, KeyEncoder, primitive},
         schema::SegmentColumnSchema,
     },
 };
@@ -24,6 +24,9 @@ impl DType for UInt16 {
     fn size(&self) -> usize {
         2
     }
+    fn widens_from(&self, from: &DataType) -> bool {
+        matches!(from, DataType::UInt8)
+    }
 }
 
 impl ArrowCodec for UInt16 {
@@ -36,6 +39,12 @@ impl ArrowCodec for UInt16 {
         arr: &dyn Array,
     ) -> Result<Box<dyn ColumnDecoder>, MurrError> {
         Ok(Box::new(primitive::Decoder::<UInt16Type>::new(col, arr)?))
+    }
+}
+
+impl KeyEncoder for UInt16 {
+    fn encode_keys(&self, arr: &dyn Array) -> Result<BinaryArray, MurrError> {
+        primitive::encode_keys::<UInt16Type>(arr)
     }
 }
 
