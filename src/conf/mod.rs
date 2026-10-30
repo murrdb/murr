@@ -4,5 +4,5 @@ mod server;
 mod storage;
 
 pub use config::Config;
-pub use server::ServerConfig;
+pub use server::{GrpcConfig, HttpConfig, ServerConfig};
 pub use storage::{BackendConfig, StorageConfig};
